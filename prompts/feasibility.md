@@ -48,7 +48,8 @@
 5. Stability 阶段修改硬件参数必须判为 invalid。
 6. `live_gpu_snapshot` 只能发现当前设备被其他进程占用，不能证明候选训练阶段显存安全。
 7. 不确定 verl 字段真实含义时调用 `search_verl_docs`，不要猜。
-8. 调用 `memory_estimator` 时使用“供工具使用的目标值映射”，并显式传入参考 trial id。
+8. 调用 `memory_estimator` 时显式传入整数参考 trial id；`changes` 使用修改项中的 `{参数名: {"from": 参考值, "to": 目标值}}`（省略 `reason`），`parameters` 使用“供工具使用的目标值映射”。两处目标值必须相同，`from` 必须与参考 trial 严格一致。
+9. 显存判定以每阶段的 `upper_bound_pct` 和 `risk` 为准，不得只引用 `projected_pct`。出现 `uncalibrated_changes` 或 `confidence: low` 时，把它列入 `risks`，并明确最终安全性仍由真实短跑 resource gate 决定。
 
 工具调用结束后，只输出一个 JSON 对象：
 

@@ -35,7 +35,24 @@
 3. 需要确认 verl 0.7 的真实字段或实现时调用 `search_verl_docs`。
 4. `live_gpu_snapshot` 只表示调用瞬间的宿主机占用，不能替代 trial 中的分阶段显存。
 5. 需要更多历史证据时调用 `query_trial_history`，不要要求把全部原始日志塞入上下文。
-6. `reference_trial_id` 必须填写“当前参数继承自哪个实验”的 trial_id；如果来源是初始配置则填写 `null`。调用 `memory_estimator` 时使用同一个 reference trial，工具参数 `changes` 仍只传 `{参数名: 目标值}`，不要传最终输出中的 `from/to/reason` 对象。
+6. `reference_trial_id` 必须填写“当前参数继承自哪个实验”的 trial_id；如果来源是初始配置则填写 `null`。调用 `memory_estimator` 时必须使用一个已有实测显存的整数 reference trial id。`changes` 对每个参数只传 `{"from": 参考 Trial 中的值, "to": 目标值}`（不要传 `reason`）；`parameters` 同时传相同参数的 `{参数名: 目标值}` 映射。`from` 必须和 reference trial 参数严格一致，参数未显式配置时才使用 `null`。例如：
+
+```json
+{
+  "changes": {
+    "actor_rollout_ref.rollout.gpu_memory_utilization": {
+      "from": 0.5,
+      "to": 0.7
+    }
+  },
+  "parameters": {
+    "actor_rollout_ref.rollout.gpu_memory_utilization": 0.7
+  },
+  "reference_trial_id": 1
+}
+```
+
+7. 解读 `memory_estimator` 时不能只看 `projected_pct`：显存安全判断以 `upper_bound_pct` 和 `risk` 为准；如果相关阶段出现 `uncalibrated_changes` 或 `confidence: low`，必须在理由中承认该影响未经历史校准，并保留真实短跑验证，不能把点估计描述成确定结果。
 
 决策原则：
 

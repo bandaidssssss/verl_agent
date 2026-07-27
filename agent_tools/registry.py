@@ -59,6 +59,40 @@ def _nested_metric(trial: Mapping[str, Any], *path: str) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _normalize_memory_changes(
+    changes: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """Normalize memory-estimator changes to target values.
+
+    Agents use the proposal-style ``{"from": ..., "to": ...}`` form.  The
+    estimator needs only the target value, but preserving the metadata lets us
+    verify that ``from`` matches the explicitly selected reference trial.
+    Scalar values remain accepted for compatibility with older traces.
+    """
+    targets: dict[str, Any] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    for raw_key, value in changes.items():
+        key = str(raw_key)
+        if isinstance(value, Mapping):
+            missing = sorted({"from", "to"} - set(value))
+            extra = sorted(set(value) - {"from", "to"})
+            if missing or extra:
+                raise ToolError(
+                    f"changes[{key!r}] must contain only 'from' and 'to'; "
+                    f"missing={missing}, extra={extra}"
+                )
+            targets[key] = value["to"]
+            metadata[key] = {
+                "from": value["from"],
+                "to": value["to"],
+                "has_from": True,
+            }
+        else:
+            targets[key] = value
+            metadata[key] = {"from": None, "to": value, "has_from": False}
+    return targets, metadata
+
+
 class ToolRegistry:
     def __init__(self, root: str | Path, agent_config: Mapping[str, Any], history_path: str | Path) -> None:
         self.root = Path(root).resolve()
@@ -125,18 +159,30 @@ class ToolRegistry:
 
     def _memory_estimator(self, arguments: Mapping[str, Any], runtime: ToolRuntime) -> dict[str, Any]:
         context = runtime.context
-        current = context.get("current_parameters") or context.get("candidate_parameters") or {} #current_parameters是历史数据最好的
+        current = context.get("current_parameters") or context.get("candidate_parameters") or {}
         if not isinstance(current, Mapping):
             raise ToolError("context does not contain current or candidate parameters")
-        candidate = dict(context.get("candidate_parameters") or current)
         supplied = arguments.get("parameters", {})
         changes = arguments.get("changes", {})
         if supplied and not isinstance(supplied, Mapping):
             raise ToolError("parameters must be an object")
         if changes and not isinstance(changes, Mapping):
             raise ToolError("changes must be an object")
-        candidate.update(supplied)
-        candidate.update(changes)
+        normalized_changes, change_metadata = _normalize_memory_changes(changes)
+        if not normalized_changes:
+            raise ToolError("changes must contain at least one parameter")
+        missing_targets = sorted(set(normalized_changes) - set(supplied))
+        extra_targets = sorted(set(supplied) - set(normalized_changes))
+        if missing_targets or extra_targets:
+            raise ToolError(
+                "parameters must contain exactly the same keys as changes; "
+                f"missing={missing_targets}, extra={extra_targets}"
+            )
+        for key, target in normalized_changes.items():
+            if supplied[key] != target:
+                raise ToolError(
+                    f"parameters[{key!r}] conflicts with changes[{key!r}].to"
+                )
 
         recent = context.get("recent_trials", [])
         trials = list(recent) if isinstance(recent, list) else []
@@ -153,11 +199,60 @@ class ToolRegistry:
             limit = constraints.get("throughput_memory_limit_pct") or constraints.get("resource_memory_limit_pct")
         limit = float(limit or runtime.agent_config.get("throughput_memory_limit_pct", 92.0))
         reference_id = arguments.get("reference_trial_id")
-        if reference_id is not None and not isinstance(reference_id, int):
+        if not isinstance(reference_id, int) or isinstance(reference_id, bool):
             raise ToolError("reference_trial_id must be an integer")
-        result = estimate_phase_memory(current, candidate, trials, limit, reference_id)
+        reference = next(
+            (
+                trial
+                for trial in trials
+                if isinstance(trial, Mapping) and trial.get("trial_id") == reference_id
+            ),
+            None,
+        )
+        if reference is None:
+            raise ToolError(f"reference trial {reference_id} was not found")
+        reference_parameters = reference.get("parameters")
+        if not isinstance(reference_parameters, Mapping):
+            raise ToolError(f"reference trial {reference_id} has no parameters")
+
+        for key, metadata in change_metadata.items():
+            if not metadata["has_from"]:
+                continue
+            observed = reference_parameters.get(key)
+            if metadata["from"] != observed:
+                raise ToolError(
+                    f"changes[{key!r}].from={metadata['from']!r} does not match "
+                    f"reference trial {reference_id} value {observed!r}"
+                )
+
+        # The explicit reference trial is the calculation baseline.  Overlay
+        # the supplied target mapping and normalized ``to`` values to form the
+        # candidate evaluated by the proportional model.
+        candidate = dict(reference_parameters)
+        candidate.update(supplied)
+        candidate.update(normalized_changes)
+        try:
+            result = estimate_phase_memory(
+                reference_parameters,
+                candidate,
+                trials,
+                limit,
+                reference_id,
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        if result.get("reference_trial_id") != reference_id:
+            raise ToolError(
+                f"reference trial {reference_id} has no phase-tagged memory measurements"
+            )
         result["candidate_changes"] = {
-            key: value for key, value in candidate.items() if current.get(key) != value
+            key: value
+            for key, value in candidate.items()
+            if reference_parameters.get(key) != value
+        }
+        result["change_metadata"] = {
+            key: {"from": metadata["from"], "to": metadata["to"]}
+            for key, metadata in change_metadata.items()
         }
         return result
 

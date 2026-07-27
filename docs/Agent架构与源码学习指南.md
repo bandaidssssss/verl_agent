@@ -744,9 +744,10 @@ def _read_trial_log_excerpt(self, arguments, runtime):
 
 ### 5.2 `memory_estimator.py` — 分阶段显存估算器
 
-**文件**: [memory_estimator.py](../agent_tools/memory_estimator.py) | 约 185 行
+**文件**: [memory_estimator.py](../agent_tools/memory_estimator.py)
 
-这是项目中**算法最密集**的模块。核心思想: 不是精确模拟，而是**基于经验锚点的相对压力投影**。
+这是项目中**算法最密集**的模块。核心思想不是精确模拟，而是以显式
+`reference_trial_id` 的分阶段实测峰值为锚点，进行**分量感知的相对投影**。
 
 #### 5.2.1 四个阶段的不同压力模型
 
@@ -756,88 +757,98 @@ verl GRPO 的显存不是单一阶段，四个子阶段有不同的主要影响�
 PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
 ```
 
-**Rollout 阶段** (`_phase_pressure` 中 phase="rollout"):
+**Rollout 阶段**:
 
 ```python
-# 主要受 KV cache 和并发调度影响
-return (
-    utilization**0.58 *        # gpu_memory_utilization — 主控
-    batched_tokens**0.14 *     # max_num_batched_tokens
-    max_seqs**0.10 *           # max_num_seqs
-    sequence**0.08 *           # prompt + response length
-    rollout_n**0.03 *          # 每 prompt 采样数
-    rollout_tp**-0.07          # TP 分片 — 负指数（降低压力）
+# vLLM 的显存预算是 rollout 峰值的主控量
+budget_ratio = (candidate_util / reference_util) ** 0.86
+```
+
+`0.86` 来自当前 C550 历史点
+`0.5→0.7→0.8 == 59.15%→79.06%→88.97%` 的局部校准。
+`max_num_batched_tokens`、`max_num_seqs`、prefix caching 等是容量上限或调度
+行为；没有匹配历史时不再直接缩放点估计，而是进入
+`uncalibrated_changes` 并扩大不确定区间。
+
+**Actor/Ref Log-Prob 阶段**:
+
+```python
+total_ratio = (
+    0.55                              # 固定 runtime/allocator
+    + 0.25 * sharded_model_ratio      # 模型分片
+    + 0.20 * activation_ratio         # micro/token/并行与 packing
 )
 ```
 
-**Actor Log-Prob 阶段**:
-
-```python
-pressure = micro**0.42 * sequence**0.28 * actor_tp**-0.22
-# 修饰因子:
-# use_remove_padding → ×0.86 (节省无填充计算)
-# use_dynamic_bsz      → ×0.94 (更优的批处理打包)
-# param_offload        → ×0.82 (参数移出 GPU)
-```
-
-**Ref Log-Prob 阶段**:
-
-```python
-pressure = micro**0.42 * sequence**0.28 * (ref_tp * ref_pp)**-0.22
-# 修饰因子:
-# sequence_parallel → ×0.93
-# param_offload      → ×0.76 (参考模型参数卸载)
-```
+micro batch、sequence length 和 TP/PP 只缩放 activation/model 分量，不再乘到
+整个阶段峰值。param offload 等没有匹配历史的跨阶段行为只增加不确定性。
+Ref 阶段因现有采样自身波动更大，使用比 Actor 更宽的基础上界余量。
 
 **Training 阶段**:
 
 ```python
-pressure = micro**0.40 * sequence**0.27 * (actor_tp * actor_pp)**-0.23
-# 修饰因子:
-# sequence_parallel       → ×0.91
-# use_distributed_optimizer → ×0.84
-# optimizer_offload       → ×0.78
-# param_offload           → ×0.78
-# recompute_factor: none=1.0, full=0.66, selective=0.78
+total_ratio = (
+    0.30                              # 固定 runtime
+    + 0.25 * model_gradient_ratio     # 模型与梯度
+    + 0.25 * optimizer_ratio          # optimizer/distributed/offload
+    + 0.20 * activation_ratio         # micro/token/recompute
+)
 ```
+
+distributed optimizer 和 optimizer offload 只影响 optimizer 分量；recompute
+只影响 activation 分量，从而避免多个布尔因子连乘后错误地将整个 training
+峰值压低六成以上。
 
 #### 5.2.2 经验锚点投影
 
 ```python
 def estimate_phase_memory(current_parameters, candidate_parameters, trials, ...):
-    # 1. 找参考 trial (参数相同 > 指定 trial > 任意有观测的)
+    # 1. 找显式 reference trial
     reference = _reference_trial(current_parameters, trials, reference_trial_id)
 
-    # 2. 对每个阶段:
+    # 2. 对每个阶段计算分量比例
     for phase in PHASES:
-        ratio = candidate_pressure / reference_pressure   # 压力比
-        projected = reference_peak_memory * ratio         # 投影显存
+        projection = _phase_projection(phase, reference_params, candidate_params)
+        projected = reference_peak_memory * projection["ratio"]
+        upper_bound = projected + projection["uncertainty_pct"]
 
-        # 3. 风险评估
-        if projected >= memory_limit_pct:  risk = "high"
-        elif headroom < 5.0:               risk = "watch"
-        else:                               risk = "low"
+        # 3. 风险根据不确定性上界，而不是点估计判断
+        if upper_bound >= memory_limit_pct:       risk = "high"
+        elif memory_limit_pct - upper_bound < 5:  risk = "watch"
+        else:                                     risk = "low"
 ```
 
-#### 5.2.3 参考 Trial 选择策略
+每个阶段会同时返回：
 
-```python
-def _reference_trial(current, trials, reference_trial_id):
-    observed = [t for t in trials if t 有 phase_memory 且 t 有 parameters]
-    if reference_trial_id:  return 指定 trial
-    # 优先找参数完全相同的 trial
-    exact = [t for t in observed if same_parameters(t.params, current)]
-    # 否则用最近的有观测 trial
-    return (exact or observed)[-1]
+- `projected_pct`：点估计
+- `uncertainty_pct` / `upper_bound_pct`：保守上界
+- `risk`：按上界计算的风险
+- `confidence`：阶段置信度
+- `component_shares` / `drivers`：比例来源
+- `uncalibrated_changes`：没有匹配历史、未进入点估计的参数
+
+#### 5.2.3 工具输入和参考 Trial 校验
+
+Agent 调用必须同时提供：
+
+```json
+{
+  "changes": {"parameter": {"from": 0.5, "to": 0.7}},
+  "parameters": {"parameter": 0.7},
+  "reference_trial_id": 1
+}
 ```
+
+registry 会检查 `from` 是否与参考 Trial 严格一致、`parameters` 是否与 `to`
+一致，以及参考 Trial 是否存在分阶段显存。非法对象不再静默退回默认值。
 
 #### 5.2.4 局限性声明
 
-代码明确列出了四条局限（lines 156-161），这是诚实的工程实践:
-1. 只是相对压力投影，不是精确的 tensor-allocation 模拟
-2. 绝对百分比需要先有带 phase-tagged GPU memory 观测的 trial
-3. 实时 SMI 快照不能替代 rollout/actor/ref/training 的分阶段采样
-4. 真实的 short resource-gate trial 仍是最终内存权威
+1. 分量比例仍是知识先验，不是 tensor-allocation 模拟
+2. scheduler cap、跨阶段 offload 等缺少配对历史时只进入不确定性
+3. 配置最大长度只是 workload 上界，实际 token 分布可能更低
+4. 实时 SMI 快照不能替代分阶段采样
+5. 真实 short resource-gate trial 仍是最终内存权威
 
 ### 5.3 `skills.json` — 工具白名单与函数签名
 
