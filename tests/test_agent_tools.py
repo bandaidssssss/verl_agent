@@ -41,6 +41,10 @@ class AgentToolsTest(unittest.TestCase):
             registry.execute("proposal", "read_trial_log_excerpt", {"trial_id": 1}, runtime)
 
     def test_memory_estimator_uses_phase_observation_anchor(self) -> None:
+        current_micro = self.base[
+            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
+        ]
+        target_micro = current_micro * 2
         trial = {
             "trial_id": 1,
             "parameters": self.base,
@@ -60,13 +64,209 @@ class AgentToolsTest(unittest.TestCase):
         result = registry.execute(
             "proposal",
             "memory_estimator",
-            {"changes": {"actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 2}},
+            {
+                "changes": {
+                    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": {
+                        "from": current_micro,
+                        "to": target_micro,
+                    }
+                },
+                "parameters": {
+                    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": target_micro
+                },
+                "reference_trial_id": 1,
+            },
             registry.runtime(context),
         )
-        self.assertEqual(result["method"], "empirical_phase_relative")
+        self.assertEqual(result["method"], "empirical_component_relative")
         self.assertEqual(result["reference_trial_id"], 1)
         self.assertGreater(result["phases"]["training"]["projected_pct"], 72.0)
+        self.assertEqual(result["phases"]["training"]["risk"], "watch")
+        self.assertGreater(
+            result["phases"]["training"]["upper_bound_pct"],
+            result["phases"]["training"]["projected_pct"],
+        )
         self.assertAlmostEqual(result["phases"]["rollout"]["projected_pct"], 70.0)
+
+    def test_memory_estimator_normalizes_proposal_style_changes(self) -> None:
+        reference = dict(self.base)
+        reference["actor_rollout_ref.rollout.gpu_memory_utilization"] = 0.5
+        trial = {
+            "trial_id": 1,
+            "parameters": reference,
+            "memory_by_phase_pct": {
+                "rollout": {"max": 59.14764404296875},
+                "actor_log_prob": {"max": 31.22100830078125},
+                "ref_log_prob": {"max": 65.56396484375},
+                "training": {"max": 38.10272216796875},
+            },
+        }
+        context = {
+            "current_parameters": reference,
+            "candidate_parameters": {
+                **reference,
+                "actor_rollout_ref.rollout.gpu_memory_utilization": 0.7,
+            },
+            "recent_trials": [trial],
+            "constraints": {"throughput_memory_limit_pct": 92.0},
+        }
+        registry = self.registry()
+        result = registry.execute(
+            "feasibility",
+            "memory_estimator",
+            {
+                "changes": {
+                    "actor_rollout_ref.rollout.gpu_memory_utilization": {
+                        "from": 0.5,
+                        "to": 0.7,
+                    }
+                },
+                "parameters": {
+                    "actor_rollout_ref.rollout.gpu_memory_utilization": 0.7
+                },
+                "reference_trial_id": 1,
+            },
+            registry.runtime(context),
+        )
+        rollout = result["phases"]["rollout"]
+        self.assertGreater(rollout["pressure_ratio"], 1.0)
+        self.assertAlmostEqual(rollout["projected_pct"], 79.0, delta=0.2)
+        self.assertEqual(
+            result["candidate_changes"][
+                "actor_rollout_ref.rollout.gpu_memory_utilization"
+            ],
+            0.7,
+        )
+        self.assertEqual(rollout["model"], "vllm_budget_relative")
+        self.assertEqual(rollout["risk"], "low")
+        self.assertEqual(
+            result["phases"]["ref_log_prob"]["uncertainty_pct"],
+            4.0,
+        )
+
+    def test_memory_estimator_treats_rollout_caps_as_uncalibrated(self) -> None:
+        key = "actor_rollout_ref.rollout.max_num_seqs"
+        reference = {**self.base, key: 256}
+        trial = {
+            "trial_id": 1,
+            "parameters": reference,
+            "memory_by_phase_pct": {
+                phase: {"max": value}
+                for phase, value in {
+                    "rollout": 79.0,
+                    "actor_log_prob": 31.0,
+                    "ref_log_prob": 62.0,
+                    "training": 38.0,
+                }.items()
+            },
+        }
+        registry = self.registry()
+        result = registry.execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": {key: {"from": 256, "to": 512}},
+                "parameters": {key: 512},
+                "reference_trial_id": 1,
+            },
+            registry.runtime(
+                {"current_parameters": reference, "recent_trials": [trial]}
+            ),
+        )
+        rollout = result["phases"]["rollout"]
+        self.assertEqual(rollout["projected_pct"], 79.0)
+        self.assertIn(key, rollout["uncalibrated_changes"])
+        self.assertGreater(rollout["upper_bound_pct"], 79.0)
+        self.assertEqual(rollout["confidence"], "low")
+
+    def test_training_component_savings_do_not_multiply_full_peak(self) -> None:
+        distributed_key = (
+            "actor_rollout_ref.actor.megatron.use_distributed_optimizer"
+        )
+        optimizer_offload_key = (
+            "actor_rollout_ref.actor.megatron.optimizer_offload"
+        )
+        recompute_key = (
+            "actor_rollout_ref.actor.megatron."
+            "override_transformer_config.recompute_granularity"
+        )
+        reference = {
+            **self.base,
+            distributed_key: False,
+            optimizer_offload_key: False,
+            recompute_key: None,
+        }
+        trial = {
+            "trial_id": 1,
+            "parameters": reference,
+            "memory_by_phase_pct": {
+                phase: {"max": 80.0}
+                for phase in ("rollout", "actor_log_prob", "ref_log_prob", "training")
+            },
+        }
+        changes = {
+            distributed_key: {"from": False, "to": True},
+            optimizer_offload_key: {"from": False, "to": True},
+            recompute_key: {"from": None, "to": "full"},
+        }
+        targets = {key: value["to"] for key, value in changes.items()}
+        registry = self.registry()
+        result = registry.execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": changes,
+                "parameters": targets,
+                "reference_trial_id": 1,
+            },
+            registry.runtime(
+                {"current_parameters": reference, "recent_trials": [trial]}
+            ),
+        )
+        training = result["phases"]["training"]
+        self.assertEqual(
+            training["model"],
+            "fixed_model_optimizer_activation_components",
+        )
+        self.assertGreater(training["pressure_ratio"], 0.60)
+        self.assertLess(training["pressure_ratio"], 0.75)
+        self.assertEqual(
+            sum(training["component_shares"].values()),
+            1.0,
+        )
+
+    def test_memory_estimator_rejects_reference_mismatch(self) -> None:
+        trial = {
+            "trial_id": 1,
+            "parameters": self.base,
+            "memory_by_phase_pct": {
+                phase: {"max": 50.0}
+                for phase in ("rollout", "actor_log_prob", "ref_log_prob", "training")
+            },
+        }
+        context = {
+            "current_parameters": self.base,
+            "recent_trials": [trial],
+        }
+        registry = self.registry()
+        with self.assertRaisesRegex(RuntimeError, "does not match reference trial"):
+            registry.execute(
+                "proposal",
+                "memory_estimator",
+                {
+                    "changes": {
+                        "actor_rollout_ref.rollout.gpu_memory_utilization": {
+                            "from": 0.4,
+                            "to": 0.7,
+                        }
+                    },
+                    "parameters": {
+                        "actor_rollout_ref.rollout.gpu_memory_utilization": 0.7
+                    },
+                    "reference_trial_id": 1,
+                },
+                registry.runtime(context),
+            )
 
     def test_search_verl_docs_is_bounded_to_configured_root(self) -> None:
         source = self.temp_root / "verl" / "workers" / "config" / "actor.py"

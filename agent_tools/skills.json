@@ -60,25 +60,40 @@
       "name": "memory_estimator",
       "handler": "memory_estimator",
       "roles": ["proposal", "feasibility"],
-      "description": "Estimate rollout, actor-log-prob, ref-log-prob, and training memory. It anchors projections to phase-tagged trial measurements when available and otherwise returns only relative pressure.",
+      "description": "Estimate rollout, actor-log-prob, ref-log-prob, and training memory from an explicit measured reference trial. The estimator uses a vLLM-budget model for rollout and fixed/model/optimizer/activation components for compute phases. Read projected_pct together with upper_bound_pct, risk, confidence, and uncalibrated_changes; risk is based on the uncertainty upper bound. Pass each change as {\"from\": reference value, \"to\": target value}, repeat the target values in parameters, and provide reference_trial_id.",
       "parameters": {
         "type": "object",
         "properties": {
           "changes": {
             "type": "object",
-            "description": "Candidate Hydra parameter changes relative to the current configuration",
-            "additionalProperties": true
+            "minProperties": 1,
+            "description": "Changed Hydra parameters. Every value must contain from (the explicit value in the reference trial, or null if absent) and to (the target value).",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "description": "Value in the selected reference trial; use null only when the parameter is absent there"
+                },
+                "to": {
+                  "description": "Candidate target value used by the estimator"
+                }
+              },
+              "required": ["from", "to"],
+              "additionalProperties": false
+            }
           },
           "parameters": {
             "type": "object",
-            "description": "Optional full or partial candidate parameter mapping",
+            "minProperties": 1,
+            "description": "Target-value mapping for the same changed parameters, for example {\"parameter.name\": 0.7}",
             "additionalProperties": true
           },
           "reference_trial_id": {
             "type": "integer",
-            "description": "Optional explicit empirical reference trial"
+            "description": "Required trial whose parameters and measured phase peaks are the proportional-estimation baseline"
           }
         },
+        "required": ["changes", "parameters", "reference_trial_id"],
         "additionalProperties": false
       }
     },
