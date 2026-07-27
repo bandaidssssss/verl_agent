@@ -30,7 +30,7 @@ if str(ROOT) not in sys.path:
 from metrics import parse_step_records
 
 
-DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0723_1550_2026"
+DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0724_1741_2026"
 DEFAULT_OUTPUT_NAME = "trial_metrics_report.md"
 
 PHASE_ORDER = (

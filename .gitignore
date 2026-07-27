@@ -7,3 +7,5 @@ id_ed25519.pub
 **/__pycache__/
 *.py[cod]
 **/.pytest_cache/
+__pycache__/
+*.pyc
