@@ -427,9 +427,7 @@ class AgentSet:
                 context,
                 {
                     "failure_type": error_type,
-                    "training_substage": context.get("trial", {}).get("failure_phase")
-                    or context.get("trial", {}).get("resource", {}).get("memory_bottleneck")
-                    or "unknown",
+                    "training_substage": context.get("trial", {}).get("failure_phase") or "unknown",
                     "evidence": context.get("trial", {}).get("error", {}).get("evidence", []),
                     "reason": "deterministic log classification",
                     "confidence": 1.0 if error_type != "UNKNOWN_FAILURE" else 0.3,

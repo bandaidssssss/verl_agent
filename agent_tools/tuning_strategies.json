@@ -1,67 +1,197 @@
 {
   "data": {
     "rollout_memory_pressure": {
-      "evidence": ["rollout is memory_bottleneck", "rollout phase peak approaches the configured safety line", "OOM occurs during generate_sequences"],
-      "ordered_actions": [
-        "Reduce rollout.gpu_memory_utilization first when vLLM KV cache reservation is the dominant pressure.",
-        "Reduce rollout.max_num_batched_tokens or max_num_seqs when scheduling concurrency creates the peak.",
-        "Enable chunked prefill for long prompts; validate end-to-end throughput because scheduling overhead can increase.",
-        "Increase rollout TP only when weight/KV sharding benefits exceed added communication cost."
+      "stages": ["hardware_repair", "hardware_tuning"],
+      "purpose": "Repair genuine rollout memory pressure without treating the phase with the largest relative peak as an automatic bottleneck.",
+      "trigger_labels": ["OOM_ROLLOUT", "MEMORY_HEADROOM_EXCEEDED"],
+      "required_evidence": [
+        "Use this strategy only when generate_sequences failed with an allocation or KV-cache OOM, the measured rollout peak reaches the active stage memory limit, or the memory estimator rollout upper_bound_pct crosses that limit with elevated risk.",
+        "For MEMORY_HEADROOM_EXCEEDED, require training_substage=rollout or direct rollout-phase evidence."
       ],
-      "do_not": ["Do not infer phase safety from an idle live_gpu_snapshot.", "Do not change rollout.n during hardware tuning when the token budget is frozen."]
+      "insufficient_evidence": [
+        "resource.memory_bottleneck=rollout by itself; that field only identifies the largest measured phase peak.",
+        "Rollout has the highest phase memory but remains comfortably below the active memory limit.",
+        "An idle or out-of-trial live_gpu_snapshot."
+      ],
+      "ordered_actions": [
+        "Decrease actor_rollout_ref.rollout.gpu_memory_utilization only when rollout-engine or KV-cache reservation is the demonstrated source of pressure.",
+        "Decrease actor_rollout_ref.rollout.max_num_batched_tokens when the active scheduler token batch creates the peak; this cap has no effect when it is not reached.",
+        "Decrease actor_rollout_ref.rollout.max_num_seqs when concurrent runnable sequences create the peak; this cap has no effect when it is not reached.",
+        "Increase actor_rollout_ref.rollout.tensor_model_parallel_size only when model or KV sharding is required for feasibility and the added generation communication is acceptable."
+      ],
+      "do_not": [
+        "Do not change fixed workload or profile parameters.",
+        "Do not combine rollout repair with unrelated actor or ref tuning.",
+        "Do not describe a memory reduction as a throughput improvement until a real trial confirms end-to-end throughput."
+      ]
     },
     "actor_logprob_memory_pressure": {
-      "evidence": ["actor_log_prob is memory_bottleneck", "OOM occurs around compute_log_prob"],
+      "stages": ["hardware_repair", "hardware_tuning"],
+      "purpose": "Repair genuine actor old-log-prob memory pressure in the actor_log_prob phase.",
+      "trigger_labels": ["OOM_ACTOR_LOGPROB", "MEMORY_HEADROOM_EXCEEDED"],
+      "required_evidence": [
+        "Use this strategy only when compute_log_prob failed with OOM, the measured actor_log_prob peak reaches the active stage memory limit, or the memory estimator actor_log_prob upper_bound_pct crosses that limit with elevated risk.",
+        "For MEMORY_HEADROOM_EXCEEDED, require training_substage=actor_log_prob or direct actor_log_prob evidence."
+      ],
+      "insufficient_evidence": [
+        "resource.memory_bottleneck=actor_log_prob by itself.",
+        "actor_log_prob has the highest relative peak but remains comfortably below the active memory limit."
+      ],
       "ordered_actions": [
-        "Reduce rollout.log_prob_micro_batch_size_per_gpu.",
-        "Keep remove-padding enabled for variable-length sequences.",
-        "Use actor parameter offload only if transfer overhead is acceptable.",
-        "Revisit actor TP after micro-batch changes; larger TP lowers per-rank model pressure but adds collectives."
+        "When actor_rollout_ref.actor.use_dynamic_bsz is false, decrease actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu first and validate the installed backend's local batching constraints.",
+        "Enable actor_rollout_ref.actor.megatron.sequence_parallel only when actor_rollout_ref.actor.megatron.tensor_model_parallel_size is greater than one, long-sequence activation pressure is credible, and backend support is known.",
+        "Increase actor_rollout_ref.actor.megatron.tensor_model_parallel_size only when sharding headroom is needed and world-size divisibility remains valid.",
+        "Increase actor_rollout_ref.actor.megatron.pipeline_model_parallel_size only as a later feasibility control when lower-overhead controls cannot fit the actor model."
+      ],
+      "do_not": [
+        "Do not treat actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu as authoritative when dynamic batching controls the phase.",
+        "Do not change actor topology without revalidating data-parallel size and PPO mini/micro batching.",
+        "Do not combine actor_log_prob repair with unrelated rollout or ref tuning."
       ]
     },
     "ref_logprob_memory_pressure": {
-      "evidence": ["ref_log_prob is memory_bottleneck", "OOM occurs around compute_ref_log_prob"],
+      "stages": ["hardware_repair", "hardware_tuning"],
+      "purpose": "Repair genuine reference log-prob memory pressure in the ref_log_prob phase.",
+      "trigger_labels": ["OOM_REF_LOGPROB", "MEMORY_HEADROOM_EXCEEDED"],
+      "required_evidence": [
+        "Use this strategy only when compute_ref_log_prob failed with OOM, the measured ref_log_prob peak reaches the active stage memory limit, or the memory estimator ref_log_prob upper_bound_pct crosses that limit with elevated risk.",
+        "For MEMORY_HEADROOM_EXCEEDED, require training_substage=ref_log_prob or direct ref_log_prob evidence."
+      ],
+      "insufficient_evidence": [
+        "resource.memory_bottleneck=ref_log_prob by itself.",
+        "ref_log_prob has the highest relative peak but remains comfortably below the active memory limit."
+      ],
       "ordered_actions": [
-        "Reduce ref.log_prob_micro_batch_size_per_gpu.",
-        "Keep ref.param_offload enabled if host memory and transfer bandwidth permit.",
-        "Increase ref TP/PP only with valid divisibility and measured communication trade-offs."
+        "When actor_rollout_ref.actor.use_dynamic_bsz is false, decrease actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu first and validate the installed backend's local batching constraints.",
+        "Enable actor_rollout_ref.ref.megatron.sequence_parallel only when actor_rollout_ref.ref.megatron.tensor_model_parallel_size is greater than one, long-sequence activation pressure is credible, and backend support is known.",
+        "Increase actor_rollout_ref.ref.megatron.tensor_model_parallel_size only when sharding headroom is needed and world-size divisibility remains valid.",
+        "Increase actor_rollout_ref.ref.megatron.pipeline_model_parallel_size only as a later feasibility control when lower-overhead controls cannot fit the reference model."
+      ],
+      "do_not": [
+        "Do not treat actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu as authoritative when dynamic batching controls the phase.",
+        "Do not change ref topology without revalidating its micro-batch legality and world-size divisibility.",
+        "Do not combine ref_log_prob repair with unrelated actor or rollout tuning."
       ]
     },
     "training_memory_pressure": {
-      "evidence": ["training is memory_bottleneck", "OOM occurs around update_actor"],
+      "stages": ["hardware_repair", "hardware_tuning"],
+      "purpose": "Repair genuine actor training memory pressure in update_actor.",
+      "trigger_labels": ["OOM_TRAINING", "MEMORY_HEADROOM_EXCEEDED"],
+      "required_evidence": [
+        "Use this strategy only when update_actor failed with OOM, the measured training peak reaches the active stage memory limit, or the memory estimator training upper_bound_pct crosses that limit with elevated risk.",
+        "For MEMORY_HEADROOM_EXCEEDED, require training_substage=training or direct update_actor evidence."
+      ],
+      "insufficient_evidence": [
+        "resource.memory_bottleneck=training by itself.",
+        "Training has the highest relative peak but remains comfortably below the active memory limit."
+      ],
       "ordered_actions": [
-        "Reduce actor.ppo_micro_batch_size_per_gpu while preserving mini-batch divisibility.",
-        "Enable or strengthen activation recomputation.",
-        "Keep sequence parallel and distributed optimizer enabled where supported.",
-        "Use optimizer/parameter offload for feasibility, then measure the transfer penalty before accepting it as throughput-optimal.",
-        "Increase actor TP or PP only after cheaper local-memory controls are exhausted."
+        "When actor_rollout_ref.actor.use_dynamic_bsz is false, decrease actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu first while preserving backend-normalized PPO mini/micro divisibility.",
+        "Enable actor_rollout_ref.actor.megatron.sequence_parallel only when actor_rollout_ref.actor.megatron.tensor_model_parallel_size is greater than one, long-sequence activation pressure is credible, and backend support is known.",
+        "Increase actor_rollout_ref.actor.megatron.tensor_model_parallel_size only when sharding headroom is needed and world-size divisibility remains valid.",
+        "Increase actor_rollout_ref.actor.megatron.pipeline_model_parallel_size only as a later feasibility control when lower-overhead controls cannot fit training."
+      ],
+      "do_not": [
+        "Do not treat actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu as authoritative when dynamic batching controls training.",
+        "Do not change actor topology without revalidating data-parallel size and PPO mini/micro batching.",
+        "Do not change fixed workload, recompute, offload, or other profile parameters."
       ]
     },
     "low_gpu_utilization": {
-      "evidence": ["phase utilization is low while memory has headroom", "step time is high without memory pressure"],
-      "ordered_actions": [
-        "Identify the slowest phase before changing parameters.",
-        "Increase only the micro-batch or concurrency control owned by that phase.",
-        "For rollout, test max_num_batched_tokens/max_num_seqs before raising KV-cache reservation.",
-        "For actor/ref, increase micro batch one valid divisibility step at a time."
+      "stages": ["hardware_tuning"],
+      "purpose": "Treat low sampled GPU utilization as a symptom to diagnose, not as proof that a larger batch or greater concurrency will improve throughput.",
+      "required_evidence": [
+        "Use steady-state trial samples after warmup rather than live_gpu_snapshot.",
+        "Require the phase to contribute materially to time_per_step and have memory headroom.",
+        "Check for scheduling, CPU, Ray, data, phase-transition, and communication waiting before attributing low utilization to undersized GPU work.",
+        "Use paired trial history or binding-limit evidence whenever available."
+      ],
+      "insufficient_evidence": [
+        "A low phase utilization mean by itself.",
+        "A phase being performance.time_bottleneck by itself.",
+        "A single low-utilization sample or an idle live_gpu_snapshot."
+      ],
+      "phase_actions": {
+        "rollout": [
+          "Increase actor_rollout_ref.rollout.max_num_batched_tokens only when the current token cap is reached, pending token work exists, and rollout memory has headroom.",
+          "Increase actor_rollout_ref.rollout.max_num_seqs only when the current sequence cap is reached, enough runnable requests exist, and rollout memory has headroom.",
+          "Increase actor_rollout_ref.rollout.gpu_memory_utilization only when KV-cache capacity is binding; it is a memory budget, not a compute-utilization target.",
+          "Decrease actor_rollout_ref.rollout.tensor_model_parallel_size only when communication overhead is evidenced and the model plus KV cache remain memory-feasible."
+        ],
+        "actor_log_prob": [
+          "When dynamic batching is disabled, increase actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu one valid step only when actor_log_prob memory has headroom.",
+          "Decrease actor_rollout_ref.actor.megatron.tensor_model_parallel_size or actor_rollout_ref.actor.megatron.pipeline_model_parallel_size, or disable actor_rollout_ref.actor.megatron.sequence_parallel, only when communication overhead is evidenced and all affected actor_log_prob and training memory projections remain safe."
+        ],
+        "ref_log_prob": [
+          "When dynamic batching is disabled, increase actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu one valid step only when ref_log_prob memory has headroom.",
+          "Decrease actor_rollout_ref.ref.megatron.tensor_model_parallel_size or actor_rollout_ref.ref.megatron.pipeline_model_parallel_size, or disable actor_rollout_ref.ref.megatron.sequence_parallel, only when communication overhead is evidenced and ref_log_prob memory remains safe."
+        ],
+        "training": [
+          "When dynamic batching is disabled, increase actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu one valid divisibility step only when training memory has headroom.",
+          "Decrease actor_rollout_ref.actor.megatron.tensor_model_parallel_size or actor_rollout_ref.actor.megatron.pipeline_model_parallel_size, or disable actor_rollout_ref.actor.megatron.sequence_parallel, only when communication overhead is evidenced and both training and actor_log_prob memory remain safe."
+        ]
+      },
+      "do_not": [
+        "Do not modify more than one phase family unless the extra changes are mandatory topology or divisibility dependencies.",
+        "Do not raise multiple rollout capacity ceilings speculatively when no ceiling is known to be binding.",
+        "If no allowed parameter has actionable evidence, keep the current configuration instead of forcing a change."
       ]
     },
     "communication_bottleneck": {
-      "evidence": ["high TP/PP with low compute utilization", "distributed/NCCL/BKCL timing dominates", "larger sharding reduced throughput"],
+      "stages": ["hardware_tuning"],
+      "purpose": "Reduce demonstrated communication overhead while preserving memory feasibility and legal topology.",
+      "required_evidence": [
+        "Require NCCL/BKCL or distributed timing evidence, a relevant log excerpt, or paired trials showing that greater sharding reduced end-to-end throughput.",
+        "Identify whether the evidence belongs to rollout, actor_log_prob, ref_log_prob, or training before changing topology."
+      ],
+      "insufficient_evidence": [
+        "High TP or PP by itself.",
+        "Low GPU utilization by itself.",
+        "A generic NCCL/BKCL failure without evidence that a legal topology change addresses it."
+      ],
       "ordered_actions": [
-        "Prefer the smallest TP/PP that remains memory-feasible.",
-        "Keep each TP*PP group divisible into world size.",
-        "Compare end-to-end time, not one isolated phase, because actor, rollout, and ref use different layouts.",
-        "Treat backend-specific environment tuning as platform configuration, not an LLM-adjustable training parameter."
+        "For rollout, test a smaller actor_rollout_ref.rollout.tensor_model_parallel_size only when rollout memory remains safe.",
+        "For actor_log_prob or training, test smaller actor_rollout_ref.actor.megatron.tensor_model_parallel_size or actor_rollout_ref.actor.megatron.pipeline_model_parallel_size only when both actor phases remain safe.",
+        "For ref_log_prob, test smaller actor_rollout_ref.ref.megatron.tensor_model_parallel_size or actor_rollout_ref.ref.megatron.pipeline_model_parallel_size only when ref memory remains safe.",
+        "Disable the phase's actor_rollout_ref.actor.megatron.sequence_parallel or actor_rollout_ref.ref.megatron.sequence_parallel only when its collective cost is evidenced and activation memory has headroom.",
+        "After actor topology changes, revalidate data-parallel size and PPO mini/micro batching; after ref topology changes, revalidate ref micro-batch legality."
+      ],
+      "do_not": [
+        "Do not change actor, rollout, and ref layouts together in one trial.",
+        "Do not treat backend environment tuning as an LLM-adjustable parameter.",
+        "Do not accept an isolated phase improvement that lowers end-to-end throughput."
       ]
     },
     "end_to_end_throughput": {
-      "evidence": ["hardware trial is feasible", "phase timings and phase memory are available"],
-      "ordered_actions": [
-        "Optimize the measured time_bottleneck while checking all four phase memory projections.",
-        "Keep workload token budget fixed so throughput comparisons remain fair.",
-        "Reject local wins that increase time_per_step or lower end-to-end throughput.",
-        "Require repeated improvement above the plateau threshold before keeping a more complex configuration."
+      "stages": ["hardware_tuning"],
+      "purpose": "Choose the most actionable hardware hypothesis for end-to-end throughput rather than automatically optimizing the longest or highest-memory phase.",
+      "required_evidence": [
+        "Use a feasible reference trial with steady-state throughput, time_per_step, phase durations, phase GPU utilization, and phase memory after warmup.",
+        "Keep workload and profile parameters fixed so trials remain comparable.",
+        "Use relevant paired trial history when it exists."
+      ],
+      "phase_selection": [
+        "Estimate each phase's contribution to time_per_step.",
+        "For each phase, check whether an allowed parameter is demonstrably binding, undersized, communication-heavy, or memory-constrained.",
+        "Rank hypotheses by expected end-to-end gain, evidence quality, memory safety, and reversibility; the longest phase is only a prioritization signal.",
+        "Choose the best actionable hypothesis even when it belongs to the second-longest phase.",
+        "Keep the current configuration when no allowed parameter has sufficient evidence."
+      ],
+      "change_policy": [
+        "max_parameter_changes is a hard safety ceiling, not a target.",
+        "Use one causal hypothesis and one phase family per trial.",
+        "Use the smallest sufficient change set; multiple parameters are appropriate only for mandatory topology, divisibility, or scheduler coupling.",
+        "Check all four memory-estimator upper bounds and risks before accepting a hardware candidate."
+      ],
+      "acceptance": [
+        "Judge the real trial by end-to-end throughput and time_per_step under the fixed workload.",
+        "Reject a local phase win that reduces end-to-end throughput or violates any phase memory limit.",
+        "Treat uncalibrated estimator effects as hypotheses requiring a short real trial."
+      ],
+      "do_not": [
+        "Do not optimize performance.time_bottleneck solely because it is the longest phase.",
+        "Do not optimize resource.memory_bottleneck solely because it has the largest relative memory peak.",
+        "Do not mix unrelated actor, rollout, and ref changes to consume the configured change allowance."
       ]
     },
     "kl_explosion": {
@@ -83,12 +213,19 @@
       ]
     },
     "platform_portability": {
-      "evidence": ["moving between V5000, NVIDIA, or MetaX C550", "SMI or communication backend differs"],
-      "ordered_actions": [
+      "stages": ["hardware_repair", "hardware_tuning"],
+      "purpose": "Re-establish a measured hardware baseline after changing GPU family or runtime without turning platform-profile choices into tuning parameters.",
+      "required_evidence": ["GPU family, SMI command, communication backend, runtime allocator, or device memory capacity differs from the reference environment."],
+      "fixed_profile_actions": [
         "Select the platform environment script outside the LLM parameter space.",
         "Use GPU_SMI only as a fixed command override.",
         "Re-run a short resource gate on every hardware family before trusting old memory observations.",
         "Do not transfer absolute memory percentages across devices with different capacity or runtime allocators."
+      ],
+      "do_not": [
+        "Do not modify workload or profile parameters merely because the platform changed.",
+        "Do not reuse old phase-memory calibration until the new platform has produced a successful measured reference trial.",
+        "Do not infer a hardware-normal parameter direction from the platform name alone."
       ]
     }
   }

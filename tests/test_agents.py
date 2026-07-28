@@ -257,5 +257,31 @@ class TrainHealthRulesAgentTest(unittest.TestCase):
         self.assertEqual(run.result["action"], "stop")
 
 
+class DiagnosisRulesAgentTest(unittest.TestCase):
+    def test_memory_bottleneck_alone_does_not_assign_failure_substage(self) -> None:
+        config = load_json(ROOT / "config" / "agent_config.json")
+        config["stream_agent_events"] = False
+        with tempfile.TemporaryDirectory() as directory:
+            agents = AgentSet(
+                ROOT,
+                "rules",
+                config,
+                Path(directory) / "trials.jsonl",
+            )
+            run = agents.diagnose(
+                {
+                    "trial": {
+                        "error": {
+                            "type": "CUDA_OUT_OF_MEMORY",
+                            "evidence": ["allocation failed without a classified phase"],
+                        },
+                        "resource": {"memory_bottleneck": "rollout"},
+                    }
+                }
+            )
+
+        self.assertEqual(run.result["training_substage"], "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,7 @@
 
 诊断原则：
 
-1. 先使用结构化 `failure_phase`、`memory_bottleneck`、错误类型和 evidence。
+1. 先使用结构化 `failure_phase`、错误类型和 evidence；再把对应阶段的实测显存峰值与当前安全线比较。`memory_bottleneck` 只表示四个阶段中实测峰值相对最高的阶段，不能单独证明该阶段存在显存压力，也不能单独用于失败归因。
 2. 证据不足时调用 `read_trial_log_excerpt`，按 OOM、NCCL/BKCL、NaN、Ray/worker 等关键词读取小段日志。
 3. 参数语义或 verl 行为不确定时调用 `parameter_understanding` 或 `search_verl_docs`。
 4. `live_gpu_snapshot` 只能补充当前宿主机状态，不能反推失败发生时的阶段显存。

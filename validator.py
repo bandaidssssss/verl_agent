@@ -6,36 +6,27 @@ from typing import Any, Mapping, Sequence
 
 
 HARDWARE_PARAMETERS = {
-    "data.train_batch_size",
-    "data.max_prompt_length",
-    "data.max_response_length",
-    "actor_rollout_ref.actor.use_dynamic_bsz",
+    # Actor training batching.
     "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
-    "actor_rollout_ref.actor.ppo_mini_batch_size",
+
+    # Actor training topology.
     "actor_rollout_ref.actor.megatron.tensor_model_parallel_size",
     "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size",
     "actor_rollout_ref.actor.megatron.sequence_parallel",
-    "actor_rollout_ref.actor.megatron.use_distributed_optimizer",
-    "actor_rollout_ref.actor.megatron.use_remove_padding",
-    "actor_rollout_ref.actor.megatron.optimizer_offload",
-    "actor_rollout_ref.actor.megatron.param_offload",
-    "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_granularity",
-    "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_modules",
-    "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method",
-    "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_num_layers",
+
+    # Rollout generation.
     "actor_rollout_ref.rollout.tensor_model_parallel_size",
-    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
     "actor_rollout_ref.rollout.gpu_memory_utilization",
     "actor_rollout_ref.rollout.max_num_batched_tokens",
     "actor_rollout_ref.rollout.max_num_seqs",
-    "actor_rollout_ref.rollout.free_cache_engine",
-    "actor_rollout_ref.rollout.enable_chunked_prefill",
-    "actor_rollout_ref.rollout.enable_prefix_caching",
-    "actor_rollout_ref.rollout.enforce_eager",
+
+    # Actor old-log-prob.
+    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
+
+    # Reference log-prob batching and topology.
     "actor_rollout_ref.ref.megatron.tensor_model_parallel_size",
     "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size",
     "actor_rollout_ref.ref.megatron.sequence_parallel",
-    "actor_rollout_ref.ref.megatron.param_offload",
     "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
 }
 

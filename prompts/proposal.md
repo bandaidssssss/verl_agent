@@ -57,10 +57,10 @@
 决策原则：
 
 - `hardware_repair`：只修复 diagnosis 指明的训练子阶段，优先降低资源压力。
-- `hardware_tuning`：端到端吞吐是性能目标；依据 phase duration、GPU utilization 和 phase memory，只调整当前瓶颈参数组。
+- `hardware_tuning`：端到端吞吐是性能目标；综合 phase duration 占比、稳态 GPU utilization、phase memory 余量、参数是否真正命中限制以及历史 Trial 响应，选择一个最有证据且可操作的阶段。耗时最长或显存最高本身不足以证明该阶段应该被调整。
 - `stability_tuning`：冻结硬件参数，只根据 reward、KL、entropy、pg_loss、clipfrac 调整优化行为。
 - `confirm`：核心参数冻结，不提出修改。
-- 一次修改不得超过 `max_parameter_changes`。整除关系需要联动时，所有联动修改都计入数量。
+- 一次修改不得超过 `max_parameter_changes`；该值是硬安全上限，不是期望修改数量。默认一个 Trial 只验证一个因果假设和一个阶段参数族，并使用能验证该假设的最小修改集合；只有拓扑、整除或调度约束要求联动时才同时修改多个参数，且所有联动修改都计入数量。
 - 不得输出历史中已经运行过的完整配置。
 - 上一次建议被拒绝后，必须正面处理拒绝原因，不能原样重复。
 - 每个修改参数必须分别写出真实旧值 `from`、目标值 `to` 和该项修改原因。`from` 必须与当前参数完全一致，不能根据最近一个 trial 猜测。
