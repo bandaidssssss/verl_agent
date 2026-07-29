@@ -20,6 +20,9 @@ from pathlib import Path
 
 DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0724_1741_2026"
 DEFAULT_OUTPUT_NAME = "agent_report.md"
+PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
+DEFAULT_THROUGHPUT_MEMORY_LIMIT_PCT = 92.0
+DEFAULT_RESOURCE_MEMORY_LIMIT_PCT = 95.0
 
 
 def _compact_json(obj, max_len=120):
@@ -355,9 +358,78 @@ def _fmt(val, spec=".1f"):
     return format(val, spec)
 
 
-def extract_metrics(trial: dict) -> str:
+def _load_memory_limits(exp_dir: Path) -> dict[str, float]:
+    """读取报告使用的显存线；实验配置快照优先，当前项目配置兜底。"""
+    candidates = [
+        exp_dir / "agent_config.json",
+        Path(__file__).resolve().parents[1] / "config" / "agent_config.json",
+    ]
+    config = {}
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict):
+            config = value
+            break
+
+    return {
+        "throughput": float(
+            config.get(
+                "throughput_memory_limit_pct",
+                DEFAULT_THROUGHPUT_MEMORY_LIMIT_PCT,
+            )
+        ),
+        "resource": float(
+            config.get(
+                "resource_memory_limit_pct",
+                DEFAULT_RESOURCE_MEMORY_LIMIT_PCT,
+            )
+        ),
+    }
+
+
+def _peak_gpu(memory_by_gpu: dict, phase: str) -> str:
+    """返回某阶段实测峰值最高的 GPU 编号。"""
+    if not isinstance(memory_by_gpu, dict):
+        return "-"
+    phase_values = memory_by_gpu.get(phase)
+    if not isinstance(phase_values, dict):
+        return "-"
+
+    candidates = []
+    for gpu, summary in phase_values.items():
+        if not isinstance(summary, dict):
+            continue
+        peak = summary.get("max")
+        if isinstance(peak, (int, float)) and not isinstance(peak, bool):
+            candidates.append((float(peak), str(gpu)))
+    if not candidates:
+        return "-"
+    return f"GPU {max(candidates)[1]}"
+
+
+def _memory_headroom(limit: float, peak) -> str:
+    """格式化显存峰值到阈值的余量；负值表示已经越线。"""
+    if not isinstance(peak, (int, float)) or isinstance(peak, bool):
+        return "-"
+    margin = limit - float(peak)
+    return f"{margin:+.1f}"
+
+
+def extract_metrics(
+    trial: dict,
+    memory_limits: dict[str, float] | None = None,
+) -> str:
     """提取关键指标。"""
     lines = ["### 关键指标", ""]
+    memory_limits = memory_limits or {
+        "throughput": DEFAULT_THROUGHPUT_MEMORY_LIMIT_PCT,
+        "resource": DEFAULT_RESOURCE_MEMORY_LIMIT_PCT,
+    }
 
     perf = trial.get("performance", {})
     if perf:
@@ -387,7 +459,7 @@ def extract_metrics(trial: dict) -> str:
             lines.append("")
             lines.append("| 阶段 | 均值 | P95 | 最大 |")
             lines.append("|---|---|---|---|")
-            for pname in ["rollout", "actor_log_prob", "ref_log_prob", "training"]:
+            for pname in PHASES:
                 p = phase.get(pname, {})
                 if p:
                     lines.append(
@@ -421,10 +493,48 @@ def extract_metrics(trial: dict) -> str:
             lines.append(f"| Response Length | {_fmt(resp_len.get('mean'), '.1f')} | {_fmt(resp_len.get('p95'), '.1f')} | {_fmt(resp_len.get('max'), '.1f')} |")
         lines.append("")
 
+    phase_memory = trial.get("memory_by_phase_pct", {})
+    memory_by_gpu = trial.get("memory_by_phase_gpu_pct", {})
     resource = trial.get("resource", {})
-    if resource:
-        lines.append(f"- **显存瓶颈**: {resource.get('memory_bottleneck', '-')}")
-        lines.append(f"- **峰值显存**: {resource.get('max_observed_memory_pct', '-'):.1f}%")
+    if isinstance(phase_memory, dict) and phase_memory:
+        throughput_limit = memory_limits["throughput"]
+        resource_limit = memory_limits["resource"]
+        lines.append("**分阶段实测显存占用 (%):**")
+        lines.append("")
+        lines.append(
+            "| 阶段 | 均值 | P95 | 最大 | 峰值 GPU | "
+            f"到吞吐线 {throughput_limit:.1f}% 的余量 | "
+            f"到硬停止线 {resource_limit:.1f}% 的余量 |"
+        )
+        lines.append("|---|---:|---:|---:|---:|---:|---:|")
+        for pname in PHASES:
+            summary = phase_memory.get(pname)
+            if not isinstance(summary, dict):
+                continue
+            peak = summary.get("max")
+            lines.append(
+                f"| {pname} | {_fmt(summary.get('mean'), '.1f')} | "
+                f"{_fmt(summary.get('p95'), '.1f')} | {_fmt(peak, '.1f')} | "
+                f"{_peak_gpu(memory_by_gpu, pname)} | "
+                f"{_memory_headroom(throughput_limit, peak)} | "
+                f"{_memory_headroom(resource_limit, peak)} |"
+            )
+        lines.append("")
+        lines.append(
+            f"_余量为负数表示峰值已经越线；{throughput_limit:.1f}% 是 "
+            f"hardware throughput 候选接受线，{resource_limit:.1f}% "
+            "是运行时资源硬停止线。_"
+        )
+        lines.append("")
+
+    if isinstance(resource, dict) and resource:
+        relative_peak_phase = resource.get("memory_bottleneck", "-")
+        observed_peak = resource.get("max_observed_memory_pct")
+        lines.append(
+            f"- **相对最高显存阶段**: {relative_peak_phase} "
+            "（仅表示四阶段中峰值最高，不等于存在显存压力）"
+        )
+        lines.append(f"- **总体实测峰值**: {_fmt(observed_peak, '.1f')}%")
         lines.append("")
 
     return "\n".join(lines)
@@ -474,6 +584,7 @@ def process_experiment(exp_dir: Path, output_path: Path) -> None:
             line = line.strip()
             if line:
                 trials.append(json.loads(line))
+    memory_limits = _load_memory_limits(exp_dir)
 
     # agent_trace 随“候选 Trial”保存，但其中的 Agent 行为发生在上一个
     # Trial 完成之后。报告按被分析的源 Trial 归属，避免 Trial 5 这类
@@ -588,7 +699,7 @@ def process_experiment(exp_dir: Path, output_path: Path) -> None:
         prev_params = params
 
         # 关键指标
-        lines.append(extract_metrics(t))
+        lines.append(extract_metrics(t, memory_limits))
 
         # Health Monitor 决策发生在当前 Trial 运行期间。
         health_decisions = t.get("health_decisions") or []
