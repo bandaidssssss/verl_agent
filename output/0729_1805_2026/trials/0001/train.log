@@ -1339,3 +1339,163 @@ Training Progress:   0%|          | 0/10 [00:00<?, ?it/s]
 [36m(pid=1041900)[0m   warnings.warn(_BETA_TRANSFORMS_WARNING)
 [36m(pid=1041900)[0m /opt/conda/lib/python3.10/site-packages/torchvision/transforms/v2/__init__.py:54: UserWarning: The torchvision.datapoints and torchvision.transforms.v2 namespaces are still Beta. While we do not expect major breaking changes, some APIs may still change according to user feedback. Please submit any feedback you may have in this issue: https://github.com/pytorch/vision/issues/6753, and you can also check out https://github.com/pytorch/vision/issues/7319 to learn more about the APIs that we suspect might involve future changes. You can silence this warning by calling torchvision.disable_beta_transforms_warning().
 [36m(pid=1041900)[0m   warnings.warn(_BETA_TRANSFORMS_WARNING)
+[36m(pid=1041866)[0m W0729 18:07:47.714000 1041866 site-packages/torch/utils/cpp_extension.py:166] No CUDA runtime is found, using CUDA_HOME='/opt/maca/tools/cu-bridge'
+[36m(WorkerDict pid=1015774)[0m INFO:2026-07-29 18:07:44,916:Memory cleanup attempt 1: Freed 0.00 GB reserved, 0.00 GB allocated[32m [repeated 23x across cluster][0m
+[36m(pid=1041936)[0m /opt/conda/lib/python3.10/site-packages/torch/cuda/__init__.py:64: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.[32m [repeated 7x across cluster][0m
+[36m(pid=1041936)[0m   import pynvml  # type: ignore[import][32m [repeated 7x across cluster][0m
+[36m(pid=1041866)[0m WARNING:2026-07-29 18:07:47,943:fused_indices_to_multihot has reached end of life. Please migrate to a non-experimental function.
+[36m(AgentLoopWorker pid=1041866)[0m INFO Print the version information of mcoplib during compilation.
+[36m(AgentLoopWorker pid=1041866)[0m 
+[36m(AgentLoopWorker pid=1041866)[0m Version info:Mcoplib_Version = '0.3.1'
+[36m(AgentLoopWorker pid=1041866)[0m Build_Maca_Version = '3.3.0.15'
+[36m(AgentLoopWorker pid=1041866)[0m GIT_BRANCH = 'HEAD'
+[36m(AgentLoopWorker pid=1041866)[0m GIT_COMMIT = '836541d'
+[36m(AgentLoopWorker pid=1041866)[0m Vllm Op Version = 0.13.0
+[36m(AgentLoopWorker pid=1041866)[0m SGlang Op Version  = 0.5.7 
+[36m(AgentLoopWorker pid=1041866)[0m 
+[36m(AgentLoopWorker pid=1041866)[0m INFO Staring Check the current MACA version of the operating environment.
+[36m(AgentLoopWorker pid=1041866)[0m 
+[36m(AgentLoopWorker pid=1041866)[0m INFO: Release major.minor matching,  successful:3.3. 
+[36m(AgentLoopWorker pid=1041866)[0m 
+[36m(vLLMHttpServer pid=1027597)[0m WARNING 07-29 18:07:39 [api_router.py:27] LoRA dynamic loading & unloading is enabled in the API server. This should ONLY be used for local development![32m [repeated 7x across cluster][0m
+[36m(vLLMHttpServer pid=1027596)[0m WARNING 07-29 18:07:39 [model.py:1487] Default sampling parameters have been overridden by the model's Hugging Face generation config recommended from the model creator. If this is not intended, please relaunch vLLM instance with `--generation-config vllm`.[32m [repeated 7x across cluster][0m
+[36m(AgentLoopWorker pid=1041900)[0m 
+[36m(AgentLoopWorker pid=1041900)[0m 
+[36m(AgentLoopWorker pid=1041900)[0m 
+[36m(AgentLoopWorker pid=1041900)[0m 
+[36m(AgentLoopWorker pid=1041981)[0m 
+[36m(AgentLoopWorker pid=1041981)[0m 
+[36m(AgentLoopWorker pid=1041981)[0m 
+[36m(AgentLoopWorker pid=1041981)[0m 
+[36m(AgentLoopWorker pid=1041877)[0m 
+[36m(AgentLoopWorker pid=1041877)[0m 
+[36m(AgentLoopWorker pid=1041877)[0m 
+[36m(AgentLoopWorker pid=1041877)[0m 
+[36m(AgentLoopWorker pid=1041968)[0m 
+[36m(AgentLoopWorker pid=1041968)[0m 
+[36m(AgentLoopWorker pid=1041968)[0m 
+[36m(AgentLoopWorker pid=1041968)[0m 
+[36m(AgentLoopWorker pid=1041866)[0m Using dataset class: RLHFDataset
+[36m(AgentLoopWorker pid=1041912)[0m 
+[36m(AgentLoopWorker pid=1041912)[0m 
+[36m(AgentLoopWorker pid=1041912)[0m 
+[36m(AgentLoopWorker pid=1041912)[0m 
+[36m(AgentLoopWorker pid=1041975)[0m 
+[36m(AgentLoopWorker pid=1041975)[0m 
+[36m(AgentLoopWorker pid=1041975)[0m 
+[36m(AgentLoopWorker pid=1041975)[0m 
+[36m(AgentLoopWorker pid=1041936)[0m 
+[36m(AgentLoopWorker pid=1041936)[0m 
+[36m(AgentLoopWorker pid=1041936)[0m 
+[36m(AgentLoopWorker pid=1041936)[0m 
+[36m(AgentLoopWorker pid=1041866)[0m /mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/verl/utils/tokenizer.py:107: UserWarning: Failed to create processor: Unsupported processor type: Qwen2TokenizerFast. This may affect multimodal processing
+[36m(AgentLoopWorker pid=1041866)[0m   warnings.warn(f"Failed to create processor: {e}. This may affect multimodal processing", stacklevel=1)
+[36m(pid=1041936)[0m WARNING:2026-07-29 18:07:44,110:Skipping import of cpp extensions due to incompatible torch version 2.8.0+metax3.3.0.2 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m INFO:2026-07-29 18:07:44,096:Loading standard weights (non-FP8, async)[32m [repeated 7x across cluster][0m
+[36m(pid=1041936)[0m /opt/conda/lib/python3.10/site-packages/torchvision/transforms/v2/__init__.py:54: UserWarning: The torchvision.datapoints and torchvision.transforms.v2 namespaces are still Beta. While we do not expect major breaking changes, some APIs may still change according to user feedback. Please submit any feedback you may have in this issue: https://github.com/pytorch/vision/issues/6753, and you can also check out https://github.com/pytorch/vision/issues/7319 to learn more about the APIs that we suspect might involve future changes. You can silence this warning by calling torchvision.disable_beta_transforms_warning().[32m [repeated 14x across cluster][0m
+[36m(pid=1041936)[0m   warnings.warn(_BETA_TRANSFORMS_WARNING)[32m [repeated 14x across cluster][0m
+[36m(AgentLoopWorker pid=1041900)[0m You're using a Qwen2TokenizerFast tokenizer. Please note that with a fast tokenizer, using the `__call__` method is faster than using a method to encode the text followed by a call to the `pad` method to get a padded encoding.
+[36m(pid=1041936)[0m W0729 18:07:48.112000 1041936 site-packages/torch/utils/cpp_extension.py:166] No CUDA runtime is found, using CUDA_HOME='/opt/maca/tools/cu-bridge'[32m [repeated 7x across cluster][0m
+[36m(pid=1041936)[0m WARNING:2026-07-29 18:07:48,340:fused_indices_to_multihot has reached end of life. Please migrate to a non-experimental function.[32m [repeated 7x across cluster][0m
+[36m(pid=1046421)[0m /opt/conda/lib/python3.10/site-packages/torch/cuda/__init__.py:64: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+[36m(pid=1046421)[0m   import pynvml  # type: ignore[import]
+[36m(AgentLoopWorker pid=1041936)[0m /mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/verl/utils/tokenizer.py:107: UserWarning: Failed to create processor: Unsupported processor type: Qwen2TokenizerFast. This may affect multimodal processing[32m [repeated 7x across cluster][0m
+[36m(AgentLoopWorker pid=1041936)[0m   warnings.warn(f"Failed to create processor: {e}. This may affect multimodal processing", stacklevel=1)[32m [repeated 7x across cluster][0m
+[36m(pid=1046818)[0m WARNING:2026-07-29 18:07:56,772:Skipping import of cpp extensions due to incompatible torch version 2.8.0+metax3.3.0.2 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info[32m [repeated 8x across cluster][0m
+[36m(AgentLoopWorker pid=1041936)[0m You're using a Qwen2TokenizerFast tokenizer. Please note that with a fast tokenizer, using the `__call__` method is faster than using a method to encode the text followed by a call to the `pad` method to get a padded encoding.[32m [repeated 7x across cluster][0m
+[36m(pid=1046421)[0m W0729 18:07:59.789000 1046421 site-packages/torch/utils/cpp_extension.py:166] No CUDA runtime is found, using CUDA_HOME='/opt/maca/tools/cu-bridge'
+[36m(pid=1046818)[0m /opt/conda/lib/python3.10/site-packages/torch/cuda/__init__.py:64: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.[32m [repeated 7x across cluster][0m
+[36m(pid=1046818)[0m   import pynvml  # type: ignore[import][32m [repeated 7x across cluster][0m
+[36m(pid=1046423)[0m W0729 18:07:59.789000 1046423 site-packages/torch/utils/cpp_extension.py:166] No CUDA runtime is found, using CUDA_HOME='/opt/maca/tools/cu-bridge'
+[36m(pid=1046421)[0m WARNING:2026-07-29 18:08:00,218:fused_indices_to_multihot has reached end of life. Please migrate to a non-experimental function.
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:08:52,976:Before rollout offload, memory allocated (GB): 46.67, memory reserved (GB): 48.19, device memory used/total (GB): 50.50/63.59
+[36m(pid=1046818)[0m W0729 18:08:00.278000 1046818 site-packages/torch/utils/cpp_extension.py:166] No CUDA runtime is found, using CUDA_HOME='/opt/maca/tools/cu-bridge'[32m [repeated 6x across cluster][0m
+[36m(pid=1046818)[0m WARNING:2026-07-29 18:08:00,569:fused_indices_to_multihot has reached end of life. Please migrate to a non-experimental function.[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:08:53,454:After rollout offload, memory allocated (GB): 46.67, memory reserved (GB): 46.87, device memory used/total (GB): 6.28/63.59
+[36m(WorkerDict pid=1015773)[0m INFO:2026-07-29 18:08:53,898:Memory cleanup attempt 1: Freed 0.00 GB reserved, 0.00 GB allocated
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:08:54,420:compute_log_prob Before compute_log_prob, memory allocated (GB): 46.67, memory reserved (GB): 46.87, device memory used/total (GB): 6.28/63.59
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:08:54,421:megatron actor Before compute_log_prob, memory allocated (GB): 46.67, memory reserved (GB): 46.87, device memory used/total (GB): 6.28/63.59
+[36m(WorkerDict pid=1015773)[0m WARNING:2026-07-29 18:08:54,514:flash-attn v3 may provide important feature support or performance improvement. Please install flash-attn v3 by 
+[36m(WorkerDict pid=1015773)[0m (1) git clone https://github.com/Dao-AILab/flash-attention.git
+[36m(WorkerDict pid=1015773)[0m (2) cd flash-attention/ && git checkout 3ba6f82 && git submodule update --init && cd hopper/ && python setup.py install
+[36m(WorkerDict pid=1015773)[0m (3) python_path=`python -c "import site; print(site.getsitepackages()[0])"`
+[36m(WorkerDict pid=1015773)[0m (4) mkdir -p $python_path/flash_attn_3
+[36m(WorkerDict pid=1015773)[0m (5) cp flash_attn_interface.py $python_path/flash_attn_3/flash_attn_interface.py
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:08:59,845:megatron actor After compute_log_prob, memory allocated (GB): 46.72, memory reserved (GB): 46.89, device memory used/total (GB): 6.38/63.59
+[36m(WorkerDict pid=1015787)[0m INFO:2026-07-29 18:08:53,929:Memory cleanup attempt 1: Freed 0.00 GB reserved, 0.00 GB allocated[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m DEBUG:2026-07-29 18:08:54,420:compute_log_prob Before compute_log_prob, memory allocated (GB): 46.69, memory reserved (GB): 46.93, device memory used/total (GB): 6.28/63.62[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m DEBUG:2026-07-29 18:08:54,421:megatron actor Before compute_log_prob, memory allocated (GB): 46.69, memory reserved (GB): 46.93, device memory used/total (GB): 6.28/63.62[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m WARNING:2026-07-29 18:08:54,514:flash-attn v3 may provide important feature support or performance improvement. Please install flash-attn v3 by [32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m (1) git clone https://github.com/Dao-AILab/flash-attention.git[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m (2) cd flash-attention/ && git checkout 3ba6f82 && git submodule update --init && cd hopper/ && python setup.py install[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m (3) python_path=`python -c "import site; print(site.getsitepackages()[0])"`[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m (4) mkdir -p $python_path/flash_attn_3[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m (5) cp flash_attn_interface.py $python_path/flash_attn_3/flash_attn_interface.py[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:09:00,304:compute_log_prob After compute_log_prob, memory allocated (GB): 46.72, memory reserved (GB): 46.89, device memory used/total (GB): 6.38/63.59
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:09:00,809:compute_ref_log_prob Before compute_ref_log_prob, memory allocated (GB): 46.72, memory reserved (GB): 46.89, device memory used/total (GB): 6.38/63.59
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:09:01,282:After load ref params and grad during compute_ref_log_prob, memory allocated (GB): 47.84, memory reserved (GB): 47.94, device memory used/total (GB): 7.43/63.59
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:09:04,865:After offload ref params and grad during compute_ref_log_prob, memory allocated (GB): 46.73, memory reserved (GB): 46.93, device memory used/total (GB): 6.42/63.59
+[36m(WorkerDict pid=1015787)[0m DEBUG:2026-07-29 18:09:04,402:megatron actor After compute_log_prob, memory allocated (GB): 47.84, memory reserved (GB): 47.96, device memory used/total (GB): 7.45/63.59[32m [repeated 15x across cluster][0m
+[36m(WorkerDict pid=1015776)[0m INFO:2026-07-29 18:09:00,405:Memory cleanup attempt 1: Freed 0.00 GB reserved, 0.00 GB allocated[32m [repeated 8x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m DEBUG:2026-07-29 18:09:01,283:megatron actor Before compute_log_prob, memory allocated (GB): 47.85, memory reserved (GB): 48.00, device memory used/total (GB): 7.43/63.62[32m [repeated 8x across cluster][0m
+[36m(WorkerDict pid=1015780)[0m DEBUG:2026-07-29 18:09:05,296:compute_ref_log_prob After compute_ref_log_prob, memory allocated (GB): 46.73, memory reserved (GB): 46.91, device memory used/total (GB): 6.40/63.59
+[36m(WorkerDict pid=1015776)[0m DEBUG:2026-07-29 18:09:00,406:compute_log_prob After compute_log_prob, memory allocated (GB): 46.74, memory reserved (GB): 46.95, device memory used/total (GB): 6.38/63.62[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:09:05,783:update_actor Before update_actor, memory allocated (GB): 46.73, memory reserved (GB): 46.93, device memory used/total (GB): 6.42/63.59
+[36m(WorkerDict pid=1015773)[0m DEBUG:2026-07-29 18:09:05,784:megatron actor Before update_policy, memory allocated (GB): 46.73, memory reserved (GB): 46.93, device memory used/total (GB): 6.42/63.59
+[36m(WorkerDict pid=1015773)[0m /opt/conda/lib/python3.10/site-packages/megatron/core/tensor_parallel/layers.py:545: UserWarning: Attempting to run cuBLAS, but there was no current CUDA context! Attempting to set the primary context... (Triggered internally at /workspace/framework/mcPytorch/aten/src/ATen/cuda/CublasHandlePool.cpp:183.)
+[36m(WorkerDict pid=1015773)[0m   grad_input = grad_output.matmul(weight)
+[36m(WorkerDict pid=1015777)[0m DEBUG:2026-07-29 18:09:00,810:compute_ref_log_prob Before compute_ref_log_prob, memory allocated (GB): 46.74, memory reserved (GB): 46.94, device memory used/total (GB): 6.37/63.62[32m [repeated 7x across cluster][0m
+[36m(TaskRunner pid=1009460)[0m wandb: updating run metadata
+[36m(WorkerDict pid=1015787)[0m INFO:2026-07-29 18:09:05,325:Memory cleanup attempt 1: Freed 0.00 GB reserved, 0.00 GB allocated[32m [repeated 8x across cluster][0m
+[36m(WorkerDict pid=1015787)[0m DEBUG:2026-07-29 18:09:05,326:compute_ref_log_prob After compute_ref_log_prob, memory allocated (GB): 46.73, memory reserved (GB): 46.87, device memory used/total (GB): 6.35/63.59[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m DEBUG:2026-07-29 18:09:05,785:update_actor Before update_actor, memory allocated (GB): 46.74, memory reserved (GB): 46.99, device memory used/total (GB): 6.42/63.62[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m DEBUG:2026-07-29 18:09:05,785:megatron actor Before update_policy, memory allocated (GB): 46.74, memory reserved (GB): 46.99, device memory used/total (GB): 6.42/63.62[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m /opt/conda/lib/python3.10/site-packages/megatron/core/tensor_parallel/layers.py:545: UserWarning: Attempting to run cuBLAS, but there was no current CUDA context! Attempting to set the primary context... (Triggered internally at /workspace/framework/mcPytorch/aten/src/ATen/cuda/CublasHandlePool.cpp:183.)[32m [repeated 7x across cluster][0m
+[36m(WorkerDict pid=1015777)[0m   grad_input = grad_output.matmul(weight)[32m [repeated 7x across cluster][0m
+[36m(TaskRunner pid=1009460)[0m wandb: uploading output.log; uploading wandb-summary.json; uploading config.yaml
+[36m(TaskRunner pid=1009460)[0m wandb: uploading summary
+[36m(TaskRunner pid=1009460)[0m wandb: 🚀 View run qwen3_0p6b_agent at: https://wandb.ai/106005748-xiamen-university/verl_stage_tuner/runs/fbiwrjkw
+[36m(TaskRunner pid=1009460)[0m wandb: ⭐️ View project at: https://wandb.ai/106005748-xiamen-university/verl_stage_tuner
+[36m(TaskRunner pid=1009460)[0m wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+[36m(TaskRunner pid=1009460)[0m wandb: Find logs at: ./wandb/run-20260729_180741-fbiwrjkw/logs
+[36m(TaskRunner pid=1009460)[0m 
+Training Progress:   0%|          | 0/10 [01:34<?, ?it/s]
+Error executing job with overrides: ['algorithm.adv_estimator=grpo', 'data.train_files=/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet', 'data.val_files=/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet', 'data.train_batch_size=256', 'data.max_prompt_length=1280', 'data.max_response_length=5120', 'data.filter_overlong_prompts=True', 'data.truncation=error', 'actor_rollout_ref.model.path=/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-0.6B-Base', 'actor_rollout_ref.model.use_remove_padding=True', 'actor_rollout_ref.actor.optim.lr=1e-06', 'actor_rollout_ref.actor.ppo_mini_batch_size=64', 'actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4', 'actor_rollout_ref.actor.megatron.pipeline_model_parallel_size=1', 'actor_rollout_ref.actor.megatron.tensor_model_parallel_size=1', 'actor_rollout_ref.actor.megatron.sequence_parallel=True', 'actor_rollout_ref.actor.megatron.use_remove_padding=True', 'actor_rollout_ref.actor.megatron.optimizer_offload=False', 'actor_rollout_ref.actor.megatron.param_offload=False', 'actor_rollout_ref.actor.use_kl_loss=True', 'actor_rollout_ref.actor.kl_loss_type=low_var_kl', 'actor_rollout_ref.actor.kl_loss_coef=0.003', 'actor_rollout_ref.actor.entropy_coeff=0.0', 'actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4', 'actor_rollout_ref.rollout.tensor_model_parallel_size=1', 'actor_rollout_ref.rollout.name=vllm', 'actor_rollout_ref.rollout.gpu_memory_utilization=0.7', 'actor_rollout_ref.rollout.n=4', 'actor_rollout_ref.rollout.max_num_batched_tokens=16384', 'actor_rollout_ref.rollout.max_num_seqs=256', 'actor_rollout_ref.ref.megatron.param_offload=True', 'actor_rollout_ref.ref.megatron.pipeline_model_parallel_size=2', 'actor_rollout_ref.ref.megatron.tensor_model_parallel_size=1', 'actor_rollout_ref.ref.megatron.sequence_parallel=True', 'actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16', 'algorithm.use_kl_in_reward=False', 'trainer.critic_warmup=0', 'trainer.logger=[console,wandb]', 'trainer.project_name=verl_stage_tuner', 'trainer.experiment_name=qwen3_0p6b_agent', 'trainer.n_gpus_per_node=8', 'trainer.nnodes=1', 'trainer.val_before_train=False', 'trainer.save_freq=-1', 'trainer.test_freq=-1', 'trainer.total_epochs=2', 'trainer.total_training_steps=10']
+Traceback (most recent call last):
+  File "/opt/conda/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/opt/conda/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/verl/trainer/main_ppo.py", line 443, in <module>
+    main()
+  File "/opt/conda/lib/python3.10/site-packages/hydra/main.py", line 94, in decorated_main
+    _run_hydra(
+  File "/opt/conda/lib/python3.10/site-packages/hydra/_internal/utils.py", line 394, in _run_hydra
+    _run_app(
+  File "/opt/conda/lib/python3.10/site-packages/hydra/_internal/utils.py", line 457, in _run_app
+    run_and_report(
+  File "/opt/conda/lib/python3.10/site-packages/hydra/_internal/utils.py", line 223, in run_and_report
+    raise ex
+  File "/opt/conda/lib/python3.10/site-packages/hydra/_internal/utils.py", line 220, in run_and_report
+    return func()
+  File "/opt/conda/lib/python3.10/site-packages/hydra/_internal/utils.py", line 458, in <lambda>
+    lambda: hydra.run(
+  File "/opt/conda/lib/python3.10/site-packages/hydra/_internal/hydra.py", line 132, in run
+    _ = ret.return_value
+  File "/opt/conda/lib/python3.10/site-packages/hydra/core/utils.py", line 260, in return_value
+    raise self._return_value
+  File "/opt/conda/lib/python3.10/site-packages/hydra/core/utils.py", line 186, in run_job
+    ret.return_value = task_function(task_cfg)
+  File "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/verl/trainer/main_ppo.py", line 45, in main
+    run_ppo(config)
+  File "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/verl/trainer/main_ppo.py", line 99, in run_ppo
+    ray.get(runner.run.remote(config))
+  File "/opt/conda/lib/python3.10/site-packages/ray/_private/auto_init_hook.py", line 22, in auto_init_wrapper
+    return fn(*args, **kwargs)
+  File "/opt/conda/lib/python3.10/site-packages/ray/_private/client_mode_hook.py", line 104, in wrapper
+    return func(*args, **kwargs)
+  File "/opt/conda/lib/python3.10/site-packages/ray/_private/worker.py", line 2967, in get
+    values, debugger_breakpoint = worker.get_objects(
+  File "/opt/conda/lib/python3.10/site-packages/ray/_private/worker.py", line 1015, in get_objects
+    raise value.as_instanceof_cause()
+ray.exceptions.RayTaskError(OutOfMemoryError): [36mray::TaskRunner.run()[39m (pid=1009460, ip=10.200.111.246, actor_id=6ae07a845e6898671056fb6a01000000, repr=<main_ppo.TaskRunner object at 0x7ef14f0ea5f0>)
