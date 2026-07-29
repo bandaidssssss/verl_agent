@@ -1,0 +1,370 @@
+[
+  {
+    "updates_completed": 2,
+    "result": "fail",
+    "error": {
+      "type": "MEMORY_HEADROOM_EXCEEDED",
+      "evidence": [
+        "observed phase memory 98.67% exceeds 92.00%"
+      ]
+    },
+    "memory_by_phase_pct": {
+      "rollout": {
+        "mean": 65.07138624423888,
+        "p95": 84.1400146484375,
+        "max": 88.08135986328125
+      },
+      "actor_log_prob": {
+        "mean": 29.40142313639323,
+        "p95": 78.173828125,
+        "max": 78.369140625
+      },
+      "ref_log_prob": {
+        "mean": 46.70158155036695,
+        "p95": 91.168212890625,
+        "max": 98.66943359375
+      },
+      "training": {
+        "mean": 12.841192460629479,
+        "p95": 13.524139015568485,
+        "max": 13.524139015568485
+      }
+    },
+    "memory_by_phase_gpu_pct": {
+      "rollout": {
+        "0": {
+          "mean": 64.88172019400248,
+          "p95": 83.758544921875,
+          "max": 87.97760009765625
+        },
+        "1": {
+          "mean": 65.19241333007812,
+          "p95": 83.7738037109375,
+          "max": 87.99591064453125
+        },
+        "2": {
+          "mean": 64.87294639029155,
+          "p95": 83.782958984375,
+          "max": 87.97760009765625
+        },
+        "3": {
+          "mean": 64.99785446539158,
+          "p95": 83.8409423828125,
+          "max": 88.08135986328125
+        },
+        "4": {
+          "mean": 64.96213587318978,
+          "p95": 83.88671875,
+          "max": 88.06304931640625
+        },
+        "5": {
+          "mean": 65.3064076493426,
+          "p95": 83.82568359375,
+          "max": 87.99285888671875
+        },
+        "6": {
+          "mean": 64.94848670029059,
+          "p95": 83.7615966796875,
+          "max": 87.97760009765625
+        },
+        "7": {
+          "mean": 65.40912535132432,
+          "p95": 84.1400146484375,
+          "max": 87.99285888671875
+        }
+      },
+      "actor_log_prob": {
+        "0": {
+          "mean": 11.95831298828125,
+          "p95": 13.7969970703125,
+          "max": 13.7969970703125
+        },
+        "1": {
+          "mean": 11.980183919270834,
+          "p95": 13.7786865234375,
+          "max": 13.7786865234375
+        },
+        "2": {
+          "mean": 11.938985188802084,
+          "p95": 13.7237548828125,
+          "max": 13.7237548828125
+        },
+        "3": {
+          "mean": 12.054850260416666,
+          "p95": 13.75732421875,
+          "max": 13.75732421875
+        },
+        "4": {
+          "mean": 45.728963216145836,
+          "p95": 78.1982421875,
+          "max": 78.1982421875
+        },
+        "5": {
+          "mean": 45.861612955729164,
+          "p95": 78.1829833984375,
+          "max": 78.1829833984375
+        },
+        "6": {
+          "mean": 45.640462239583336,
+          "p95": 78.1341552734375,
+          "max": 78.1341552734375
+        },
+        "7": {
+          "mean": 50.048014322916664,
+          "p95": 78.369140625,
+          "max": 78.369140625
+        }
+      },
+      "ref_log_prob": {
+        "0": {
+          "mean": 36.93727435487689,
+          "p95": 61.6912841796875,
+          "max": 61.6912841796875
+        },
+        "1": {
+          "mean": 36.54701926491477,
+          "p95": 61.92626953125,
+          "max": 61.92626953125
+        },
+        "2": {
+          "mean": 36.17840391216856,
+          "p95": 61.9049072265625,
+          "max": 61.9049072265625
+        },
+        "3": {
+          "mean": 35.91327089251894,
+          "p95": 61.773681640625,
+          "max": 61.773681640625
+        },
+        "4": {
+          "mean": 57.34789299242424,
+          "p95": 96.380615234375,
+          "max": 98.1201171875
+        },
+        "5": {
+          "mean": 57.122432824337125,
+          "p95": 96.063232421875,
+          "max": 98.504638671875
+        },
+        "6": {
+          "mean": 56.72616669625947,
+          "p95": 95.9228515625,
+          "max": 98.66943359375
+        },
+        "7": {
+          "mean": 56.84019146543561,
+          "p95": 96.4569091796875,
+          "max": 98.3795166015625
+        }
+      }
+    },
+    "gpu_utilization_by_phase_pct": {
+      "startup": {
+        "mean": 0.08101851851851852,
+        "p95": 0.0,
+        "max": 5.0
+      },
+      "rollout": {
+        "mean": 27.660060975609756,
+        "p95": 59.0,
+        "max": 64.0
+      },
+      "actor_log_prob": {
+        "mean": 42.208333333333336,
+        "p95": 91.0,
+        "max": 92.0
+      },
+      "between_phases": {
+        "mean": 16.25,
+        "p95": 51.0,
+        "max": 51.0
+      },
+      "ref_log_prob": {
+        "mean": 46.666666666666664,
+        "p95": 94.0,
+        "max": 96.0
+      }
+    },
+    "performance": {
+      "throughput": {
+        "mean": 1493.739223715782,
+        "p95": 1636.3881345491477,
+        "max": 1636.3881345491477
+      },
+      "time_per_step_s": {
+        "mean": 96.5412912638858,
+        "p95": 104.71135693229735,
+        "max": 104.71135693229735
+      },
+      "generation_tgs": {
+        "mean": 2131.0521423615683,
+        "p95": 2343.469980186202,
+        "max": 2343.469980186202
+      },
+      "actor_tgs": {
+        "mean": 9572.756119452373,
+        "p95": 10931.346357578544,
+        "max": 10931.346357578544
+      },
+      "actor_mfu": {
+        "mean": 0.22779011319236345,
+        "p95": 0.26284913926738207,
+        "max": 0.26284913926738207
+      },
+      "phase_duration_s": {
+        "rollout": {
+          "mean": 67.72228187974542,
+          "p95": 73.73708458431065,
+          "max": 73.73708458431065
+        },
+        "actor_log_prob": {
+          "mean": 8.166815399192274,
+          "p95": 8.360966820269823,
+          "max": 8.360966820269823
+        },
+        "ref_log_prob": {
+          "mean": 5.1578432051464915,
+          "p95": 5.197382032871246,
+          "max": 5.197382032871246
+        },
+        "training": {
+          "mean": 15.226064059883356,
+          "p95": 17.223233867436647,
+          "max": 17.223233867436647
+        }
+      },
+      "time_bottleneck": "rollout"
+    },
+    "resource": {
+      "memory_bottleneck": "ref_log_prob",
+      "max_observed_memory_pct": 98.66943359375
+    },
+    "stability": {
+      "reward": {
+        "mean": -0.990234375,
+        "p95": -0.990234375,
+        "max": -0.990234375
+      },
+      "reward_slope": 0.0,
+      "actor_ppo_kl": {
+        "mean": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "actor_entropy": {
+        "mean": 2.286096930503845,
+        "p95": 2.370565414428711,
+        "max": 2.370565414428711
+      },
+      "actor_pg_loss": {
+        "mean": 0.001745131448842585,
+        "p95": 0.0027005610754713416,
+        "max": 0.0027005610754713416
+      },
+      "actor_pg_clipfrac": {
+        "mean": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "response_length": {
+        "mean": 964.52197265625,
+        "p95": 976.1923828125,
+        "max": 976.1923828125
+      },
+      "response_clip_ratio": {
+        "mean": 0.04443359375,
+        "p95": 0.0458984375,
+        "max": 0.0458984375
+      }
+    },
+    "end_to_end_reward": {
+      "thresholds": {
+        "0.0": null,
+        "0.1": null,
+        "0.2": null,
+        "0.3": null
+      },
+      "peak_reward": -0.990234375
+    },
+    "trial_id": 1,
+    "stage": "hardware_tuning",
+    "platform": "C550",
+    "updates_target": 10,
+    "parameters": {
+      "algorithm.adv_estimator": "grpo",
+      "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+      "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+      "data.train_batch_size": 256,
+      "data.max_prompt_length": 1280,
+      "data.max_response_length": 5120,
+      "data.filter_overlong_prompts": true,
+      "data.truncation": "error",
+      "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-0.6B-Base",
+      "actor_rollout_ref.model.use_remove_padding": true,
+      "actor_rollout_ref.actor.optim.lr": 0.0,
+      "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+      "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 4,
+      "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 2,
+      "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 1,
+      "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+      "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+      "actor_rollout_ref.actor.megatron.optimizer_offload": false,
+      "actor_rollout_ref.actor.megatron.param_offload": false,
+      "actor_rollout_ref.actor.use_kl_loss": true,
+      "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+      "actor_rollout_ref.actor.kl_loss_coef": 0.003,
+      "actor_rollout_ref.actor.entropy_coeff": 0.0,
+      "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 4,
+      "actor_rollout_ref.rollout.tensor_model_parallel_size": 1,
+      "actor_rollout_ref.rollout.name": "vllm",
+      "actor_rollout_ref.rollout.gpu_memory_utilization": 0.8,
+      "actor_rollout_ref.rollout.n": 4,
+      "actor_rollout_ref.ref.megatron.param_offload": false,
+      "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+      "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 2,
+      "actor_rollout_ref.ref.megatron.sequence_parallel": true,
+      "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 16,
+      "algorithm.use_kl_in_reward": false,
+      "trainer.critic_warmup": 0,
+      "trainer.logger": [
+        "console"
+      ],
+      "trainer.project_name": "verl_stage_tuner",
+      "trainer.experiment_name": "qwen3_0p6b_agent",
+      "trainer.n_gpus_per_node": 8,
+      "trainer.nnodes": 1,
+      "trainer.val_before_train": false,
+      "trainer.save_freq": -1,
+      "trainer.test_freq": -1,
+      "trainer.total_epochs": 1
+    },
+    "return_code": -6,
+    "stop_reason": "resource_gate_memory_limit",
+    "failure_phase": "rollout",
+    "log_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0728_1053_2026/trials/0001/train.log",
+    "gpu_samples_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0728_1053_2026/trials/0001/gpu_samples.csv",
+    "health_events_path": null,
+    "health_agent_traces_path": null,
+    "health_monitor": {
+      "enabled": false
+    },
+    "health_events": [],
+    "health_decisions": [],
+    "proposal": {
+      "decision": "keep",
+      "reason": "stage baseline",
+      "reference_trial_id": null,
+      "reference_trial": {
+        "source": "base_parameters",
+        "trial_id": null,
+        "selection_reason": "initial base parameters; no completed trial exists"
+      },
+      "changes": {},
+      "expected_effect": {}
+    },
+    "feasibility": {
+      "verdict": "valid",
+      "reason": "stage baseline"
+    }
+  }
+]

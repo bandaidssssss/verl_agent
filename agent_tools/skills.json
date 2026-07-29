@@ -25,7 +25,7 @@
     {
       "name": "tuning_strategies",
       "handler": "tuning_strategies",
-      "roles": ["proposal", "feasibility", "diagnosis"],
+      "roles": [],
       "description": "Query stage-aware strategies for a measured bottleneck or failure scenario.",
       "parameters": {
         "type": "object",

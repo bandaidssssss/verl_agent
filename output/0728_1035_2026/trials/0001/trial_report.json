@@ -1,0 +1,368 @@
+{
+  "updates_completed": 1,
+  "result": "fail",
+  "error": {
+    "type": "MEMORY_HEADROOM_EXCEEDED",
+    "evidence": [
+      "observed phase memory 99.78% exceeds 92.00%"
+    ]
+  },
+  "memory_by_phase_pct": {
+    "rollout": {
+      "mean": 47.04605411080753,
+      "p95": 82.02056884765625,
+      "max": 90.32440185546875
+    },
+    "actor_log_prob": {
+      "mean": 54.43948109944662,
+      "p95": 99.615478515625,
+      "max": 99.7802734375
+    },
+    "ref_log_prob": {
+      "mean": 48.37468465169271,
+      "p95": 71.600341796875,
+      "max": 72.039794921875
+    },
+    "training": {
+      "mean": 12.62252974786392,
+      "p95": 13.241075640824029,
+      "max": 13.241075640824029
+    }
+  },
+  "memory_by_phase_gpu_pct": {
+    "rollout": {
+      "0": {
+        "mean": 47.0178155338063,
+        "p95": 81.62994384765625,
+        "max": 90.22369384765625
+      },
+      "1": {
+        "mean": 47.118680617388556,
+        "p95": 82.01446533203125,
+        "max": 89.81781005859375
+      },
+      "2": {
+        "mean": 47.19093547147863,
+        "p95": 82.02056884765625,
+        "max": 89.81781005859375
+      },
+      "3": {
+        "mean": 47.13441063376034,
+        "p95": 81.73065185546875,
+        "max": 90.32440185546875
+      },
+      "4": {
+        "mean": 47.046358445111444,
+        "p95": 81.71844482421875,
+        "max": 90.31219482421875
+      },
+      "5": {
+        "mean": 47.076135523179,
+        "p95": 81.62994384765625,
+        "max": 90.22369384765625
+      },
+      "6": {
+        "mean": 46.90166922176586,
+        "p95": 81.66351318359375,
+        "max": 89.94598388671875
+      },
+      "7": {
+        "mean": 46.88242743997013,
+        "p95": 81.65740966796875,
+        "max": 89.94598388671875
+      }
+    },
+    "actor_log_prob": {
+      "0": {
+        "mean": 54.295688205295136,
+        "p95": 99.7802734375,
+        "max": 99.7802734375
+      },
+      "1": {
+        "mean": 53.97576226128472,
+        "p95": 98.4283447265625,
+        "max": 98.4283447265625
+      },
+      "2": {
+        "mean": 54.6600341796875,
+        "p95": 99.713134765625,
+        "max": 99.713134765625
+      },
+      "3": {
+        "mean": 54.489474826388886,
+        "p95": 98.6663818359375,
+        "max": 98.6663818359375
+      },
+      "4": {
+        "mean": 54.622226291232636,
+        "p95": 98.9288330078125,
+        "max": 98.9288330078125
+      },
+      "5": {
+        "mean": 54.578145345052086,
+        "p95": 98.895263671875,
+        "max": 98.895263671875
+      },
+      "6": {
+        "mean": 54.581027560763886,
+        "p95": 99.6551513671875,
+        "max": 99.6551513671875
+      },
+      "7": {
+        "mean": 54.31349012586806,
+        "p95": 98.9227294921875,
+        "max": 98.9227294921875
+      }
+    },
+    "ref_log_prob": {
+      "0": {
+        "mean": 57.30743408203125,
+        "p95": 72.039794921875,
+        "max": 72.039794921875
+      },
+      "1": {
+        "mean": 57.064310709635414,
+        "p95": 71.4508056640625,
+        "max": 71.4508056640625
+      },
+      "2": {
+        "mean": 57.022603352864586,
+        "p95": 71.600341796875,
+        "max": 71.600341796875
+      },
+      "3": {
+        "mean": 45.115152994791664,
+        "p95": 69.183349609375,
+        "max": 69.183349609375
+      },
+      "4": {
+        "mean": 55.255635579427086,
+        "p95": 69.20166015625,
+        "max": 69.20166015625
+      },
+      "5": {
+        "mean": 38.172403971354164,
+        "p95": 68.8629150390625,
+        "max": 68.8629150390625
+      },
+      "6": {
+        "mean": 36.744181315104164,
+        "p95": 68.463134765625,
+        "max": 68.463134765625
+      },
+      "7": {
+        "mean": 40.315755208333336,
+        "p95": 68.951416015625,
+        "max": 68.951416015625
+      }
+    }
+  },
+  "gpu_utilization_by_phase_pct": {
+    "startup": {
+      "mean": 0.07112068965517242,
+      "p95": 0.0,
+      "max": 6.0
+    },
+    "rollout": {
+      "mean": 21.278492647058822,
+      "p95": 55.0,
+      "max": 61.0
+    },
+    "actor_log_prob": {
+      "mean": 46.833333333333336,
+      "p95": 89.0,
+      "max": 94.0
+    },
+    "between_phases": {
+      "mean": 14.75,
+      "p95": 17.0,
+      "max": 17.0
+    },
+    "ref_log_prob": {
+      "mean": 76.29166666666667,
+      "p95": 95.0,
+      "max": 95.0
+    }
+  },
+  "performance": {
+    "throughput": {
+      "mean": 1481.4494273825442,
+      "p95": 1481.4494273825442,
+      "max": 1481.4494273825442
+    },
+    "time_per_step_s": {
+      "mean": 95.21131629124284,
+      "p95": 95.21131629124284,
+      "max": 95.21131629124284
+    },
+    "generation_tgs": {
+      "mean": 2042.0730717688627,
+      "p95": 2042.0730717688627,
+      "max": 2042.0730717688627
+    },
+    "actor_tgs": {
+      "mean": 9281.77788957121,
+      "p95": 9281.77788957121,
+      "max": 9281.77788957121
+    },
+    "actor_mfu": {
+      "mean": 0.22162274431943413,
+      "p95": 0.22162274431943413,
+      "max": 0.22162274431943413
+    },
+    "phase_duration_s": {
+      "rollout": {
+        "mean": 69.0723324008286,
+        "p95": 69.0723324008286,
+        "max": 69.0723324008286
+      },
+      "actor_log_prob": {
+        "mean": 6.836299046874046,
+        "p95": 6.836299046874046,
+        "max": 6.836299046874046
+      },
+      "ref_log_prob": {
+        "mean": 3.8652363289147615,
+        "p95": 3.8652363289147615,
+        "max": 3.8652363289147615
+      },
+      "training": {
+        "mean": 15.196522872895002,
+        "p95": 15.196522872895002,
+        "max": 15.196522872895002
+      }
+    },
+    "time_bottleneck": "rollout"
+  },
+  "resource": {
+    "memory_bottleneck": "actor_log_prob",
+    "max_observed_memory_pct": 99.7802734375
+  },
+  "stability": {
+    "reward": {
+      "mean": -0.990234375,
+      "p95": -0.990234375,
+      "max": -0.990234375
+    },
+    "reward_slope": null,
+    "actor_ppo_kl": {
+      "mean": 0.0,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "actor_entropy": {
+      "mean": 2.0139615535736084,
+      "p95": 2.0139615535736084,
+      "max": 2.0139615535736084
+    },
+    "actor_pg_loss": {
+      "mean": -0.0009157775639323518,
+      "p95": -0.0009157775639323518,
+      "max": -0.0009157775639323518
+    },
+    "actor_pg_clipfrac": {
+      "mean": 0.0,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "response_length": {
+      "mean": 949.541015625,
+      "p95": 949.541015625,
+      "max": 949.541015625
+    },
+    "response_clip_ratio": {
+      "mean": 0.048828125,
+      "p95": 0.048828125,
+      "max": 0.048828125
+    }
+  },
+  "end_to_end_reward": {
+    "thresholds": {
+      "0.0": null,
+      "0.1": null,
+      "0.2": null,
+      "0.3": null
+    },
+    "peak_reward": -0.990234375
+  },
+  "trial_id": 1,
+  "stage": "hardware_tuning",
+  "platform": "C550",
+  "updates_target": 10,
+  "parameters": {
+    "algorithm.adv_estimator": "grpo",
+    "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+    "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+    "data.train_batch_size": 256,
+    "data.max_prompt_length": 1280,
+    "data.max_response_length": 5120,
+    "data.filter_overlong_prompts": true,
+    "data.truncation": "error",
+    "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-0.6B-Base",
+    "actor_rollout_ref.model.use_remove_padding": true,
+    "actor_rollout_ref.actor.optim.lr": 0.0,
+    "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 4,
+    "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 1,
+    "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+    "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+    "actor_rollout_ref.actor.megatron.optimizer_offload": false,
+    "actor_rollout_ref.actor.megatron.param_offload": false,
+    "actor_rollout_ref.actor.use_kl_loss": true,
+    "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+    "actor_rollout_ref.actor.kl_loss_coef": 0.003,
+    "actor_rollout_ref.actor.entropy_coeff": 0.0,
+    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 4,
+    "actor_rollout_ref.rollout.tensor_model_parallel_size": 1,
+    "actor_rollout_ref.rollout.name": "vllm",
+    "actor_rollout_ref.rollout.gpu_memory_utilization": 0.8,
+    "actor_rollout_ref.rollout.n": 4,
+    "actor_rollout_ref.ref.megatron.param_offload": false,
+    "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 2,
+    "actor_rollout_ref.ref.megatron.sequence_parallel": true,
+    "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 16,
+    "algorithm.use_kl_in_reward": false,
+    "trainer.critic_warmup": 0,
+    "trainer.logger": [
+      "console"
+    ],
+    "trainer.project_name": "verl_stage_tuner",
+    "trainer.experiment_name": "qwen3_0p6b_agent",
+    "trainer.n_gpus_per_node": 8,
+    "trainer.nnodes": 1,
+    "trainer.val_before_train": false,
+    "trainer.save_freq": -1,
+    "trainer.test_freq": -1,
+    "trainer.total_epochs": 1
+  },
+  "return_code": -6,
+  "stop_reason": "resource_gate_memory_limit",
+  "failure_phase": "rollout",
+  "log_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0728_1035_2026/trials/0001/train.log",
+  "gpu_samples_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0728_1035_2026/trials/0001/gpu_samples.csv",
+  "health_events_path": null,
+  "health_agent_traces_path": null,
+  "health_monitor": {
+    "enabled": false
+  },
+  "health_events": [],
+  "health_decisions": [],
+  "proposal": {
+    "decision": "keep",
+    "reason": "stage baseline",
+    "reference_trial_id": null,
+    "reference_trial": {
+      "source": "base_parameters",
+      "trial_id": null,
+      "selection_reason": "initial base parameters; no completed trial exists"
+    },
+    "changes": {},
+    "expected_effect": {}
+  },
+  "feasibility": {
+    "verdict": "valid",
+    "reason": "stage baseline"
+  }
+}

@@ -1,0 +1,619 @@
+{
+  "updates_completed": 135,
+  "result": "success",
+  "error": {
+    "type": null,
+    "evidence": []
+  },
+  "memory_by_phase_pct": {
+    "rollout": {
+      "mean": 80.50724610260512,
+      "p95": 83.19091796875,
+      "max": 87.2955322265625
+    },
+    "actor_log_prob": {
+      "mean": 35.20964956695547,
+      "p95": 72.015380859375,
+      "max": 80.9722900390625
+    },
+    "ref_log_prob": {
+      "mean": 46.761291007685465,
+      "p95": 64.49432373046875,
+      "max": 64.70489501953125
+    },
+    "training": {
+      "mean": 57.66300849627551,
+      "p95": 60.85205078125,
+      "max": 61.846923828125
+    }
+  },
+  "memory_by_phase_gpu_pct": {
+    "rollout": {
+      "0": {
+        "mean": 80.45656141381086,
+        "p95": 83.1573486328125,
+        "max": 87.1734619140625
+      },
+      "1": {
+        "mean": 80.54758291543723,
+        "p95": 83.251953125,
+        "max": 87.2467041015625
+      },
+      "2": {
+        "mean": 80.52572525589387,
+        "p95": 83.2275390625,
+        "max": 87.2222900390625
+      },
+      "3": {
+        "mean": 80.4534922606564,
+        "p95": 83.1573486328125,
+        "max": 87.152099609375
+      },
+      "4": {
+        "mean": 80.49866953826572,
+        "p95": 83.2000732421875,
+        "max": 87.2314453125
+      },
+      "5": {
+        "mean": 80.56022914158139,
+        "p95": 83.26416015625,
+        "max": 87.2955322265625
+      },
+      "6": {
+        "mean": 80.53726485336662,
+        "p95": 83.23974609375,
+        "max": 87.2711181640625
+      },
+      "7": {
+        "mean": 80.47844344182892,
+        "p95": 83.1756591796875,
+        "max": 87.20703125
+      }
+    },
+    "actor_log_prob": {
+      "0": {
+        "mean": 35.98796747678461,
+        "p95": 77.6458740234375,
+        "max": 80.9722900390625
+      },
+      "1": {
+        "mean": 35.12033762858272,
+        "p95": 71.2188720703125,
+        "max": 78.82080078125
+      },
+      "2": {
+        "mean": 35.093506193443574,
+        "p95": 71.1944580078125,
+        "max": 78.79638671875
+      },
+      "3": {
+        "mean": 35.0247501879398,
+        "p95": 71.124267578125,
+        "max": 78.7261962890625
+      },
+      "4": {
+        "mean": 35.09220035805083,
+        "p95": 71.209716796875,
+        "max": 79.0252685546875
+      },
+      "5": {
+        "mean": 35.15680266261376,
+        "p95": 71.2738037109375,
+        "max": 79.08935546875
+      },
+      "6": {
+        "mean": 35.13305390733669,
+        "p95": 71.2493896484375,
+        "max": 79.06494140625
+      },
+      "7": {
+        "mean": 35.068578120891786,
+        "p95": 71.185302734375,
+        "max": 79.0008544921875
+      }
+    },
+    "ref_log_prob": {
+      "0": {
+        "mean": 46.98604180560849,
+        "p95": 64.70184326171875,
+        "max": 64.70489501953125
+      },
+      "1": {
+        "mean": 46.78221911918826,
+        "p95": 64.49127197265625,
+        "max": 64.49432373046875
+      },
+      "2": {
+        "mean": 46.73837801305259,
+        "p95": 64.46685791015625,
+        "max": 64.46990966796875
+      },
+      "3": {
+        "mean": 46.667790606739075,
+        "p95": 64.39361572265625,
+        "max": 64.39666748046875
+      },
+      "4": {
+        "mean": 46.718851725260414,
+        "p95": 64.43023681640625,
+        "max": 64.43023681640625
+      },
+      "5": {
+        "mean": 46.76998727689914,
+        "p95": 64.49432373046875,
+        "max": 64.49432373046875
+      },
+      "6": {
+        "mean": 46.74557321439914,
+        "p95": 64.46990966796875,
+        "max": 64.46990966796875
+      },
+      "7": {
+        "mean": 46.68148630033664,
+        "p95": 64.40582275390625,
+        "max": 64.40582275390625
+      }
+    },
+    "training": {
+      "0": {
+        "mean": 57.63474718783693,
+        "p95": 60.748291015625,
+        "max": 61.73095703125
+      },
+      "1": {
+        "mean": 57.70188888581987,
+        "p95": 60.7879638671875,
+        "max": 61.7950439453125
+      },
+      "2": {
+        "mean": 57.67685956273782,
+        "p95": 60.7635498046875,
+        "max": 61.7706298828125
+      },
+      "3": {
+        "mean": 57.61125416692182,
+        "p95": 60.693359375,
+        "max": 61.700439453125
+      },
+      "4": {
+        "mean": 57.649821624482065,
+        "p95": 60.90087890625,
+        "max": 61.7828369140625
+      },
+      "5": {
+        "mean": 57.713923284816616,
+        "p95": 60.9649658203125,
+        "max": 61.846923828125
+      },
+      "6": {
+        "mean": 57.6901325044864,
+        "p95": 60.9405517578125,
+        "max": 61.822509765625
+      },
+      "7": {
+        "mean": 57.625440753102545,
+        "p95": 60.87646484375,
+        "max": 61.7584228515625
+      }
+    }
+  },
+  "gpu_utilization_by_phase_pct": {
+    "startup": {
+      "mean": 0.5176767676767676,
+      "p95": 2.0,
+      "max": 5.0
+    },
+    "rollout": {
+      "mean": 59.42575121004398,
+      "p95": 70.0,
+      "max": 75.0
+    },
+    "actor_log_prob": {
+      "mean": 50.53834192789614,
+      "p95": 71.0,
+      "max": 80.0
+    },
+    "between_phases": {
+      "mean": 8.742085661080074,
+      "p95": 59.0,
+      "max": 74.0
+    },
+    "ref_log_prob": {
+      "mean": 45.50813008130081,
+      "p95": 76.0,
+      "max": 80.0
+    },
+    "training": {
+      "mean": 52.84618471999244,
+      "p95": 61.0,
+      "max": 63.0
+    }
+  },
+  "performance": {
+    "throughput": {
+      "mean": 604.4201870633758,
+      "p95": 617.3962364891806,
+      "max": 619.3386673030948
+    },
+    "time_per_step_s": {
+      "mean": 802.9341770025874,
+      "p95": 1047.1996536236256,
+      "max": 1068.6420944705606
+    },
+    "generation_tgs": {
+      "mean": 1444.8440542082658,
+      "p95": 1521.340564899186,
+      "max": 1536.3625940532816
+    },
+    "actor_tgs": {
+      "mean": 1786.330063070725,
+      "p95": 2015.3937995143033,
+      "max": 2035.0413534005725
+    },
+    "actor_mfu": {
+      "mean": 0.3639400400083925,
+      "p95": 0.4159805165119572,
+      "max": 0.42066671199111144
+    },
+    "phase_duration_s": {
+      "rollout": {
+        "mean": 339.9519181770527,
+        "p95": 490.40835854038596,
+        "max": 505.97148582711816
+      },
+      "actor_log_prob": {
+        "mean": 119.45230666992508,
+        "p95": 140.17205278389156,
+        "max": 141.7243341729045
+      },
+      "ref_log_prob": {
+        "mean": 72.66064556024855,
+        "p95": 95.61135174520314,
+        "max": 97.25216484628618
+      },
+      "training": {
+        "mean": 270.5152846551782,
+        "p95": 321.0017877444625,
+        "max": 323.67745284736156
+      }
+    },
+    "time_bottleneck": "rollout"
+  },
+  "resource": {
+    "memory_bottleneck": "rollout",
+    "max_observed_memory_pct": 87.2955322265625
+  },
+  "stability": {
+    "reward": {
+      "mean": 0.06597222178501802,
+      "p95": 0.35624998807907104,
+      "max": 0.4203124940395355
+    },
+    "reward_slope": 0.04804687201976776,
+    "actor_ppo_kl": {
+      "mean": 4.8497876569742105e-05,
+      "p95": 0.00011694426762844933,
+      "max": 0.00014868704622439388
+    },
+    "actor_entropy": {
+      "mean": 0.146264612985154,
+      "p95": 0.2856288552284241,
+      "max": 0.3089088201522827
+    },
+    "actor_pg_loss": {
+      "mean": 8.562157692557032e-05,
+      "p95": 0.00015170136466622353,
+      "max": 0.00016923861112445594
+    },
+    "actor_pg_clipfrac": {
+      "mean": 0.0009953088256894936,
+      "p95": 0.001297930103737599,
+      "max": 0.001385926798161563
+    },
+    "response_length": {
+      "mean": 2885.537068684896,
+      "p95": 3893.23583984375,
+      "max": 3951.51953125
+    },
+    "response_clip_ratio": {
+      "mean": 0.3991536452914729,
+      "p95": 0.8101562261581421,
+      "max": 0.8726562261581421
+    }
+  },
+  "end_to_end_reward": {
+    "thresholds": {
+      "0.0": {
+        "step": 38,
+        "cumulative_time_s": 37657.840133760124,
+        "cumulative_tokens": 185174746,
+        "moving_average_reward": 0.0037500006379559635
+      },
+      "0.1": {
+        "step": 47,
+        "cumulative_time_s": 45410.38454463892,
+        "cumulative_tokens": 223088693,
+        "moving_average_reward": 0.11343749836087227
+      },
+      "0.2": {
+        "step": 56,
+        "cumulative_time_s": 52412.95766947232,
+        "cumulative_tokens": 257053946,
+        "moving_average_reward": 0.20875000059604645
+      },
+      "0.3": {
+        "step": 104,
+        "cumulative_time_s": 87390.19683855772,
+        "cumulative_tokens": 424867932,
+        "moving_average_reward": 0.3028124988079071
+      }
+    },
+    "peak_reward": 0.4203124940395355
+  },
+  "trial_id": 7,
+  "stage": "confirm",
+  "platform": "C550",
+  "updates_target": 135,
+  "parameters": {
+    "algorithm.adv_estimator": "grpo",
+    "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+    "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+    "data.train_batch_size": 256,
+    "data.max_prompt_length": 1024,
+    "data.max_response_length": 4096,
+    "data.filter_overlong_prompts": true,
+    "data.truncation": "error",
+    "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-8B",
+    "actor_rollout_ref.actor.optim.lr": 1e-06,
+    "actor_rollout_ref.actor.optim.lr_warmup_steps": 0,
+    "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 1,
+    "actor_rollout_ref.actor.use_dynamic_bsz": false,
+    "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 4,
+    "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+    "actor_rollout_ref.actor.megatron.use_distributed_optimizer": true,
+    "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+    "actor_rollout_ref.actor.megatron.optimizer_offload": true,
+    "actor_rollout_ref.actor.megatron.param_offload": true,
+    "actor_rollout_ref.actor.use_kl_loss": true,
+    "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+    "actor_rollout_ref.actor.kl_loss_coef": 0.001,
+    "actor_rollout_ref.actor.entropy_coeff": 0.0,
+    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 1,
+    "actor_rollout_ref.rollout.tensor_model_parallel_size": 4,
+    "actor_rollout_ref.rollout.name": "vllm",
+    "actor_rollout_ref.rollout.gpu_memory_utilization": 0.75,
+    "actor_rollout_ref.rollout.max_num_batched_tokens": 81920,
+    "actor_rollout_ref.rollout.max_num_seqs": 384,
+    "actor_rollout_ref.rollout.enable_chunked_prefill": true,
+    "actor_rollout_ref.rollout.enable_prefix_caching": true,
+    "actor_rollout_ref.rollout.free_cache_engine": true,
+    "actor_rollout_ref.rollout.enforce_eager": false,
+    "actor_rollout_ref.rollout.n": 5,
+    "actor_rollout_ref.ref.megatron.param_offload": true,
+    "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 1,
+    "actor_rollout_ref.ref.megatron.sequence_parallel": false,
+    "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 32,
+    "algorithm.use_kl_in_reward": false,
+    "trainer.critic_warmup": 0,
+    "trainer.logger": [
+      "console",
+      "wandb"
+    ],
+    "trainer.project_name": "verl_stage_tuner",
+    "trainer.experiment_name": "qwen3_8b_agent",
+    "trainer.n_gpus_per_node": 8,
+    "trainer.nnodes": 1,
+    "trainer.val_before_train": false,
+    "trainer.save_freq": -1,
+    "trainer.test_freq": -1,
+    "trainer.total_epochs": 3
+  },
+  "return_code": 0,
+  "stop_reason": null,
+  "failure_phase": null,
+  "log_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0724_1741_2026/trials/0007/train.log",
+  "gpu_samples_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0724_1741_2026/trials/0007/gpu_samples.csv",
+  "health_events_path": null,
+  "health_agent_traces_path": null,
+  "health_monitor": {
+    "enabled": false
+  },
+  "health_events": [],
+  "health_decisions": [],
+  "proposal": {
+    "decision": "keep",
+    "reason": "stage baseline",
+    "reference_trial_id": 5,
+    "reference_trial": {
+      "trial_id": 5,
+      "stage": "stability_tuning",
+      "result": "success",
+      "parameters": {
+        "algorithm.adv_estimator": "grpo",
+        "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+        "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+        "data.train_batch_size": 256,
+        "data.max_prompt_length": 1024,
+        "data.max_response_length": 4096,
+        "data.filter_overlong_prompts": true,
+        "data.truncation": "error",
+        "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-8B",
+        "actor_rollout_ref.actor.optim.lr": 1e-06,
+        "actor_rollout_ref.actor.optim.lr_warmup_steps": 0,
+        "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 1,
+        "actor_rollout_ref.actor.use_dynamic_bsz": false,
+        "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 1,
+        "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 4,
+        "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+        "actor_rollout_ref.actor.megatron.use_distributed_optimizer": true,
+        "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+        "actor_rollout_ref.actor.megatron.optimizer_offload": true,
+        "actor_rollout_ref.actor.megatron.param_offload": true,
+        "actor_rollout_ref.actor.use_kl_loss": true,
+        "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+        "actor_rollout_ref.actor.kl_loss_coef": 0.001,
+        "actor_rollout_ref.actor.entropy_coeff": 0.0,
+        "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 1,
+        "actor_rollout_ref.rollout.tensor_model_parallel_size": 4,
+        "actor_rollout_ref.rollout.name": "vllm",
+        "actor_rollout_ref.rollout.gpu_memory_utilization": 0.75,
+        "actor_rollout_ref.rollout.max_num_batched_tokens": 81920,
+        "actor_rollout_ref.rollout.max_num_seqs": 384,
+        "actor_rollout_ref.rollout.enable_chunked_prefill": true,
+        "actor_rollout_ref.rollout.enable_prefix_caching": true,
+        "actor_rollout_ref.rollout.free_cache_engine": true,
+        "actor_rollout_ref.rollout.enforce_eager": false,
+        "actor_rollout_ref.rollout.n": 5,
+        "actor_rollout_ref.ref.megatron.param_offload": true,
+        "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+        "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 1,
+        "actor_rollout_ref.ref.megatron.sequence_parallel": false,
+        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 32,
+        "algorithm.use_kl_in_reward": false,
+        "trainer.critic_warmup": 0,
+        "trainer.logger": [
+          "console",
+          "wandb"
+        ],
+        "trainer.project_name": "verl_stage_tuner",
+        "trainer.experiment_name": "qwen3_8b_agent",
+        "trainer.n_gpus_per_node": 8,
+        "trainer.nnodes": 1,
+        "trainer.val_before_train": false,
+        "trainer.save_freq": -1,
+        "trainer.test_freq": -1,
+        "trainer.total_epochs": 3
+      },
+      "resource": {
+        "memory_bottleneck": "rollout",
+        "max_observed_memory_pct": 87.249755859375
+      },
+      "memory_by_phase_pct": {
+        "rollout": {
+          "mean": 80.79046252605166,
+          "p95": 84.5916748046875,
+          "max": 87.249755859375
+        },
+        "actor_log_prob": {
+          "mean": 37.773377019699076,
+          "p95": 78.9581298828125,
+          "max": 80.9112548828125
+        },
+        "ref_log_prob": {
+          "mean": 15.625322782076323,
+          "p95": 15.948486328125,
+          "max": 15.985107421875
+        },
+        "training": {
+          "mean": 58.135463483279224,
+          "p95": 60.9222412109375,
+          "max": 61.724853515625
+        }
+      },
+      "performance": {
+        "throughput": {
+          "mean": 609.6669538183532,
+          "p95": 617.696585611176,
+          "max": 619.9580870600641
+        },
+        "time_per_step_s": {
+          "mean": 889.1139865815882,
+          "p95": 1057.9067810047418,
+          "max": 1079.3068271316588
+        },
+        "generation_tgs": {
+          "mean": 1391.8560705187172,
+          "p95": 1497.8549073470883,
+          "max": 1517.9320967877338
+        },
+        "actor_tgs": {
+          "mean": 1873.3583085598289,
+          "p95": 2022.0428302437235,
+          "max": 2027.6505183688973
+        },
+        "actor_mfu": {
+          "mean": 0.38361691073616855,
+          "p95": 0.41789029478584616,
+          "max": 0.41942309307793235
+        },
+        "phase_duration_s": {
+          "rollout": {
+            "mean": 392.92124380717996,
+            "p95": 497.84816674515605,
+            "max": 515.0334121733904
+          },
+          "actor_log_prob": {
+            "mean": 126.71118752310028,
+            "p95": 141.00214061513543,
+            "max": 142.2319724392146
+          },
+          "ref_log_prob": {
+            "mean": 80.76356991779592,
+            "p95": 96.26780708134174,
+            "max": 97.34769944474101
+          },
+          "training": {
+            "mean": 288.3759957790472,
+            "p95": 322.43957695551217,
+            "max": 324.36765805631876
+          }
+        },
+        "time_bottleneck": "rollout"
+      },
+      "stability": {
+        "reward": {
+          "mean": -0.12416015578201041,
+          "p95": 0.26875001192092896,
+          "max": 0.390625
+        },
+        "reward_slope": -0.008203122764825821,
+        "actor_ppo_kl": {
+          "mean": 1.4582400864245925e-05,
+          "p95": 6.067238042235523e-05,
+          "max": 6.798263277285194e-05
+        },
+        "actor_entropy": {
+          "mean": 0.20004023079361236,
+          "p95": 0.29400938749313354,
+          "max": 0.30963385105133057
+        },
+        "actor_pg_loss": {
+          "mean": 5.633415920393808e-05,
+          "p95": 8.397214114665985e-05,
+          "max": 9.816144593060017e-05
+        },
+        "actor_pg_clipfrac": {
+          "mean": 0.0008511470075872795,
+          "p95": 0.0012400550868733261,
+          "max": 0.0013029933564212115
+        },
+        "response_length": {
+          "mean": 3238.6387099228896,
+          "p95": 3918.52880859375,
+          "max": 3956.74462890625
+        },
+        "response_clip_ratio": {
+          "mean": 0.5169439935064936,
+          "p95": 0.840624988079071,
+          "max": 0.8773437738418579
+        }
+      },
+      "error": {
+        "type": null,
+        "evidence": []
+      },
+      "source": "trial",
+      "selection_reason": "best successful stability trial selected for confirmation"
+    },
+    "changes": {},
+    "expected_effect": {}
+  },
+  "feasibility": {
+    "verdict": "valid",
+    "reason": "stage baseline"
+  }
+}

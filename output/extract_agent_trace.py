@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0724_1741_2026"
+DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0729_0955_2026"
 DEFAULT_OUTPUT_NAME = "agent_report.md"
 PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
 
