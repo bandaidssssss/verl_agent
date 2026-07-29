@@ -53,17 +53,13 @@ def extract_tool_calls(tool_calls: list[dict]) -> str:
             # 简化参数展示
             if name == "parameter_understanding":
                 items = args.get("items", [])
-                arg_summary = ", ".join(
-                    [it.split(".")[-1] for it in items[:6]]
-                )
+                arg_summary = ", ".join(items[:6])
                 if len(items) > 6:
                     arg_summary += f" …共 {len(items)} 个"
             elif name == "memory_estimator":
                 changes = args.get("changes", {})
                 ref = args.get("reference_trial_id", "?")
-                param_names = ", ".join(
-                    [k.split(".")[-1] for k in changes.keys()]
-                )
+                param_names = ", ".join(changes.keys())
                 arg_summary = f"ref_trial={ref}, 预测参数: {param_names}"
             elif name == "tuning_strategies":
                 items = args.get("items", [])
@@ -103,9 +99,8 @@ def extract_proposal_changes(proposal: dict | None) -> str:
             lines.append("| 参数 | 旧值 | 新值 | 原因 |")
             lines.append("|---|---|---|---|")
             for key, ch in changes.items():
-                short_key = key.split(".")[-1]
                 lines.append(
-                    f"| `{short_key}` | `{ch.get('from')}` | `{ch.get('to')}` "
+                    f"| `{key}` | `{ch.get('from')}` | `{ch.get('to')}` "
                     f"| {ch.get('reason', '')} |"
                 )
         else:
@@ -113,8 +108,7 @@ def extract_proposal_changes(proposal: dict | None) -> str:
             lines.append("| 参数 | 目标值 |")
             lines.append("|---|---|")
             for key, val in changes.items():
-                short_key = key.split(".")[-1]
-                lines.append(f"| `{short_key}` | `{val}` |")
+                lines.append(f"| `{key}` | `{val}` |")
         lines.append("")
 
     return "\n".join(lines)
@@ -477,8 +471,7 @@ def extract_param_diff(current: dict, previous: dict | None) -> str:
         cv = current.get(key)
         pv = previous.get(key)
         if cv != pv:
-            sk = key.split(".")[-1]
-            diffs.append(f"| `{sk}` | `{pv}` | `{cv}` |")
+            diffs.append(f"| `{key}` | `{pv}` | `{cv}` |")
 
     if not diffs:
         return "_参数无变化_\n"
