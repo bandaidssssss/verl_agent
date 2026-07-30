@@ -1,0 +1,367 @@
+{
+  "updates_completed": 6,
+  "result": "success",
+  "error": {
+    "type": null,
+    "evidence": []
+  },
+  "memory_by_phase_pct": {
+    "rollout": {
+      "mean": null,
+      "p95": null,
+      "max": null
+    },
+    "actor_log_prob": {
+      "mean": 22.390669745367926,
+      "p95": 30.51300048828125,
+      "max": 30.72662353515625
+    },
+    "ref_log_prob": {
+      "mean": 38.32189014979771,
+      "p95": 61.46240234375,
+      "max": 61.627197265625
+    },
+    "training": {
+      "mean": 27.623848398779607,
+      "p95": 37.68310546875,
+      "max": 37.84637451171875
+    }
+  },
+  "memory_by_phase_gpu_pct": {
+    "actor_log_prob": {
+      "0": {
+        "mean": 22.52362225506757,
+        "p95": 30.40008544921875,
+        "max": 30.41229248046875
+      },
+      "1": {
+        "mean": 22.667714711782093,
+        "p95": 30.50079345703125,
+        "max": 30.51300048828125
+      },
+      "2": {
+        "mean": 22.3348669103674,
+        "p95": 30.62591552734375,
+        "max": 30.62896728515625
+      },
+      "3": {
+        "mean": 22.47912432696368,
+        "p95": 30.72357177734375,
+        "max": 30.72662353515625
+      },
+      "4": {
+        "mean": 22.02189677470439,
+        "p95": 30.49774169921875,
+        "max": 30.50689697265625
+      },
+      "5": {
+        "mean": 22.117820945945947,
+        "p95": 30.59234619140625,
+        "max": 30.60150146484375
+      },
+      "6": {
+        "mean": 22.44258571315456,
+        "p95": 30.47943115234375,
+        "max": 30.48553466796875
+      },
+      "7": {
+        "mean": 22.53772632495777,
+        "p95": 30.57403564453125,
+        "max": 30.58013916015625
+      }
+    },
+    "ref_log_prob": {
+      "0": {
+        "mean": 39.08146449497768,
+        "p95": 61.3433837890625,
+        "max": 61.3433837890625
+      },
+      "1": {
+        "mean": 37.92152404785156,
+        "p95": 61.444091796875,
+        "max": 61.444091796875
+      },
+      "2": {
+        "mean": 37.7173832484654,
+        "p95": 61.46240234375,
+        "max": 61.46240234375
+      },
+      "3": {
+        "mean": 37.8150394984654,
+        "p95": 61.56005859375,
+        "max": 61.56005859375
+      },
+      "4": {
+        "mean": 37.92315891810826,
+        "p95": 61.5264892578125,
+        "max": 61.5264892578125
+      },
+      "5": {
+        "mean": 38.01830836704799,
+        "p95": 61.62109375,
+        "max": 61.62109375
+      },
+      "6": {
+        "mean": 39.168875558035715,
+        "p95": 61.5325927734375,
+        "max": 61.5325927734375
+      },
+      "7": {
+        "mean": 38.92936706542969,
+        "p95": 61.627197265625,
+        "max": 61.627197265625
+      }
+    },
+    "training": {
+      "0": {
+        "mean": 27.608378222034236,
+        "p95": 37.26959228515625,
+        "max": 37.29400634765625
+      },
+      "1": {
+        "mean": 27.772016586012143,
+        "p95": 37.37030029296875,
+        "max": 37.39471435546875
+      },
+      "2": {
+        "mean": 27.503918690286625,
+        "p95": 37.33367919921875,
+        "max": 37.35504150390625
+      },
+      "3": {
+        "mean": 27.603654800706607,
+        "p95": 37.43133544921875,
+        "max": 37.45269775390625
+      },
+      "4": {
+        "mean": 27.579998818172772,
+        "p95": 37.73345947265625,
+        "max": 37.75177001953125
+      },
+      "5": {
+        "mean": 27.67562380262241,
+        "p95": 37.82806396484375,
+        "max": 37.84637451171875
+      },
+      "6": {
+        "mean": 27.575615560932523,
+        "p95": 37.70904541015625,
+        "max": 37.73345947265625
+      },
+      "7": {
+        "mean": 27.671580709469545,
+        "p95": 37.80364990234375,
+        "max": 37.82806396484375
+      }
+    }
+  },
+  "gpu_utilization_by_phase_pct": {
+    "startup": {
+      "mean": 14.099378881987578,
+      "p95": 47.0,
+      "max": 50.0
+    },
+    "actor_log_prob": {
+      "mean": 31.972972972972972,
+      "p95": 72.0,
+      "max": 74.0
+    },
+    "between_phases": {
+      "mean": 36.94701492537313,
+      "p95": 51.0,
+      "max": 53.0
+    },
+    "ref_log_prob": {
+      "mean": 58.60267857142857,
+      "p95": 88.0,
+      "max": 88.0
+    },
+    "training": {
+      "mean": 32.50398089171974,
+      "p95": 74.0,
+      "max": 78.0
+    }
+  },
+  "performance": {
+    "throughput": {
+      "mean": 1187.9837198756907,
+      "p95": 1187.9837198756907,
+      "max": 1187.9837198756907
+    },
+    "time_per_step_s": {
+      "mean": 125.65344751998782,
+      "p95": 125.65344751998782,
+      "max": 125.65344751998782
+    },
+    "generation_tgs": {
+      "mean": 1996.8835184758107,
+      "p95": 1996.8835184758107,
+      "max": 1996.8835184758107
+    },
+    "actor_tgs": {
+      "mean": 4991.857541675836,
+      "p95": 4991.857541675836,
+      "max": 4991.857541675836
+    },
+    "actor_mfu": {
+      "mean": 0.11686450362612344,
+      "p95": 0.11686450362612344,
+      "max": 0.11686450362612344
+    },
+    "phase_duration_s": {
+      "rollout": {
+        "mean": 74.7536091208458,
+        "p95": 74.7536091208458,
+        "max": 74.7536091208458
+      },
+      "actor_log_prob": {
+        "mean": 14.58402026258409,
+        "p95": 14.58402026258409,
+        "max": 14.58402026258409
+      },
+      "ref_log_prob": {
+        "mean": 6.164123997092247,
+        "p95": 6.164123997092247,
+        "max": 6.164123997092247
+      },
+      "training": {
+        "mean": 29.903547678142786,
+        "p95": 29.903547678142786,
+        "max": 29.903547678142786
+      }
+    },
+    "time_bottleneck": "rollout"
+  },
+  "resource": {
+    "memory_bottleneck": "ref_log_prob",
+    "max_observed_memory_pct": 61.627197265625
+  },
+  "stability": {
+    "reward": {
+      "mean": -0.9947916666666666,
+      "p95": -0.986328125,
+      "max": -0.986328125
+    },
+    "reward_slope": -0.001953125,
+    "actor_ppo_kl": {
+      "mean": 2.031869352062121e-05,
+      "p95": 2.031869352062121e-05,
+      "max": 2.031869352062121e-05
+    },
+    "actor_entropy": {
+      "mean": 2.5899736881256104,
+      "p95": 2.5899736881256104,
+      "max": 2.5899736881256104
+    },
+    "actor_pg_loss": {
+      "mean": 0.0,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "actor_pg_clipfrac": {
+      "mean": 0.0,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "response_length": {
+      "mean": 1010.525390625,
+      "p95": 1010.525390625,
+      "max": 1010.525390625
+    },
+    "response_clip_ratio": {
+      "mean": 0.0634765625,
+      "p95": 0.0634765625,
+      "max": 0.0634765625
+    }
+  },
+  "end_to_end_reward": {
+    "thresholds": {
+      "0.0": null,
+      "0.1": null,
+      "0.2": null,
+      "0.3": null
+    },
+    "peak_reward": -0.986328125
+  },
+  "trial_id": 1,
+  "stage": "hardware_tuning",
+  "platform": "C550",
+  "updates_target": 6,
+  "parameters": {
+    "algorithm.adv_estimator": "grpo",
+    "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+    "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+    "data.train_batch_size": 256,
+    "data.max_prompt_length": 1280,
+    "data.max_response_length": 5120,
+    "data.filter_overlong_prompts": true,
+    "data.truncation": "error",
+    "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-0.6B-Base",
+    "actor_rollout_ref.model.use_remove_padding": true,
+    "actor_rollout_ref.actor.optim.lr": 3e-06,
+    "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 2,
+    "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 2,
+    "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+    "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+    "actor_rollout_ref.actor.megatron.optimizer_offload": false,
+    "actor_rollout_ref.actor.megatron.param_offload": false,
+    "actor_rollout_ref.actor.use_kl_loss": true,
+    "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+    "actor_rollout_ref.actor.kl_loss_coef": 0.003,
+    "actor_rollout_ref.actor.entropy_coeff": 0.0,
+    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 2,
+    "actor_rollout_ref.rollout.tensor_model_parallel_size": 2,
+    "actor_rollout_ref.rollout.name": "vllm",
+    "actor_rollout_ref.rollout.gpu_memory_utilization": 0.5,
+    "actor_rollout_ref.rollout.n": 4,
+    "actor_rollout_ref.ref.megatron.param_offload": true,
+    "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 2,
+    "actor_rollout_ref.ref.megatron.sequence_parallel": true,
+    "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 16,
+    "algorithm.use_kl_in_reward": false,
+    "trainer.critic_warmup": 0,
+    "trainer.logger": [
+      "console",
+      "wandb"
+    ],
+    "trainer.project_name": "verl_stage_tuner",
+    "trainer.experiment_name": "qwen3_0p6b_agent",
+    "trainer.n_gpus_per_node": 8,
+    "trainer.nnodes": 1,
+    "trainer.val_before_train": false,
+    "trainer.save_freq": -1,
+    "trainer.test_freq": -1,
+    "trainer.total_epochs": 1
+  },
+  "return_code": 0,
+  "stop_reason": null,
+  "failure_phase": null,
+  "log_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0722_1805_2026/trials/0001/train.log",
+  "gpu_samples_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0722_1805_2026/trials/0001/gpu_samples.csv",
+  "health_events_path": null,
+  "health_agent_traces_path": null,
+  "health_monitor": {
+    "enabled": false
+  },
+  "health_events": [],
+  "health_decisions": [],
+  "proposal": {
+    "decision": "keep",
+    "reason": "stage baseline",
+    "reference_trial_id": null,
+    "reference_trial": {
+      "source": "base_parameters",
+      "trial_id": null,
+      "selection_reason": "initial base parameters; no completed trial exists"
+    },
+    "changes": {},
+    "expected_effect": {}
+  },
+  "feasibility": {
+    "verdict": "valid",
+    "reason": "stage baseline"
+  }
+}

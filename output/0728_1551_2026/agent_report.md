@@ -1,6 +1,6 @@
 # Agent 实验报告: `0728_1551_2026`
 
-**生成时间**: 2026-07-29 11:33:41
+**生成时间**: 2026-07-30 11:28:08
 **数据来源**: `/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0728_1551_2026`
 **总 Trial 数**: 9
 
@@ -77,16 +77,16 @@ _以下行为用于生成 Trial 2 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | gpu_memory_utilization, max_num_batched_tokens, max_num_seqs, tensor_model_parallel_size, ppo_micro_batch_size_per_gpu, log_prob_micro_batch_size_per_gpu | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.rollout.gpu_memory_utilization, actor_rollout_ref.rollout.max_num_batched_tokens, actor_rollout_ref.rollout.max_num_seqs, actor_rollout_ref.rollout.tensor_model_parallel_size, actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu, actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu | success |
 | 1 | `tuning_strategies` | end_to_end_throughput, rollout_memory_pressure | success |
 | 2 | `search_verl_docs` | 查询: "max_num_batched_tokens default" | success |
 | 2 | `search_verl_docs` | 查询: "max_num_seqs default" | success |
-| 3 | `memory_estimator` | ref_trial=1, 预测参数: tensor_model_parallel_size, gpu_memory_utilization | success |
+| 3 | `memory_estimator` | ref_trial=1, 预测参数: actor_rollout_ref.rollout.tensor_model_parallel_size, actor_rollout_ref.rollout.gpu_memory_utilization | success |
 | 4 | `search_verl_docs` | 查询: "max_num_batched_tokens rollout default value" | success |
 | 4 | `search_verl_docs` | 查询: "max_num_seqs rollout default value" | success |
 | 4 | `tuning_strategies` | low_gpu_utilization | success |
-| 5 | `memory_estimator` | ref_trial=1, 预测参数: tensor_model_parallel_size | success |
-| 6 | `memory_estimator` | ref_trial=1, 预测参数: ppo_micro_batch_size_per_gpu | success |
+| 5 | `memory_estimator` | ref_trial=1, 预测参数: actor_rollout_ref.rollout.tensor_model_parallel_size | success |
+| 6 | `memory_estimator` | ref_trial=1, 预测参数: actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu | success |
 
 
 - **决策**: `modify`
@@ -95,7 +95,7 @@ _以下行为用于生成 Trial 2 的候选配置。_
 
 | 参数 | 旧值 | 新值 | 原因 |
 |---|---|---|---|
-| `tensor_model_parallel_size` | `2` | `1` | rollout 阶段 TP=2 引入额外 all-reduce 通信，可能降低 decode 吞吐。降为 1 可消除通信，提升生成速度，且模型规模小，内存余量充足，风险可控。 |
+| `actor_rollout_ref.rollout.tensor_model_parallel_size` | `2` | `1` | rollout 阶段 TP=2 引入额外 all-reduce 通信，可能降低 decode 吞吐。降为 1 可消除通信，提升生成速度，且模型规模小，内存余量充足，风险可控。 |
 
 
 #### Feasibility Agent 审查
@@ -106,9 +106,9 @@ _以下行为用于生成 Trial 2 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | tensor_model_parallel_size | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.rollout.tensor_model_parallel_size | success |
 | 1 | `search_verl_docs` | 查询: "rollout tensor_model_parallel_size vllm" | success |
-| 2 | `memory_estimator` | ref_trial=1, 预测参数: tensor_model_parallel_size | success |
+| 2 | `memory_estimator` | ref_trial=1, 预测参数: actor_rollout_ref.rollout.tensor_model_parallel_size | success |
 
 - **判定**: `valid`
 - **原因**: Rollout TP=2 引入 per-token 通信，降为 1 可消除并提升 decode 吞吐；0.6B 模型单卡完全可容纳，内存估算（含不确定性上界）均在安全线内，且其他阶段无连锁风险。
@@ -134,7 +134,7 @@ _以下行为用于生成 Trial 2 的候选配置。_
 
 | 参数 | 旧值 | 新值 |
 |---|---|---|
-| `tensor_model_parallel_size` | `2` | `1` |
+| `actor_rollout_ref.rollout.tensor_model_parallel_size` | `2` | `1` |
 
 
 ### 关键指标
@@ -180,9 +180,9 @@ _以下行为用于生成 Trial 3 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | gpu_memory_utilization, max_num_batched_tokens, max_num_seqs, log_prob_micro_batch_size_per_gpu, ppo_micro_batch_size_per_gpu, log_prob_micro_batch_size_per_gpu | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.rollout.gpu_memory_utilization, actor_rollout_ref.rollout.max_num_batched_tokens, actor_rollout_ref.rollout.max_num_seqs, actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu, actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu, actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu | success |
 | 1 | `tuning_strategies` | end_to_end_throughput, rollout_memory_pressure | success |
-| 2 | `memory_estimator` | ref_trial=2, 预测参数: gpu_memory_utilization | success |
+| 2 | `memory_estimator` | ref_trial=2, 预测参数: actor_rollout_ref.rollout.gpu_memory_utilization | success |
 | 2 | `search_verl_docs` | 查询: "max_num_batched_tokens default" | success |
 | 2 | `search_verl_docs` | 查询: "max_num_seqs default" | success |
 
@@ -193,7 +193,7 @@ _以下行为用于生成 Trial 3 的候选配置。_
 
 | 参数 | 旧值 | 新值 | 原因 |
 |---|---|---|---|
-| `gpu_memory_utilization` | `0.5` | `0.7` | Expand vLLM's GPU memory budget to allow more KV‑cache capacity and concurrent sequences, aiming to reduce rollout duration. Safe given rollout peak is 56.65% and estimator projects 75.67% upper bound 77.17% with low risk. |
+| `actor_rollout_ref.rollout.gpu_memory_utilization` | `0.5` | `0.7` | Expand vLLM's GPU memory budget to allow more KV‑cache capacity and concurrent sequences, aiming to reduce rollout duration. Safe given rollout peak is 56.65% and estimator projects 75.67% upper bound 77.17% with low risk. |
 
 
 #### Feasibility Agent 审查
@@ -204,8 +204,8 @@ _以下行为用于生成 Trial 3 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | gpu_memory_utilization | success |
-| 1 | `memory_estimator` | ref_trial=2, 预测参数: gpu_memory_utilization | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.rollout.gpu_memory_utilization | success |
+| 1 | `memory_estimator` | ref_trial=2, 预测参数: actor_rollout_ref.rollout.gpu_memory_utilization | success |
 
 - **判定**: `valid`
 - **原因**: Increasing gpu_memory_utilization from 0.5 to 0.7 is a safe hardware adjustment. The rollout phase has ample memory headroom (projected 75.67%, upper bound 77.17%, well below the 92% throughput safety limit) and is the performance bottleneck. Other phases are unaffected and remain within safe limits. The change may reduce rollout duration by allowing more KV-cache capacity.
@@ -230,7 +230,7 @@ _以下行为用于生成 Trial 3 的候选配置。_
 
 | 参数 | 旧值 | 新值 |
 |---|---|---|
-| `gpu_memory_utilization` | `0.5` | `0.7` |
+| `actor_rollout_ref.rollout.gpu_memory_utilization` | `0.5` | `0.7` |
 
 
 ### 关键指标
@@ -277,14 +277,14 @@ _以下行为用于生成 Trial 4 的候选配置。_
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
 | 1 | `query_trial_history` | stage=None, limit=None | success |
-| 1 | `parameter_understanding` | max_num_batched_tokens, max_num_seqs, gpu_memory_utilization, tensor_model_parallel_size, ppo_micro_batch_size_per_gpu, log_prob_micro_batch_size_per_gpu | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.rollout.max_num_batched_tokens, actor_rollout_ref.rollout.max_num_seqs, actor_rollout_ref.rollout.gpu_memory_utilization, actor_rollout_ref.rollout.tensor_model_parallel_size, actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu, actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu | success |
 | 2 | `search_verl_docs` | 查询: "max_num_batched_tokens default vllm" | success |
 | 2 | `search_verl_docs` | 查询: "max_num_seqs default vllm" | success |
-| 3 | `memory_estimator` | ref_trial=2, 预测参数: ppo_micro_batch_size_per_gpu | success |
-| 3 | `memory_estimator` | ref_trial=2, 预测参数: max_num_batched_tokens, max_num_seqs | success |
-| 4 | `memory_estimator` | ref_trial=2, 预测参数: max_num_batched_tokens, max_num_seqs | success |
+| 3 | `memory_estimator` | ref_trial=2, 预测参数: actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu | success |
+| 3 | `memory_estimator` | ref_trial=2, 预测参数: actor_rollout_ref.rollout.max_num_batched_tokens, actor_rollout_ref.rollout.max_num_seqs | success |
+| 4 | `memory_estimator` | ref_trial=2, 预测参数: actor_rollout_ref.rollout.max_num_batched_tokens, actor_rollout_ref.rollout.max_num_seqs | success |
 | 5 | `tuning_strategies` | end_to_end_throughput | success |
-| 6 | `memory_estimator` | ref_trial=2, 预测参数: tensor_model_parallel_size, sequence_parallel | success |
+| 6 | `memory_estimator` | ref_trial=2, 预测参数: actor_rollout_ref.actor.megatron.tensor_model_parallel_size, actor_rollout_ref.actor.megatron.sequence_parallel | success |
 
 
 - **决策**: `modify`
@@ -293,8 +293,8 @@ _以下行为用于生成 Trial 4 的候选配置。_
 
 | 参数 | 旧值 | 新值 | 原因 |
 |---|---|---|---|
-| `max_num_batched_tokens` | `None` | `16384` | 当前未显式设置，默认值可能偏小。设置 16384 允许 vLLM 在一个调度步骤中处理更多 token，提高 prefill/decode 的吞吐。 |
-| `max_num_seqs` | `None` | `128` | 当前未显式设置，默认值可能限制并发序列数。设置 128 匹配 8 GPU 下 1024 序列的分配，提升 GPU 利用率。 |
+| `actor_rollout_ref.rollout.max_num_batched_tokens` | `None` | `16384` | 当前未显式设置，默认值可能偏小。设置 16384 允许 vLLM 在一个调度步骤中处理更多 token，提高 prefill/decode 的吞吐。 |
+| `actor_rollout_ref.rollout.max_num_seqs` | `None` | `128` | 当前未显式设置，默认值可能限制并发序列数。设置 128 匹配 8 GPU 下 1024 序列的分配，提升 GPU 利用率。 |
 
 
 #### Feasibility Agent 审查
@@ -305,8 +305,8 @@ _以下行为用于生成 Trial 4 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | max_num_batched_tokens, max_num_seqs | success |
-| 1 | `memory_estimator` | ref_trial=2, 预测参数: max_num_batched_tokens, max_num_seqs | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.rollout.max_num_batched_tokens, actor_rollout_ref.rollout.max_num_seqs | success |
+| 1 | `memory_estimator` | ref_trial=2, 预测参数: actor_rollout_ref.rollout.max_num_batched_tokens, actor_rollout_ref.rollout.max_num_seqs | success |
 
 - **判定**: `valid`
 - **原因**: 修改仅涉及 rollout 调度器上限（max_num_batched_tokens、max_num_seqs），不改变 gpu_memory_utilization，因此 vLLM 显存预算不变。显存估算器基于参考 Trial 2 回退至 peak 56.65%，upper_bound 61.15%，远低于 92% 安全线；其余阶段均安全。参数理解确认上述参数为调度容量上限，安全性风险可控。
@@ -332,9 +332,9 @@ _以下行为用于生成 Trial 4 的候选配置。_
 
 | 参数 | 旧值 | 新值 |
 |---|---|---|
-| `gpu_memory_utilization` | `0.7` | `0.5` |
-| `max_num_batched_tokens` | `None` | `16384` |
-| `max_num_seqs` | `None` | `128` |
+| `actor_rollout_ref.rollout.gpu_memory_utilization` | `0.7` | `0.5` |
+| `actor_rollout_ref.rollout.max_num_batched_tokens` | `None` | `16384` |
+| `actor_rollout_ref.rollout.max_num_seqs` | `None` | `128` |
 
 
 ### 关键指标
@@ -380,12 +380,12 @@ _以下行为用于生成 Trial 5 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | gpu_memory_utilization, max_num_batched_tokens, max_num_seqs, tensor_model_parallel_size | success |
-| 2 | `memory_estimator` | ref_trial=4, 预测参数: gpu_memory_utilization, max_num_batched_tokens | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.rollout.gpu_memory_utilization, actor_rollout_ref.rollout.max_num_batched_tokens, actor_rollout_ref.rollout.max_num_seqs, actor_rollout_ref.rollout.tensor_model_parallel_size | success |
+| 2 | `memory_estimator` | ref_trial=4, 预测参数: actor_rollout_ref.rollout.gpu_memory_utilization, actor_rollout_ref.rollout.max_num_batched_tokens | success |
 | 2 | `tuning_strategies` | end_to_end_throughput | success |
 | 2 | `query_trial_history` | stage=hardware_tuning, limit=5 | success |
-| 3 | `memory_estimator` | ref_trial=4, 预测参数: max_num_batched_tokens | success |
-| 4 | `memory_estimator` | ref_trial=4, 预测参数: max_num_seqs | success |
+| 3 | `memory_estimator` | ref_trial=4, 预测参数: actor_rollout_ref.rollout.max_num_batched_tokens | success |
+| 4 | `memory_estimator` | ref_trial=4, 预测参数: actor_rollout_ref.rollout.max_num_seqs | success |
 
 
 - **决策**: `modify`
@@ -394,7 +394,7 @@ _以下行为用于生成 Trial 5 的候选配置。_
 
 | 参数 | 旧值 | 新值 | 原因 |
 |---|---|---|---|
-| `max_num_batched_tokens` | `16384` | `32768` | 提高 rollout 调度器单批 token 上限，以增加可能的预填充/解码批处理规模，提升 GPU 利用率和吞吐量。 |
+| `actor_rollout_ref.rollout.max_num_batched_tokens` | `16384` | `32768` | 提高 rollout 调度器单批 token 上限，以增加可能的预填充/解码批处理规模，提升 GPU 利用率和吞吐量。 |
 
 
 #### Feasibility Agent 审查
@@ -405,8 +405,8 @@ _以下行为用于生成 Trial 5 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | max_num_batched_tokens | success |
-| 1 | `memory_estimator` | ref_trial=4, 预测参数: max_num_batched_tokens | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.rollout.max_num_batched_tokens | success |
+| 1 | `memory_estimator` | ref_trial=4, 预测参数: actor_rollout_ref.rollout.max_num_batched_tokens | success |
 
 - **判定**: `valid`
 - **原因**: max_num_batched_tokens 是调度器容量上限，翻倍不会主动分配显存，仅当当前上限成为绑定时才可能提升批处理效率。基于参考 Trial 4 的显存估算显示 rollout 上界 63.11%，远低于 92% 安全线；其他阶段完全不受该参数影响，无跨阶段资源挤占风险。该候选符合硬件调优阶段探索方向。
@@ -432,7 +432,7 @@ _以下行为用于生成 Trial 5 的候选配置。_
 
 | 参数 | 旧值 | 新值 |
 |---|---|---|
-| `max_num_batched_tokens` | `16384` | `32768` |
+| `actor_rollout_ref.rollout.max_num_batched_tokens` | `16384` | `32768` |
 
 
 ### 关键指标
@@ -478,11 +478,11 @@ _以下行为用于生成 Trial 6 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | gpu_memory_utilization, max_num_batched_tokens, max_num_seqs, ppo_micro_batch_size_per_gpu, log_prob_micro_batch_size_per_gpu, log_prob_micro_batch_size_per_gpu | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.rollout.gpu_memory_utilization, actor_rollout_ref.rollout.max_num_batched_tokens, actor_rollout_ref.rollout.max_num_seqs, actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu, actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu, actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu | success |
 | 2 | `tuning_strategies` | end_to_end_throughput, low_gpu_utilization | success |
-| 3 | `memory_estimator` | ref_trial=4, 预测参数: ppo_micro_batch_size_per_gpu | success |
-| 4 | `memory_estimator` | ref_trial=4, 预测参数: gpu_memory_utilization | success |
-| 5 | `parameter_understanding` | tensor_model_parallel_size, sequence_parallel, pipeline_model_parallel_size, tensor_model_parallel_size | success |
+| 3 | `memory_estimator` | ref_trial=4, 预测参数: actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu | success |
+| 4 | `memory_estimator` | ref_trial=4, 预测参数: actor_rollout_ref.rollout.gpu_memory_utilization | success |
+| 5 | `parameter_understanding` | actor_rollout_ref.actor.megatron.tensor_model_parallel_size, actor_rollout_ref.actor.megatron.sequence_parallel, actor_rollout_ref.actor.megatron.pipeline_model_parallel_size, actor_rollout_ref.ref.megatron.tensor_model_parallel_size | success |
 
 
 - **决策**: `modify`
@@ -491,7 +491,7 @@ _以下行为用于生成 Trial 6 的候选配置。_
 
 | 参数 | 旧值 | 新值 | 原因 |
 |---|---|---|---|
-| `ppo_micro_batch_size_per_gpu` | `2` | `4` | 训练显存余量充足，提高微批大小可减少梯度累积迭代，缩短训练阶段，且满足 ppo_mini_batch_size=64、TP=2、8 GPU 下的整除约束（64/(8/2)=16，16 能被 4 整除）。 |
+| `actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu` | `2` | `4` | 训练显存余量充足，提高微批大小可减少梯度累积迭代，缩短训练阶段，且满足 ppo_mini_batch_size=64、TP=2、8 GPU 下的整除约束（64/(8/2)=16，16 能被 4 整除）。 |
 
 
 #### Feasibility Agent 审查
@@ -502,8 +502,8 @@ _以下行为用于生成 Trial 6 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | ppo_micro_batch_size_per_gpu | success |
-| 1 | `memory_estimator` | ref_trial=4, 预测参数: ppo_micro_batch_size_per_gpu | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu | success |
+| 1 | `memory_estimator` | ref_trial=4, 预测参数: actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu | success |
 
 - **判定**: `valid`
 - **原因**: 训练阶段微批大小从2提高到4，梯度累积步数从8减至4，有望缩短训练耗时；memory_estimator预测训练阶段上界46.02%，远低于92%安全线，其他阶段不受影响；整除性约束满足（局部mini batch 16能被4整除）且use_dynamic_bsz默认关闭。
@@ -529,8 +529,8 @@ _以下行为用于生成 Trial 6 的候选配置。_
 
 | 参数 | 旧值 | 新值 |
 |---|---|---|
-| `ppo_micro_batch_size_per_gpu` | `2` | `4` |
-| `max_num_batched_tokens` | `32768` | `16384` |
+| `actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu` | `2` | `4` |
+| `actor_rollout_ref.rollout.max_num_batched_tokens` | `32768` | `16384` |
 
 
 ### 关键指标
@@ -647,12 +647,12 @@ _以下行为用于生成 Trial 8 的候选配置。_
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
 | 1 | `query_trial_history` | stage=stability_tuning, limit=5 | success |
-| 1 | `parameter_understanding` | entropy_coeff, kl_loss_coef, kl_loss_type, lr, use_kl_loss, n | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.actor.entropy_coeff, actor_rollout_ref.actor.kl_loss_coef, actor_rollout_ref.actor.kl_loss_type, actor_rollout_ref.actor.optim.lr, actor_rollout_ref.actor.use_kl_loss, actor_rollout_ref.rollout.n | success |
 | 1 | `tuning_strategies` | kl_explosion, reward_collapse | success |
 | 2 | `query_trial_history` | stage=stability_tuning, limit=5 | success |
-| 3 | `memory_estimator` | ref_trial=6, 预测参数: lr | success |
-| 4 | `memory_estimator` | ref_trial=6, 预测参数: lr | success |
-| 5 | `memory_estimator` | ref_trial=6, 预测参数: lr | success |
+| 3 | `memory_estimator` | ref_trial=6, 预测参数: actor_rollout_ref.actor.optim.lr | success |
+| 4 | `memory_estimator` | ref_trial=6, 预测参数: actor_rollout_ref.actor.optim.lr | success |
+| 5 | `memory_estimator` | ref_trial=6, 预测参数: actor_rollout_ref.actor.optim.lr | success |
 
 
 - **决策**: `modify`
@@ -661,7 +661,7 @@ _以下行为用于生成 Trial 8 的候选配置。_
 
 | 参数 | 旧值 | 新值 | 原因 |
 |---|---|---|---|
-| `lr` | `1e-06` | `5e-07` | Lower learning rate to counteract declining reward slope and rising KL, following reward_collapse strategy: 'Lower learning rate first.' |
+| `actor_rollout_ref.actor.optim.lr` | `1e-06` | `5e-07` | Lower learning rate to counteract declining reward slope and rising KL, following reward_collapse strategy: 'Lower learning rate first.' |
 
 
 #### Feasibility Agent 审查
@@ -672,7 +672,7 @@ _以下行为用于生成 Trial 8 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | lr | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.actor.optim.lr | success |
 | 1 | `tuning_strategies` | reward_collapse | success |
 
 - **判定**: `valid`
@@ -700,7 +700,7 @@ _以下行为用于生成 Trial 8 的候选配置。_
 
 | 参数 | 旧值 | 新值 |
 |---|---|---|
-| `lr` | `1e-06` | `5e-07` |
+| `actor_rollout_ref.actor.optim.lr` | `1e-06` | `5e-07` |
 
 
 ### 关键指标
@@ -790,9 +790,9 @@ _以下行为用于生成 Trial 9 的候选配置。_
 |---|---|---|---|
 | 1 | `query_trial_history` | stage=stability_tuning, limit=4 | success |
 | 1 | `tuning_strategies` | reward_collapse, kl_explosion | success |
-| 1 | `parameter_understanding` | entropy_coeff, kl_loss_coef, kl_loss_type, lr, lr_warmup_steps, use_kl_loss …共 7 个 | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.actor.entropy_coeff, actor_rollout_ref.actor.kl_loss_coef, actor_rollout_ref.actor.kl_loss_type, actor_rollout_ref.actor.optim.lr, actor_rollout_ref.actor.optim.lr_warmup_steps, actor_rollout_ref.actor.use_kl_loss …共 7 个 | success |
 | 2 | `search_verl_docs` | 查询: "kl_loss_type enum values" | success |
-| 3 | `parameter_understanding` | lr_warmup_steps, n | success |
+| 3 | `parameter_understanding` | actor_rollout_ref.actor.optim.lr_warmup_steps, actor_rollout_ref.rollout.n | success |
 
 
 - **决策**: `modify`
@@ -801,9 +801,9 @@ _以下行为用于生成 Trial 9 的候选配置。_
 
 | 参数 | 旧值 | 新值 | 原因 |
 |---|---|---|---|
-| `lr` | `1e-06` | `5e-07` | 延续 Trial 8 的有效方向，降低学习率以减少单步更新幅度，对抗 reward 下滑趋势。 |
-| `kl_loss_coef` | `0.003` | `0.01` | 当前 KL 处于低位（max 0.0013），提高系数至 0.01 可增强策略约束，防止早期有害更新，且不会过度压制学习。 |
-| `lr_warmup_steps` | `None` | `10` | 未显式配置时为 0，增加 10 步 warmup 可平滑初始梯度冲击，尤其与降低学习率协同，避免前几步的噪声导致 reward 持续走低。 |
+| `actor_rollout_ref.actor.optim.lr` | `1e-06` | `5e-07` | 延续 Trial 8 的有效方向，降低学习率以减少单步更新幅度，对抗 reward 下滑趋势。 |
+| `actor_rollout_ref.actor.kl_loss_coef` | `0.003` | `0.01` | 当前 KL 处于低位（max 0.0013），提高系数至 0.01 可增强策略约束，防止早期有害更新，且不会过度压制学习。 |
+| `actor_rollout_ref.actor.optim.lr_warmup_steps` | `None` | `10` | 未显式配置时为 0，增加 10 步 warmup 可平滑初始梯度冲击，尤其与降低学习率协同，避免前几步的噪声导致 reward 持续走低。 |
 
 
 #### Feasibility Agent 审查
@@ -814,9 +814,9 @@ _以下行为用于生成 Trial 9 的候选配置。_
 
 | 轮次 | 工具 | 参数 / 查询内容 | 状态 |
 |---|---|---|---|
-| 1 | `parameter_understanding` | lr, kl_loss_coef, lr_warmup_steps | success |
+| 1 | `parameter_understanding` | actor_rollout_ref.actor.optim.lr, actor_rollout_ref.actor.kl_loss_coef, actor_rollout_ref.actor.optim.lr_warmup_steps | success |
 | 1 | `tuning_strategies` | reward_collapse, kl_explosion | success |
-| 2 | `memory_estimator` | ref_trial=6, 预测参数: lr, kl_loss_coef, lr_warmup_steps | success |
+| 2 | `memory_estimator` | ref_trial=6, 预测参数: actor_rollout_ref.actor.optim.lr, actor_rollout_ref.actor.kl_loss_coef, actor_rollout_ref.actor.optim.lr_warmup_steps | success |
 
 - **判定**: `valid`
 - **原因**: All three changes are stability-only parameters within the allowed stage; they follow reward_collapse and kl_explosion strategies (lower LR, increase KL coefficient, add warmup). Memory estimator shows all phases low-risk and well within limits. The reference trial 6 matches the from-values, and the modifications are consistent with the diagnosis of early noise causing reward decline.
@@ -844,8 +844,8 @@ _以下行为用于生成 Trial 9 的候选配置。_
 
 | 参数 | 旧值 | 新值 |
 |---|---|---|
-| `kl_loss_coef` | `0.003` | `0.01` |
-| `lr_warmup_steps` | `None` | `10` |
+| `actor_rollout_ref.actor.kl_loss_coef` | `0.003` | `0.01` |
+| `actor_rollout_ref.actor.optim.lr_warmup_steps` | `None` | `10` |
 
 
 ### 关键指标

@@ -1,0 +1,206 @@
+{
+  "updates_completed": 20,
+  "result": "success",
+  "error": {
+    "type": null,
+    "evidence": []
+  },
+  "memory_by_phase_pct": {
+    "rollout": {
+      "mean": null,
+      "p95": null,
+      "max": null
+    },
+    "actor_log_prob": {
+      "mean": 13.277952508256014,
+      "p95": 15.804371756565498,
+      "max": 15.89872621481365
+    },
+    "ref_log_prob": {
+      "mean": 9.704356030822456,
+      "p95": 9.84431514389055,
+      "max": 9.907218116055983
+    },
+    "training": {
+      "mean": 9.747405252398176,
+      "p95": 9.860040886931907,
+      "max": 9.891492373014625
+    }
+  },
+  "memory_by_phase_gpu_pct": {},
+  "gpu_utilization_by_phase_pct": {},
+  "performance": {
+    "throughput": {
+      "mean": 583.4795890622731,
+      "p95": 587.9641689418806,
+      "max": 587.9641689418806
+    },
+    "time_per_step_s": {
+      "mean": 1010.7847178141975,
+      "p95": 1056.2935655349866,
+      "max": 1056.2935655349866
+    },
+    "generation_tgs": {
+      "mean": 1167.3058459651415,
+      "p95": 1188.1944293116176,
+      "max": 1188.1944293116176
+    },
+    "actor_tgs": {
+      "mean": 2011.2848061616107,
+      "p95": 2030.0760456482049,
+      "max": 2030.0760456482049
+    },
+    "actor_mfu": {
+      "mean": 0.42162662659932354,
+      "p95": 0.4265711305510967,
+      "max": 0.4265711305510967
+    },
+    "phase_duration_s": {
+      "rollout": {
+        "mean": 505.4180413248095,
+        "p95": 534.5321160530439,
+        "max": 534.5321160530439
+      },
+      "actor_log_prob": {
+        "mean": 122.26605728260087,
+        "p95": 125.82243371900404,
+        "max": 125.82243371900404
+      },
+      "ref_log_prob": {
+        "mean": 89.65278524740522,
+        "p95": 93.07337094499962,
+        "max": 93.07337094499962
+      },
+      "training": {
+        "mean": 293.1698939729327,
+        "p95": 302.58892663399456,
+        "max": 302.58892663399456
+      }
+    },
+    "time_bottleneck": "rollout"
+  },
+  "resource": {
+    "memory_bottleneck": "actor_log_prob",
+    "max_observed_memory_pct": 15.89872621481365
+  },
+  "stability": {
+    "reward": {
+      "mean": -0.34208984375,
+      "p95": -0.115234375,
+      "max": -0.06640625
+    },
+    "reward_slope": 0.01318359375,
+    "actor_ppo_kl": {
+      "mean": 9.169773221909075e-05,
+      "p95": 0.00026387434020200273,
+      "max": 0.00026387434020200273
+    },
+    "actor_entropy": {
+      "mean": 0.26247462928295134,
+      "p95": 0.29001012444496155,
+      "max": 0.29001012444496155
+    },
+    "actor_pg_loss": {
+      "mean": 5.7148851919919255e-05,
+      "p95": 9.929630323313177e-05,
+      "max": 9.929630323313177e-05
+    },
+    "actor_pg_clipfrac": {
+      "mean": 0.0008112558945811088,
+      "p95": 0.0011906180110656805,
+      "max": 0.0011906180110656805
+    },
+    "response_length": {
+      "mean": 4454.545377604167,
+      "p95": 4639.759765625,
+      "max": 4639.759765625
+    },
+    "response_clip_ratio": {
+      "mean": 0.6177734375,
+      "p95": 0.712890625,
+      "max": 0.712890625
+    }
+  },
+  "end_to_end_reward": {
+    "thresholds": {
+      "0.0": null,
+      "0.1": null,
+      "0.2": null,
+      "0.3": null
+    },
+    "peak_reward": -0.06640625
+  },
+  "trial_id": 1,
+  "stage": "hardware_tuning",
+  "platform": "C550",
+  "updates_target": 20,
+  "parameters": {
+    "algorithm.adv_estimator": "grpo",
+    "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+    "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+    "data.train_batch_size": 256,
+    "data.max_prompt_length": 1280,
+    "data.max_response_length": 5120,
+    "data.filter_overlong_prompts": true,
+    "data.truncation": "error",
+    "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-8B",
+    "actor_rollout_ref.actor.optim.lr": 3e-06,
+    "actor_rollout_ref.actor.optim.lr_warmup_steps": 0,
+    "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 1,
+    "actor_rollout_ref.actor.use_dynamic_bsz": false,
+    "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 4,
+    "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+    "actor_rollout_ref.actor.megatron.use_distributed_optimizer": true,
+    "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+    "actor_rollout_ref.actor.megatron.optimizer_offload": true,
+    "actor_rollout_ref.actor.megatron.param_offload": true,
+    "actor_rollout_ref.actor.use_kl_loss": true,
+    "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+    "actor_rollout_ref.actor.kl_loss_coef": 0.003,
+    "actor_rollout_ref.actor.entropy_coeff": 0.0,
+    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 1,
+    "actor_rollout_ref.rollout.tensor_model_parallel_size": 4,
+    "actor_rollout_ref.rollout.name": "vllm",
+    "actor_rollout_ref.rollout.gpu_memory_utilization": 0.6,
+    "actor_rollout_ref.rollout.max_num_batched_tokens": 65536,
+    "actor_rollout_ref.rollout.max_num_seqs": 256,
+    "actor_rollout_ref.rollout.enable_chunked_prefill": true,
+    "actor_rollout_ref.rollout.enable_prefix_caching": true,
+    "actor_rollout_ref.rollout.free_cache_engine": true,
+    "actor_rollout_ref.rollout.enforce_eager": false,
+    "actor_rollout_ref.rollout.n": 4,
+    "actor_rollout_ref.ref.megatron.param_offload": true,
+    "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 4,
+    "actor_rollout_ref.ref.megatron.sequence_parallel": true,
+    "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 8,
+    "algorithm.use_kl_in_reward": false,
+    "trainer.critic_warmup": 0,
+    "trainer.logger": [
+      "console"
+    ],
+    "trainer.project_name": "verl_stage_tuner",
+    "trainer.experiment_name": "qwen3_8b_agent",
+    "trainer.n_gpus_per_node": 8,
+    "trainer.nnodes": 1,
+    "trainer.val_before_train": false,
+    "trainer.save_freq": -1,
+    "trainer.test_freq": -1,
+    "trainer.total_epochs": 1
+  },
+  "return_code": 0,
+  "stop_reason": null,
+  "failure_phase": null,
+  "log_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl_agent/output/0720_1656_2026/trials/0001/train.log",
+  "gpu_samples_path": null,
+  "proposal": {
+    "decision": "keep",
+    "reason": "stage baseline"
+  },
+  "feasibility": {
+    "verdict": "valid",
+    "reason": "stage baseline"
+  }
+}

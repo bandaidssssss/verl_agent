@@ -1,0 +1,16 @@
+{
+  "current_stage": "stopped_no_candidate",
+  "last_trial_id": 7,
+  "history_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl_agent/output/0720_1656_2026/trials.jsonl",
+  "proposal": {
+    "decision": "keep",
+    "reason": "Trial 7 所有稳定性指标健康：reward 斜率 +0.00586（正向），KL max 0.00036（极低），entropy 0.21–0.29（健康），clipfrac 0.0012。67/80 步静默中断无内部错误证据，诊断置信度 0.25，归因于外部超时/进程 kill。可编辑的 stability 参数无法预防此类外部中断，应原配置重试。",
+    "changes": {},
+    "expected_effect": {
+      "reward": "stable",
+      "kl": "stable",
+      "entropy": "stable"
+    },
+    "confidence": 0.75
+  }
+}

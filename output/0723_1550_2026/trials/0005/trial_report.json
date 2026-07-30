@@ -1,0 +1,937 @@
+{
+  "updates_completed": 67,
+  "result": "fail",
+  "error": {
+    "type": "INCOMPLETE_TRAINING",
+    "evidence": [
+      "completed 67 of 80 updates"
+    ]
+  },
+  "memory_by_phase_pct": {
+    "rollout": {
+      "mean": 67.51298474526087,
+      "p95": 75.13427734375,
+      "max": 79.05731201171875
+    },
+    "actor_log_prob": {
+      "mean": 21.585113439967035,
+      "p95": 36.87896728515625,
+      "max": 37.51068115234375
+    },
+    "ref_log_prob": {
+      "mean": 22.197665784182966,
+      "p95": 39.74761962890625,
+      "max": 66.80908203125
+    },
+    "training": {
+      "mean": 21.737382618803956,
+      "p95": 37.01019287109375,
+      "max": 38.99688720703125
+    }
+  },
+  "memory_by_phase_gpu_pct": {
+    "rollout": {
+      "0": {
+        "mean": 67.8033828047523,
+        "p95": 75.2349853515625,
+        "max": 78.95050048828125
+      },
+      "1": {
+        "mean": 67.53442422431426,
+        "p95": 74.957275390625,
+        "max": 79.04815673828125
+      },
+      "2": {
+        "mean": 67.48008851836487,
+        "p95": 74.9664306640625,
+        "max": 78.95050048828125
+      },
+      "3": {
+        "mean": 67.522358060356,
+        "p95": 75.0701904296875,
+        "max": 79.04815673828125
+      },
+      "4": {
+        "mean": 67.36984005311402,
+        "p95": 74.86724853515625,
+        "max": 78.95050048828125
+      },
+      "5": {
+        "mean": 67.48549980331404,
+        "p95": 74.96185302734375,
+        "max": 79.04815673828125
+      },
+      "6": {
+        "mean": 67.41713514579061,
+        "p95": 74.99237060546875,
+        "max": 78.95965576171875
+      },
+      "7": {
+        "mean": 67.4911493520809,
+        "p95": 75.09002685546875,
+        "max": 79.05731201171875
+      }
+    },
+    "actor_log_prob": {
+      "0": {
+        "mean": 22.063133714914823,
+        "p95": 37.07122802734375,
+        "max": 37.42523193359375
+      },
+      "1": {
+        "mean": 21.849621718708995,
+        "p95": 36.79351806640625,
+        "max": 37.14752197265625
+      },
+      "2": {
+        "mean": 21.549475251418716,
+        "p95": 36.74774169921875,
+        "max": 37.14752197265625
+      },
+      "3": {
+        "mean": 21.659086533073282,
+        "p95": 36.85150146484375,
+        "max": 37.25128173828125
+      },
+      "4": {
+        "mean": 21.274420896387333,
+        "p95": 36.75384521484375,
+        "max": 37.01934814453125
+      },
+      "5": {
+        "mean": 21.370013098853548,
+        "p95": 36.84844970703125,
+        "max": 37.11395263671875
+      },
+      "6": {
+        "mean": 21.416392770157234,
+        "p95": 36.79656982421875,
+        "max": 37.41302490234375
+      },
+      "7": {
+        "mean": 21.498763536222338,
+        "p95": 36.89422607421875,
+        "max": 37.51068115234375
+      }
+    },
+    "ref_log_prob": {
+      "0": {
+        "mean": 22.3512534327155,
+        "p95": 39.99176025390625,
+        "max": 66.497802734375
+      },
+      "1": {
+        "mean": 22.310935410877203,
+        "p95": 40.35186767578125,
+        "max": 66.5985107421875
+      },
+      "2": {
+        "mean": 22.16079507098102,
+        "p95": 39.54620361328125,
+        "max": 66.705322265625
+      },
+      "3": {
+        "mean": 22.257867595493394,
+        "p95": 39.64996337890625,
+        "max": 66.80908203125
+      },
+      "4": {
+        "mean": 22.08501828596896,
+        "p95": 40.37628173828125,
+        "max": 66.46728515625
+      },
+      "5": {
+        "mean": 22.15081029290321,
+        "p95": 40.47088623046875,
+        "max": 66.5618896484375
+      },
+      "6": {
+        "mean": 22.072816375117974,
+        "p95": 39.90020751953125,
+        "max": 66.6900634765625
+      },
+      "7": {
+        "mean": 22.19182980940646,
+        "p95": 39.99786376953125,
+        "max": 66.7877197265625
+      }
+    },
+    "training": {
+      "0": {
+        "mean": 22.5009424682803,
+        "p95": 37.05596923828125,
+        "max": 38.89617919921875
+      },
+      "1": {
+        "mean": 22.197991636790096,
+        "p95": 37.15667724609375,
+        "max": 38.99688720703125
+      },
+      "2": {
+        "mean": 21.54154784784651,
+        "p95": 36.90948486328125,
+        "max": 37.46795654296875
+      },
+      "3": {
+        "mean": 21.645962556928986,
+        "p95": 37.01324462890625,
+        "max": 37.57171630859375
+      },
+      "4": {
+        "mean": 21.603103242871242,
+        "p95": 36.88812255859375,
+        "max": 37.04681396484375
+      },
+      "5": {
+        "mean": 21.698218683855355,
+        "p95": 36.98272705078125,
+        "max": 37.14141845703125
+      },
+      "6": {
+        "mean": 21.316054531428367,
+        "p95": 36.89727783203125,
+        "max": 37.66632080078125
+      },
+      "7": {
+        "mean": 21.395239982430795,
+        "p95": 36.99493408203125,
+        "max": 37.76397705078125
+      }
+    }
+  },
+  "gpu_utilization_by_phase_pct": {
+    "startup": {
+      "mean": 0.10227272727272728,
+      "p95": 1.0,
+      "max": 4.0
+    },
+    "rollout": {
+      "mean": 18.309547421565092,
+      "p95": 45.0,
+      "max": 58.0
+    },
+    "actor_log_prob": {
+      "mean": 16.12010146955913,
+      "p95": 37.0,
+      "max": 74.0
+    },
+    "ref_log_prob": {
+      "mean": 26.295721476510067,
+      "p95": 76.0,
+      "max": 89.0
+    },
+    "between_phases": {
+      "mean": 13.181818181818182,
+      "p95": 44.0,
+      "max": 78.0
+    },
+    "training": {
+      "mean": 17.833904109589042,
+      "p95": 37.0,
+      "max": 78.0
+    }
+  },
+  "performance": {
+    "throughput": {
+      "mean": 388.73123036787564,
+      "p95": 579.7974570977098,
+      "max": 731.543939625834
+    },
+    "time_per_step_s": {
+      "mean": 86.57669766824091,
+      "p95": 97.10489349253476,
+      "max": 112.4959628842771
+    },
+    "generation_tgs": {
+      "mean": 794.2252523644298,
+      "p95": 1100.0508035563873,
+      "max": 1290.1128665194615
+    },
+    "actor_tgs": {
+      "mean": 1236.1772849161987,
+      "p95": 2001.1528159042477,
+      "max": 2787.812389051085
+    },
+    "actor_mfu": {
+      "mean": 0.025849517470696182,
+      "p95": 0.048484349490840385,
+      "max": 0.07112810731758046
+    },
+    "phase_duration_s": {
+      "rollout": {
+        "mean": 42.19967473430499,
+        "p95": 51.34967386722565,
+        "max": 63.92039298824966
+      },
+      "actor_log_prob": {
+        "mean": 12.739634985945397,
+        "p95": 13.193775167688727,
+        "max": 13.826817955821753
+      },
+      "ref_log_prob": {
+        "mean": 3.8776630764046023,
+        "p95": 4.4491131529212,
+        "max": 5.074675856158137
+      },
+      "training": {
+        "mean": 27.52558532504425,
+        "p95": 28.305504482239485,
+        "max": 29.442254152148962
+      }
+    },
+    "time_bottleneck": "rollout"
+  },
+  "resource": {
+    "memory_bottleneck": "rollout",
+    "max_observed_memory_pct": 79.05731201171875
+  },
+  "stability": {
+    "reward": {
+      "mean": -0.914120802238806,
+      "p95": -0.875,
+      "max": -0.8515625
+    },
+    "reward_slope": -0.0009765625,
+    "actor_ppo_kl": {
+      "mean": 0.0040927429038203865,
+      "p95": 0.011203920687638202,
+      "max": 0.040426739768967934
+    },
+    "actor_entropy": {
+      "mean": 1.9270671721427672,
+      "p95": 3.420196771621704,
+      "max": 3.9761805534362793
+    },
+    "actor_pg_loss": {
+      "mean": 0.0016735923309536907,
+      "p95": 0.006126355307060294,
+      "max": 0.007838809458007745
+    },
+    "actor_pg_clipfrac": {
+      "mean": 0.0022362805580772626,
+      "p95": 0.004316628808822998,
+      "max": 0.005291958370435168
+    },
+    "response_length": {
+      "mean": 113.70670047883064,
+      "p95": 280.994140625,
+      "max": 482.2021484375
+    },
+    "response_clip_ratio": {
+      "mean": 0.011466733870967742,
+      "p95": 0.03515625,
+      "max": 0.0673828125
+    }
+  },
+  "end_to_end_reward": {
+    "thresholds": {
+      "0.0": null,
+      "0.1": null,
+      "0.2": null,
+      "0.3": null
+    },
+    "peak_reward": -0.8515625
+  },
+  "trial_id": 5,
+  "stage": "stability_tuning",
+  "platform": "C550",
+  "updates_target": 80,
+  "parameters": {
+    "algorithm.adv_estimator": "grpo",
+    "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+    "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+    "data.train_batch_size": 256,
+    "data.max_prompt_length": 1280,
+    "data.max_response_length": 5120,
+    "data.filter_overlong_prompts": true,
+    "data.truncation": "error",
+    "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-0.6B-Base",
+    "actor_rollout_ref.model.use_remove_padding": true,
+    "actor_rollout_ref.actor.optim.lr": 3e-06,
+    "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 2,
+    "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 2,
+    "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+    "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+    "actor_rollout_ref.actor.megatron.optimizer_offload": false,
+    "actor_rollout_ref.actor.megatron.param_offload": false,
+    "actor_rollout_ref.actor.use_kl_loss": true,
+    "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+    "actor_rollout_ref.actor.kl_loss_coef": 0.003,
+    "actor_rollout_ref.actor.entropy_coeff": 0.0,
+    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 2,
+    "actor_rollout_ref.rollout.tensor_model_parallel_size": 2,
+    "actor_rollout_ref.rollout.name": "vllm",
+    "actor_rollout_ref.rollout.gpu_memory_utilization": 0.7,
+    "actor_rollout_ref.rollout.n": 4,
+    "actor_rollout_ref.ref.megatron.param_offload": true,
+    "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 2,
+    "actor_rollout_ref.ref.megatron.sequence_parallel": true,
+    "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 16,
+    "algorithm.use_kl_in_reward": false,
+    "trainer.critic_warmup": 0,
+    "trainer.logger": [
+      "console",
+      "wandb"
+    ],
+    "trainer.project_name": "verl_stage_tuner",
+    "trainer.experiment_name": "qwen3_0p6b_agent",
+    "trainer.n_gpus_per_node": 8,
+    "trainer.nnodes": 1,
+    "trainer.val_before_train": false,
+    "trainer.save_freq": -1,
+    "trainer.test_freq": -1,
+    "trainer.total_epochs": 1
+  },
+  "return_code": 0,
+  "stop_reason": null,
+  "failure_phase": null,
+  "log_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0723_1550_2026/trials/0005/train.log",
+  "gpu_samples_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0723_1550_2026/trials/0005/gpu_samples.csv",
+  "health_events_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0723_1550_2026/trials/0005/health_events.jsonl",
+  "health_agent_traces_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0723_1550_2026/trials/0005/health_agent_traces.jsonl",
+  "health_monitor": {
+    "enabled": true,
+    "kl_metric": "actor/kl_loss",
+    "reward_metric": "critic/rewards/mean",
+    "paper_parameters": {
+      "tau_1_kl_growth": 0.15,
+      "tau_2_reward_drop": 0.1,
+      "k_consecutive_steps": 5
+    },
+    "warmup_updates": 0,
+    "cooldown_updates": 5,
+    "last_step": 67,
+    "trigger_count": 1,
+    "counters": {
+      "kl_growth": 0,
+      "reward_drop": 0,
+      "reward_zero": 0
+    }
+  },
+  "health_events": [
+    {
+      "event_id": "trial-0005-step-000006-event-001",
+      "trial_id": 5,
+      "stage": "stability_tuning",
+      "updates_target": 80,
+      "trigger": {
+        "source": "JF-HPO",
+        "step": 6,
+        "severity": "warning",
+        "rules": [
+          {
+            "name": "jf_hpo_kl_growth",
+            "metric": "actor/kl_loss",
+            "observed_ratio": 0.7368354191987896,
+            "threshold": 0.15,
+            "consecutive_steps": 5
+          }
+        ],
+        "paper_parameters": {
+          "tau_1_kl_growth": 0.15,
+          "tau_2_reward_drop": 0.1,
+          "k_consecutive_steps": 5
+        },
+        "recent_steps": [
+          {
+            "step": 1,
+            "metrics": {
+              "actor/entropy": 2.0678396224975586,
+              "actor/kl_loss": 0.0010238061062608494,
+              "actor/pg_clipfrac": 3.5353540368987524e-05,
+              "actor/ppo_kl": -0.00045187729780460373,
+              "actor/grad_norm": 0.22902108181344258,
+              "perf/max_memory_allocated_gb": 68.56304597854614,
+              "perf/max_memory_reserved_gb": 69.05859375,
+              "perf/cpu_memory_used_gb": 192.70232391357422,
+              "critic/rewards/mean": -0.9921875,
+              "response_length/mean": 993.6611328125,
+              "response_length/clip_ratio": 0.0498046875,
+              "response/aborted_ratio": 0.0,
+              "perf/time_per_step": 134.167708363384,
+              "perf/throughput": 1093.393684586743
+            },
+            "derived": {
+              "kl_growth_ratio": null,
+              "reward_drop_ratio": null
+            },
+            "counters": {
+              "kl_growth": 0,
+              "reward_drop": 0,
+              "reward_zero": 0
+            }
+          },
+          {
+            "step": 2,
+            "metrics": {
+              "actor/entropy": 2.3998236656188965,
+              "actor/kl_loss": 0.006625391269494685,
+              "actor/pg_clipfrac": 9.05485660496197e-06,
+              "actor/ppo_kl": 0.0005712637008667976,
+              "actor/grad_norm": 0.029500010683596575,
+              "perf/max_memory_allocated_gb": 74.76928329467773,
+              "perf/max_memory_reserved_gb": 75.4296875,
+              "perf/cpu_memory_used_gb": 193.16467952728271,
+              "critic/rewards/mean": -0.998046875,
+              "response_length/mean": 1154.44921875,
+              "response_length/clip_ratio": 0.083984375,
+              "response/aborted_ratio": 0.0,
+              "perf/time_per_step": 133.0246443655342,
+              "perf/throughput": 1258.6126487956176
+            },
+            "derived": {
+              "kl_growth_ratio": 5.4713340045333165,
+              "reward_drop_ratio": 0.005905511811023622
+            },
+            "counters": {
+              "kl_growth": 1,
+              "reward_drop": 0,
+              "reward_zero": 0
+            }
+          },
+          {
+            "step": 3,
+            "metrics": {
+              "actor/entropy": 2.587230920791626,
+              "actor/kl_loss": 0.013524551414917596,
+              "actor/pg_clipfrac": 0.00027100821682779497,
+              "actor/ppo_kl": 0.00202334504706414,
+              "actor/grad_norm": 0.22366163972028724,
+              "perf/max_memory_allocated_gb": 75.66893196105957,
+              "perf/max_memory_reserved_gb": 76.421875,
+              "perf/cpu_memory_used_gb": 193.21061325073242,
+              "critic/rewards/mean": -0.994140625,
+              "response_length/mean": 1190.791015625,
+              "response_length/clip_ratio": 0.083984375,
+              "response/aborted_ratio": 0.0,
+              "perf/time_per_step": 134.49804325401783,
+              "perf/throughput": 1279.485157081341
+            },
+            "derived": {
+              "kl_growth_ratio": 1.0413211635045225,
+              "reward_drop_ratio": -0.003913894324853229
+            },
+            "counters": {
+              "kl_growth": 2,
+              "reward_drop": 0,
+              "reward_zero": 0
+            }
+          },
+          {
+            "step": 4,
+            "metrics": {
+              "actor/entropy": 1.810457468032837,
+              "actor/kl_loss": 0.06247500756705904,
+              "actor/pg_clipfrac": 0.0004450743037551774,
+              "actor/ppo_kl": 0.0015347111864958407,
+              "actor/grad_norm": 0.32116925297342,
+              "perf/max_memory_allocated_gb": 75.66893196105957,
+              "perf/max_memory_reserved_gb": 76.421875,
+              "perf/cpu_memory_used_gb": 193.38578987121582,
+              "critic/rewards/mean": -0.990234375,
+              "response_length/mean": 629.4814453125,
+              "response_length/clip_ratio": 0.029296875,
+              "response/aborted_ratio": 0.0,
+              "perf/time_per_step": 106.33198314346373,
+              "perf/throughput": 936.2810892530578
+            },
+            "derived": {
+              "kl_growth_ratio": 3.619377430747835,
+              "reward_drop_ratio": -0.003929273084479371
+            },
+            "counters": {
+              "kl_growth": 3,
+              "reward_drop": 0,
+              "reward_zero": 0
+            }
+          },
+          {
+            "step": 5,
+            "metrics": {
+              "actor/entropy": 2.7099175453186035,
+              "actor/kl_loss": 0.10627214121996076,
+              "actor/pg_clipfrac": 0.001014427197560508,
+              "actor/ppo_kl": -0.001734668171469167,
+              "actor/grad_norm": 0.5416861192091499,
+              "perf/max_memory_allocated_gb": 75.66893196105957,
+              "perf/max_memory_reserved_gb": 76.421875,
+              "perf/cpu_memory_used_gb": 193.38312911987305,
+              "critic/rewards/mean": -0.982421875,
+              "response_length/mean": 547.2138671875,
+              "response_length/clip_ratio": 0.0341796875,
+              "response/aborted_ratio": 0.0,
+              "perf/time_per_step": 105.22201653197408,
+              "perf/throughput": 858.7021801900536
+            },
+            "derived": {
+              "kl_growth_ratio": 0.7010344673570631,
+              "reward_drop_ratio": -0.007889546351084813
+            },
+            "counters": {
+              "kl_growth": 4,
+              "reward_drop": 0,
+              "reward_zero": 0
+            }
+          },
+          {
+            "step": 6,
+            "metrics": {
+              "actor/entropy": 2.6887013912200928,
+              "actor/kl_loss": 0.18457721894492352,
+              "actor/pg_clipfrac": 0.001510190546468948,
+              "actor/ppo_kl": -0.0026931897622315404,
+              "actor/grad_norm": 0.689181713860333,
+              "perf/max_memory_allocated_gb": 75.66893196105957,
+              "perf/max_memory_reserved_gb": 76.421875,
+              "perf/cpu_memory_used_gb": 204.51495361328125,
+              "critic/rewards/mean": -0.978515625,
+              "response_length/mean": 345.9033203125,
+              "response_length/clip_ratio": 0.0205078125,
+              "response/aborted_ratio": 0.0,
+              "perf/time_per_step": 96.88826170004904,
+              "perf/throughput": 662.6460612820295
+            },
+            "derived": {
+              "kl_growth_ratio": 0.7368354191987896,
+              "reward_drop_ratio": -0.003976143141153081
+            },
+            "counters": {
+              "kl_growth": 5,
+              "reward_drop": 0,
+              "reward_zero": 0
+            }
+          }
+        ]
+      },
+      "resource_snapshot": {
+        "available": true,
+        "executable": "/usr/bin/mx-smi",
+        "platform": "C550",
+        "samples_written": 5840,
+        "sample_errors": 0,
+        "last_sample_timestamp": 1784798087.6264741,
+        "max_memory_pct": 79.05731201171875,
+        "gpus": [
+          {
+            "gpu_index": "0",
+            "memory_used_mb": 24561.0,
+            "memory_total_mb": 65536.0,
+            "memory_pct": 37.47711181640625,
+            "utilization_pct": 8.0
+          },
+          {
+            "gpu_index": "1",
+            "memory_used_mb": 24379.0,
+            "memory_total_mb": 65536.0,
+            "memory_pct": 37.19940185546875,
+            "utilization_pct": 15.0
+          },
+          {
+            "gpu_index": "2",
+            "memory_used_mb": 24359.0,
+            "memory_total_mb": 65536.0,
+            "memory_pct": 37.16888427734375,
+            "utilization_pct": 16.0
+          },
+          {
+            "gpu_index": "3",
+            "memory_used_mb": 24427.0,
+            "memory_total_mb": 65536.0,
+            "memory_pct": 37.27264404296875,
+            "utilization_pct": 9.0
+          },
+          {
+            "gpu_index": "4",
+            "memory_used_mb": 24485.0,
+            "memory_total_mb": 65536.0,
+            "memory_pct": 37.36114501953125,
+            "utilization_pct": 10.0
+          },
+          {
+            "gpu_index": "5",
+            "memory_used_mb": 24547.0,
+            "memory_total_mb": 65536.0,
+            "memory_pct": 37.45574951171875,
+            "utilization_pct": 9.0
+          },
+          {
+            "gpu_index": "6",
+            "memory_used_mb": 24171.0,
+            "memory_total_mb": 65536.0,
+            "memory_pct": 36.88201904296875,
+            "utilization_pct": 13.0
+          },
+          {
+            "gpu_index": "7",
+            "memory_used_mb": 24235.0,
+            "memory_total_mb": 65536.0,
+            "memory_pct": 36.97967529296875,
+            "utilization_pct": 9.0
+          }
+        ]
+      },
+      "parameters": {
+        "algorithm.adv_estimator": "grpo",
+        "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+        "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+        "data.train_batch_size": 256,
+        "data.max_prompt_length": 1280,
+        "data.max_response_length": 5120,
+        "data.filter_overlong_prompts": true,
+        "data.truncation": "error",
+        "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-0.6B-Base",
+        "actor_rollout_ref.model.use_remove_padding": true,
+        "actor_rollout_ref.actor.optim.lr": 3e-06,
+        "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 2,
+        "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 1,
+        "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 2,
+        "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+        "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+        "actor_rollout_ref.actor.megatron.optimizer_offload": false,
+        "actor_rollout_ref.actor.megatron.param_offload": false,
+        "actor_rollout_ref.actor.use_kl_loss": true,
+        "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+        "actor_rollout_ref.actor.kl_loss_coef": 0.003,
+        "actor_rollout_ref.actor.entropy_coeff": 0.0,
+        "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 2,
+        "actor_rollout_ref.rollout.tensor_model_parallel_size": 2,
+        "actor_rollout_ref.rollout.name": "vllm",
+        "actor_rollout_ref.rollout.gpu_memory_utilization": 0.7,
+        "actor_rollout_ref.rollout.n": 4,
+        "actor_rollout_ref.ref.megatron.param_offload": true,
+        "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+        "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 2,
+        "actor_rollout_ref.ref.megatron.sequence_parallel": true,
+        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 16,
+        "algorithm.use_kl_in_reward": false,
+        "trainer.critic_warmup": 0,
+        "trainer.logger": [
+          "console",
+          "wandb"
+        ],
+        "trainer.project_name": "verl_stage_tuner",
+        "trainer.experiment_name": "qwen3_0p6b_agent",
+        "trainer.n_gpus_per_node": 8,
+        "trainer.nnodes": 1,
+        "trainer.val_before_train": false,
+        "trainer.save_freq": -1,
+        "trainer.test_freq": -1,
+        "trainer.total_epochs": 1
+      }
+    }
+  ],
+  "health_decisions": [
+    {
+      "event_id": "trial-0005-step-000006-event-001",
+      "verdict": "watch",
+      "action": "observe",
+      "confidence": 0.75,
+      "reason_codes": [
+        "kl_growth_without_reward_drop",
+        "improving_reward",
+        "early_training"
+      ],
+      "evidence": [
+        "KL loss grew from ~0.001 to 0.185 over 6 steps, exceeding JF-HPO kl_growth threshold for 5 consecutive steps.",
+        "Reward improved from -0.992 to -0.978, no reward_drop trigger.",
+        "Absolute KL is still moderate and reward trajectory is positive.",
+        "Response length decreased from 993 to 345, but this may be beneficial as reward improves."
+      ],
+      "counterevidence": [
+        "KL growth ratio sustained >0.15 for 5 steps indicates persistent divergence trend.",
+        "Response length collapse could signal mode collapse, though not yet reflected in reward."
+      ],
+      "observe_for_updates": 5,
+      "reason": "KL divergence warning triggered, but reward is improving and absolute KL remains moderate. No reward deterioration. Continue observing for another 5 updates to see if trend reverses or worsens."
+    }
+  ],
+  "proposal": {
+    "decision": "keep",
+    "reason": "stage baseline",
+    "reference_trial_id": 2,
+    "reference_trial": {
+      "trial_id": 2,
+      "stage": "hardware_tuning",
+      "result": "success",
+      "parameters": {
+        "algorithm.adv_estimator": "grpo",
+        "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+        "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+        "data.train_batch_size": 256,
+        "data.max_prompt_length": 1280,
+        "data.max_response_length": 5120,
+        "data.filter_overlong_prompts": true,
+        "data.truncation": "error",
+        "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-0.6B-Base",
+        "actor_rollout_ref.model.use_remove_padding": true,
+        "actor_rollout_ref.actor.optim.lr": 3e-06,
+        "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 2,
+        "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 1,
+        "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 2,
+        "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+        "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+        "actor_rollout_ref.actor.megatron.optimizer_offload": false,
+        "actor_rollout_ref.actor.megatron.param_offload": false,
+        "actor_rollout_ref.actor.use_kl_loss": true,
+        "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+        "actor_rollout_ref.actor.kl_loss_coef": 0.003,
+        "actor_rollout_ref.actor.entropy_coeff": 0.0,
+        "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 2,
+        "actor_rollout_ref.rollout.tensor_model_parallel_size": 2,
+        "actor_rollout_ref.rollout.name": "vllm",
+        "actor_rollout_ref.rollout.gpu_memory_utilization": 0.7,
+        "actor_rollout_ref.rollout.n": 4,
+        "actor_rollout_ref.ref.megatron.param_offload": true,
+        "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+        "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 2,
+        "actor_rollout_ref.ref.megatron.sequence_parallel": true,
+        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 16,
+        "algorithm.use_kl_in_reward": false,
+        "trainer.critic_warmup": 0,
+        "trainer.logger": [
+          "console",
+          "wandb"
+        ],
+        "trainer.project_name": "verl_stage_tuner",
+        "trainer.experiment_name": "qwen3_0p6b_agent",
+        "trainer.n_gpus_per_node": 8,
+        "trainer.nnodes": 1,
+        "trainer.val_before_train": false,
+        "trainer.save_freq": -1,
+        "trainer.test_freq": -1,
+        "trainer.total_epochs": 1
+      },
+      "resource": {
+        "memory_bottleneck": "rollout",
+        "max_observed_memory_pct": 79.05731201171875
+      },
+      "memory_by_phase_pct": {
+        "rollout": {
+          "mean": 65.94285942095932,
+          "p95": 75.665283203125,
+          "max": 79.05731201171875
+        },
+        "actor_log_prob": {
+          "mean": 22.042999769511976,
+          "p95": 30.419921875,
+          "max": 30.7281494140625
+        },
+        "ref_log_prob": {
+          "mean": 34.2491703648721,
+          "p95": 58.60595703125,
+          "max": 59.7137451171875
+        },
+        "training": {
+          "mean": 27.497548694852032,
+          "p95": 37.5335693359375,
+          "max": 37.9150390625
+        }
+      },
+      "performance": {
+        "throughput": {
+          "mean": 1485.5046173440705,
+          "p95": 1485.5046173440705,
+          "max": 1485.5046173440705
+        },
+        "time_per_step_s": {
+          "mean": 123.76913733780384,
+          "p95": 123.76913733780384,
+          "max": 123.76913733780384
+        },
+        "generation_tgs": {
+          "mean": 2575.4001566677166,
+          "p95": 2575.4001566677166,
+          "max": 2575.4001566677166
+        },
+        "actor_tgs": {
+          "mean": 6055.822066572098,
+          "p95": 6055.822066572098,
+          "max": 6055.822066572098
+        },
+        "actor_mfu": {
+          "mean": 0.13826565310160727,
+          "p95": 0.13826565310160727,
+          "max": 0.13826565310160727
+        },
+        "phase_duration_s": {
+          "rollout": {
+            "mean": 71.39070195518434,
+            "p95": 71.39070195518434,
+            "max": 71.39070195518434
+          },
+          "actor_log_prob": {
+            "mean": 14.93522067181766,
+            "p95": 14.93522067181766,
+            "max": 14.93522067181766
+          },
+          "ref_log_prob": {
+            "mean": 6.844776943325996,
+            "p95": 6.844776943325996,
+            "max": 6.844776943325996
+          },
+          "training": {
+            "mean": 30.36080369912088,
+            "p95": 30.36080369912088,
+            "max": 30.36080369912088
+          }
+        },
+        "time_bottleneck": "rollout"
+      },
+      "stability": {
+        "reward": {
+          "mean": -0.9886067708333334,
+          "p95": -0.984375,
+          "max": -0.984375
+        },
+        "reward_slope": 0.00048828125,
+        "actor_ppo_kl": {
+          "mean": 7.245062172511751e-05,
+          "p95": 7.245062172511751e-05,
+          "max": 7.245062172511751e-05
+        },
+        "actor_entropy": {
+          "mean": 0.8194259405136108,
+          "p95": 0.8194259405136108,
+          "max": 0.8194259405136108
+        },
+        "actor_pg_loss": {
+          "mean": -0.00011421181261539459,
+          "p95": -0.00011421181261539459,
+          "max": -0.00011421181261539459
+        },
+        "actor_pg_clipfrac": {
+          "mean": 3.0646038283066446e-05,
+          "p95": 3.0646038283066446e-05,
+          "max": 3.0646038283066446e-05
+        },
+        "response_length": {
+          "mean": 1280.7236328125,
+          "p95": 1280.7236328125,
+          "max": 1280.7236328125
+        },
+        "response_clip_ratio": {
+          "mean": 0.04296875,
+          "p95": 0.04296875,
+          "max": 0.04296875
+        }
+      },
+      "error": {
+        "type": null,
+        "evidence": []
+      },
+      "source": "trial",
+      "selection_reason": "best successful hardware trial used as stability baseline"
+    },
+    "changes": {},
+    "expected_effect": {}
+  },
+  "feasibility": {
+    "verdict": "valid",
+    "reason": "stage baseline"
+  }
+}

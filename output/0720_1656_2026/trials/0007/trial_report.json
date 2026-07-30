@@ -1,0 +1,223 @@
+{
+  "updates_completed": 67,
+  "result": "fail",
+  "error": {
+    "type": "INCOMPLETE_TRAINING",
+    "evidence": [
+      "completed 67 of 80 updates"
+    ]
+  },
+  "memory_by_phase_pct": {
+    "rollout": {
+      "mean": null,
+      "p95": null,
+      "max": null
+    },
+    "actor_log_prob": {
+      "mean": 13.366670343830462,
+      "p95": 15.867274728730932,
+      "max": 15.945903443937725
+    },
+    "ref_log_prob": {
+      "mean": 9.7741360816612,
+      "p95": 9.860040886931907,
+      "max": 9.922943859097343
+    },
+    "training": {
+      "mean": 9.793851938608576,
+      "p95": 9.875766629973265,
+      "max": 9.954395345180059
+    }
+  },
+  "memory_by_phase_gpu_pct": {},
+  "gpu_utilization_by_phase_pct": {},
+  "performance": {
+    "throughput": {
+      "mean": 637.178921821025,
+      "p95": 647.591470973236,
+      "max": 649.6727417809504
+    },
+    "time_per_step_s": {
+      "mean": 834.122134448875,
+      "p95": 963.3267068650457,
+      "max": 981.633142163977
+    },
+    "generation_tgs": {
+      "mean": 1210.3812285440274,
+      "p95": 1258.319750807936,
+      "max": 1271.718930377661
+    },
+    "actor_tgs": {
+      "mean": 2332.386663621236,
+      "p95": 2385.7568164294,
+      "max": 2390.0447662238116
+    },
+    "actor_mfu": {
+      "mean": 0.48658916292998117,
+      "p95": 0.5024152392094743,
+      "max": 0.5044352688598559
+    },
+    "phase_duration_s": {
+      "rollout": {
+        "mean": 439.75198742622257,
+        "p95": 518.843159082986,
+        "max": 529.3116267070291
+      },
+      "actor_log_prob": {
+        "mean": 85.43631899870853,
+        "p95": 97.01117707003141,
+        "max": 98.80553402903024
+      },
+      "ref_log_prob": {
+        "mean": 81.0981030665984,
+        "p95": 92.46866579802008,
+        "max": 94.07238275703276
+      },
+      "training": {
+        "mean": 227.55986210165992,
+        "p95": 254.93829314794857,
+        "max": 259.1668985069846
+      }
+    },
+    "time_bottleneck": "rollout"
+  },
+  "resource": {
+    "memory_bottleneck": "actor_log_prob",
+    "max_observed_memory_pct": 15.945903443937725
+  },
+  "stability": {
+    "reward": {
+      "mean": -0.008453824626865671,
+      "p95": 0.2890625,
+      "max": 0.31640625
+    },
+    "reward_slope": 0.005859375,
+    "actor_ppo_kl": {
+      "mean": 0.00011581452681572474,
+      "p95": 0.00021704461057314717,
+      "max": 0.0003622650695223467
+    },
+    "actor_entropy": {
+      "mean": 0.21320209532014786,
+      "p95": 0.2778174579143524,
+      "max": 0.2909697890281677
+    },
+    "actor_pg_loss": {
+      "mean": 0.00010259137141764529,
+      "p95": 0.00026537169605944655,
+      "max": 0.0004266778569217422
+    },
+    "actor_pg_clipfrac": {
+      "mean": 0.0011978046581104294,
+      "p95": 0.0014005752525463322,
+      "max": 0.001447723602439055
+    },
+    "response_length": {
+      "mean": 3996.559586063508,
+      "p95": 4592.8935546875,
+      "max": 4687.2607421875
+    },
+    "response_clip_ratio": {
+      "mean": 0.4439894153225806,
+      "p95": 0.681640625,
+      "max": 0.7177734375
+    }
+  },
+  "end_to_end_reward": {
+    "thresholds": {
+      "0.0": {
+        "step": 28,
+        "cumulative_time_s": 26089.758725260093,
+        "cumulative_tokens": 131892473,
+        "moving_average_reward": 0.034375
+      },
+      "0.1": {
+        "step": 36,
+        "cumulative_time_s": 32756.114927323128,
+        "cumulative_tokens": 165641581,
+        "moving_average_reward": 0.10546875
+      },
+      "0.2": {
+        "step": 49,
+        "cumulative_time_s": 43035.387069206045,
+        "cumulative_tokens": 218208049,
+        "moving_average_reward": 0.240625
+      },
+      "0.3": null
+    },
+    "peak_reward": 0.31640625
+  },
+  "trial_id": 7,
+  "stage": "stability_tuning",
+  "platform": "C550",
+  "updates_target": 80,
+  "parameters": {
+    "algorithm.adv_estimator": "grpo",
+    "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
+    "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
+    "data.train_batch_size": 256,
+    "data.max_prompt_length": 1280,
+    "data.max_response_length": 5120,
+    "data.filter_overlong_prompts": true,
+    "data.truncation": "error",
+    "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-8B",
+    "actor_rollout_ref.actor.optim.lr": 3e-06,
+    "actor_rollout_ref.actor.optim.lr_warmup_steps": 0,
+    "actor_rollout_ref.actor.ppo_mini_batch_size": 64,
+    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 2,
+    "actor_rollout_ref.actor.use_dynamic_bsz": false,
+    "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": 4,
+    "actor_rollout_ref.actor.megatron.sequence_parallel": true,
+    "actor_rollout_ref.actor.megatron.use_distributed_optimizer": true,
+    "actor_rollout_ref.actor.megatron.use_remove_padding": true,
+    "actor_rollout_ref.actor.megatron.optimizer_offload": true,
+    "actor_rollout_ref.actor.megatron.param_offload": true,
+    "actor_rollout_ref.actor.use_kl_loss": true,
+    "actor_rollout_ref.actor.kl_loss_type": "low_var_kl",
+    "actor_rollout_ref.actor.kl_loss_coef": 0.003,
+    "actor_rollout_ref.actor.entropy_coeff": 0.0,
+    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 8,
+    "actor_rollout_ref.rollout.tensor_model_parallel_size": 4,
+    "actor_rollout_ref.rollout.name": "vllm",
+    "actor_rollout_ref.rollout.gpu_memory_utilization": 0.8,
+    "actor_rollout_ref.rollout.max_num_batched_tokens": 65536,
+    "actor_rollout_ref.rollout.max_num_seqs": 256,
+    "actor_rollout_ref.rollout.enable_chunked_prefill": true,
+    "actor_rollout_ref.rollout.enable_prefix_caching": true,
+    "actor_rollout_ref.rollout.free_cache_engine": true,
+    "actor_rollout_ref.rollout.enforce_eager": false,
+    "actor_rollout_ref.rollout.n": 4,
+    "actor_rollout_ref.ref.megatron.param_offload": true,
+    "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
+    "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 4,
+    "actor_rollout_ref.ref.megatron.sequence_parallel": true,
+    "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 8,
+    "algorithm.use_kl_in_reward": false,
+    "trainer.critic_warmup": 0,
+    "trainer.logger": [
+      "console"
+    ],
+    "trainer.project_name": "verl_stage_tuner",
+    "trainer.experiment_name": "qwen3_8b_agent",
+    "trainer.n_gpus_per_node": 8,
+    "trainer.nnodes": 1,
+    "trainer.val_before_train": false,
+    "trainer.save_freq": -1,
+    "trainer.test_freq": -1,
+    "trainer.total_epochs": 1
+  },
+  "return_code": 0,
+  "stop_reason": null,
+  "failure_phase": null,
+  "log_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl_agent/output/0720_1656_2026/trials/0007/train.log",
+  "gpu_samples_path": null,
+  "proposal": {
+    "decision": "keep",
+    "reason": "stage baseline"
+  },
+  "feasibility": {
+    "verdict": "valid",
+    "reason": "stage baseline"
+  }
+}
