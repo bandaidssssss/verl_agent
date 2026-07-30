@@ -266,7 +266,10 @@ class RejectionConversationTest(unittest.TestCase):
                     if conversation is None:
                         conversation = AgentConversation("proposal", dict(context), [{"role": "user", "content": "start"}])
                     else:
-                        assert any("第 1 次建议被拒绝" in row["content"] for row in conversation.messages)
+                        assert any(
+                            "Proposal Attempt 1 Was Rejected" in row["content"]
+                            for row in conversation.messages
+                        )
                     value = 3 if self.calls == 1 else (
                         base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"] * 2
                     )
@@ -320,7 +323,7 @@ class RejectionConversationTest(unittest.TestCase):
             self.assertEqual(trace["rejections"][0]["source"], "deterministic_validator")
             self.assertTrue(
                 any(
-                    "第 1 次建议被拒绝" in row["content"]
+                    "Proposal Attempt 1 Was Rejected" in row["content"]
                     for row in trace["proposal_conversation"]["messages"]
                 )
             )

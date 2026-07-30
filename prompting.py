@@ -10,7 +10,7 @@ PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
 
 def json_block(value: Any) -> str:
     if value in (None, {}, []):
-        return "未提供"
+        return "Not provided."
     return "```json\n" + json.dumps(value, ensure_ascii=False, indent=2, default=str) + "\n```"
 
 
@@ -36,9 +36,9 @@ def _cell(value: Any, digits: int = 3) -> str:
 
 def trial_history_table(trials: Sequence[Mapping[str, Any]]) -> str:
     if not trials:
-        return "暂无历史 trial。"
+        return "No trial history is available."
     header = (
-        "|Trial|阶段|结果|修改|吞吐|Step(s)|显存瓶颈|峰值显存%|失败类型|\n"
+        "|Trial|Stage|Result|Changes|Throughput|Step(s)|Memory bottleneck|Peak memory %|Failure type|\n"
         "|---:|---|---|---|---:|---:|---|---:|---|"
     )
     rows = [header]
@@ -73,7 +73,7 @@ def trial_history_table(trials: Sequence[Mapping[str, Any]]) -> str:
 
 def available_tools_markdown(tool_definitions: Sequence[Mapping[str, Any]]) -> str:
     if not tool_definitions:
-        return "当前角色没有可调用工具。"
+        return "No tools are available to this role."
     lines = []
     for tool in tool_definitions:
         lines.append(f"- `{tool['name']}`：{tool['description']}")
@@ -108,7 +108,7 @@ def render_prompt(
     rendered = template
     for name, value in replacements.items():
         rendered = rendered.replace("{" + name + "}", value)
-    return re.sub(r"\{[A-Z][A-Z0-9_]*\}", "未提供", rendered)
+    return re.sub(r"\{[A-Z][A-Z0-9_]*\}", "Not provided.", rendered)
 
 
 def rejection_feedback(
@@ -119,12 +119,16 @@ def rejection_feedback(
     result: Mapping[str, Any],
 ) -> str:
     return (
-        f"## 第 {attempt} 次建议被拒绝\n\n"
-        f"- 拒绝来源：`{source}`\n\n"
+        f"## Proposal Attempt {attempt} Was Rejected\n\n"
+        f"- Rejection source: `{source}`\n\n"
         f"- Proposed changes:\n{json_block(proposal)}\n\n"
         f"- The modified parameters are:\n{json_block(candidate)}\n\n"
         f"- Validation result:\n{json_block(result)}\n\n"
-        "请把这次失败及其原因作为后续推理证据。如果字段不在当前阶段 editable 白名单，必须放弃该字段并选择白名单内参数；"
-        "如果字段可编辑但参考 trial 未显式配置，使用 from:null 表示新增 override。你可以继续调用工具核查参数、显存或 verl 文档，"
-        "但完成工具调用后必须输出完整 Proposal，不能把工具参数当作最终答案。最终仍只输出约定的 JSON 对象。"
+        "Treat this rejection and its reason as evidence for the next proposal. If a field is not "
+        "in the editable whitelist for the current stage, abandon that field and choose an allowed "
+        "parameter. If a field is editable but absent from the reference trial's explicit "
+        "configuration, use `from: null` to add an override. You may continue using tools to verify "
+        "parameter semantics, memory, or verl documentation, but after tool use you must return a "
+        "complete Proposal rather than tool arguments. The final response must still be exactly the "
+        "required JSON object."
     )

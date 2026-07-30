@@ -122,12 +122,14 @@ class LLMRoleAgentTest(unittest.TestCase):
             client_factory=lambda: fake,
         )
         first = agent.run(self.context)
-        first.conversation.add_user_message("## 第 1 次建议被拒绝\nValidator says x=1 is invalid")
+        first.conversation.add_user_message("## Proposal Attempt 1 Was Rejected\nValidator says x=1 is invalid")
         second = agent.run(conversation=first.conversation)
         self.assertEqual(second.result["changes"]["x"]["to"], 2)
         self.assertEqual(second.conversation.completed_turns, 2)
         request_messages = fake.responses.requests[1]["messages"]
-        self.assertTrue(any("第 1 次建议被拒绝" in message["content"] for message in request_messages))
+        self.assertTrue(
+            any("Proposal Attempt 1 Was Rejected" in message["content"] for message in request_messages)
+        )
         self.assertTrue(any('"reason":"first"' in message["content"] for message in request_messages))
 
     def test_invalid_json_is_repaired_in_the_same_conversation(self) -> None:
@@ -155,7 +157,7 @@ class LLMRoleAgentTest(unittest.TestCase):
         self.assertEqual(len(fake.responses.requests), 2)
         repair_messages = fake.responses.requests[1]["messages"]
         self.assertTrue(
-            any("无法作为最终 JSON 解析" in message["content"] for message in repair_messages)
+            any("could not be parsed as the final JSON object" in message["content"] for message in repair_messages)
         )
         self.assertNotIn("tools", fake.responses.requests[1])
 

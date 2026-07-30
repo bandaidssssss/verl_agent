@@ -191,7 +191,10 @@ class LLMRoleAgent:
                 {"role": "system", "content": prompt},
                 {
                     "role": "user",
-                    "content": "请分析当前证据。需要更多信息时主动调用工具；证据充分后输出约定的 JSON。",
+                    "content": (
+                        "Analyze the current evidence. Call tools proactively when more information "
+                        "is needed; once the evidence is sufficient, output the required JSON object."
+                    ),
                 },
             ],
         )
@@ -355,10 +358,11 @@ class LLMRoleAgent:
                     ) from exc
                 response_repairs += 1
                 conversation.add_user_message(
-                    "上一条回复无法作为最终 JSON 解析。"
-                    f"解析错误：{exc}。"
-                    "请纠正上一条回复，只输出一个完整、有效且符合既定格式的 JSON 对象；"
-                    "不要调用工具，不要输出 Markdown、代码围栏或额外解释。"
+                    "The previous response could not be parsed as the final JSON object. "
+                    f"Parse error: {exc}. "
+                    "Correct the response and output exactly one complete, valid JSON object that "
+                    "matches the required schema. Do not call tools and do not output Markdown, "
+                    "code fences, or additional explanation."
                 )
                 continue
             self._stream_event("answer", result)
