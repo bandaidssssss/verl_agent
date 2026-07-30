@@ -38,8 +38,8 @@ def trial_history_table(trials: Sequence[Mapping[str, Any]]) -> str:
     if not trials:
         return "暂无历史 trial。"
     header = (
-        "|Trial|阶段|结果|修改|吞吐|Step(s)|显存瓶颈|峰值显存%|Reward|KL max|失败类型|\n"
-        "|---:|---|---|---|---:|---:|---|---:|---:|---:|---|"
+        "|Trial|阶段|结果|修改|吞吐|Step(s)|显存瓶颈|峰值显存%|失败类型|\n"
+        "|---:|---|---|---|---:|---:|---|---:|---|"
     )
     rows = [header]
     for trial in trials:
@@ -63,8 +63,6 @@ def trial_history_table(trials: Sequence[Mapping[str, Any]]) -> str:
                     _cell(_metric(trial, "performance", "time_per_step_s")),
                     _cell(_metric(trial, "resource", "memory_bottleneck")),
                     _cell(_metric(trial, "resource", "max_observed_memory_pct"), 1),
-                    _cell(_metric(trial, "stability", "reward")),
-                    _cell(_metric(trial, "stability", "actor_ppo_kl", "max")),
                     _cell(_metric(trial, "error", "type")),
                     "",
                 ]
@@ -92,6 +90,7 @@ def render_prompt(
         "MODE": f"`{context.get('mode', 'unknown')}`",
         "CURRENT_PARAMETERS": json_block(context.get("current_parameters")),
         "REFERENCE_TRIAL": json_block(context.get("reference_trial")),
+        "REFERENCE_STABILITY_SERIES": json_block(context.get("reference_stability_series")),
         "CANDIDATE_PARAMETERS": json_block(context.get("candidate_parameters")),
         "CHANGES": json_block(context.get("changes")),
         "TARGET_CHANGES": json_block(context.get("target_changes")),

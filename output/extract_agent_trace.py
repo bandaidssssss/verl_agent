@@ -377,28 +377,32 @@ def extract_metrics(trial: dict) -> str:
 
     stability = trial.get("stability", {})
     if stability:
-        reward = stability.get("reward", {})
-        kl = stability.get("actor_ppo_kl", {})
-        entropy = stability.get("actor_entropy", {})
-        clipfrac = stability.get("actor_pg_clipfrac", {})
-        resp_len = stability.get("response_length", {})
-
-        lines.append("**稳定性指标:**")
-        lines.append("")
-        lines.append("| 指标 | 均值 | P95 | 最大 |")
-        lines.append("|---|---|---|---|")
-        if reward:
-            lines.append(f"| Reward | {_fmt(reward.get('mean'), '.4f')} | {_fmt(reward.get('p95'), '.4f')} | {_fmt(reward.get('max'), '.4f')} |")
-        lines.append(f"| Reward 斜率 | {_fmt(stability.get('reward_slope'), '.6f')} |||")
-        if kl:
-            lines.append(f"| Actor PPO KL | {_fmt(kl.get('mean'), '.8f')} | {_fmt(kl.get('p95'), '.8f')} | {_fmt(kl.get('max'), '.8f')} |")
-        if entropy:
-            lines.append(f"| Actor Entropy | {_fmt(entropy.get('mean'), '.4f')} | {_fmt(entropy.get('p95'), '.4f')} | {_fmt(entropy.get('max'), '.4f')} |")
-        if clipfrac:
-            lines.append(f"| Clip Fraction | {_fmt(clipfrac.get('mean'), '.6f')} | {_fmt(clipfrac.get('p95'), '.6f')} | {_fmt(clipfrac.get('max'), '.6f')} |")
-        if resp_len:
-            lines.append(f"| Response Length | {_fmt(resp_len.get('mean'), '.1f')} | {_fmt(resp_len.get('p95'), '.1f')} | {_fmt(resp_len.get('max'), '.1f')} |")
-        lines.append("")
+        windows = stability.get("windows", [])
+        metrics = stability.get("metrics", {})
+        if isinstance(windows, list) and isinstance(metrics, dict):
+            lines.append(f"**稳定性时序（每 {stability.get('window_size', '?')} step 一个 window）:**")
+            lines.append("")
+            lines.append("| Step window | Reward | PPO KL | Clip Fraction | Entropy | LR | Response clip ratio |")
+            lines.append("|---|---:|---:|---:|---:|---:|---:|")
+            metric_order = (
+                "critic/rewards/mean",
+                "actor/ppo_kl",
+                "actor/pg_clipfrac",
+                "actor/entropy",
+                "actor/lr",
+                "response_length/clip_ratio",
+            )
+            formats = (".4f", ".8f", ".6f", ".4f", ".2e", ".4f")
+            for index, window in enumerate(windows):
+                if not isinstance(window, dict):
+                    continue
+                values = []
+                for metric in metric_order:
+                    series = metrics.get(metric)
+                    values.append(series[index] if isinstance(series, list) and index < len(series) else None)
+                label = f"{window.get('start_step', '?')}–{window.get('end_step', '?')} (n={window.get('sample_count', '?')})"
+                lines.append("| " + label + " | " + " | ".join(_fmt(value, spec) for value, spec in zip(values, formats)) + " |")
+            lines.append("")
 
     phase_duration = (
         perf.get("phase_duration_s", {}) if isinstance(perf, dict) else {}
@@ -540,8 +544,8 @@ def process_experiment(exp_dir: Path, output_path: Path) -> None:
     lines.append("")
 
     # 试验总览表
-    lines.append("| Trial | 阶段 | 结果 | 吞吐量 | Reward (均值) | Reward (最大) | 显存峰值% | Health 决策 | 完成后的 Agent 工具调用（D + P + F） |")
-    lines.append("|---|---|---|---:|---:|---:|---:|:---:|:---:|")
+    lines.append("| Trial | 阶段 | 结果 | 吞吐量 | 末个完整窗口 Reward | 显存峰值% | Health 决策 | 完成后的 Agent 工具调用（D + P + F） |")
+    lines.append("|---|---|---|---:|---:|---:|:---:|:---:|")
     for t in trials:
         tid = t.get("trial_id", "?")
         stage = t.get("stage", "?")
@@ -549,12 +553,16 @@ def process_experiment(exp_dir: Path, output_path: Path) -> None:
         tp = t.get("performance", {}).get("throughput", {}).get("mean", "-")
         if isinstance(tp, (int, float)):
             tp = f"{tp:.0f}"
-        rw_mean = t.get("stability", {}).get("reward", {}).get("mean", "-")
-        if isinstance(rw_mean, (int, float)):
-            rw_mean = f"{rw_mean:.4f}"
-        rw_max = t.get("stability", {}).get("reward", {}).get("max", "-")
-        if isinstance(rw_max, (int, float)):
-            rw_max = f"{rw_max:.4f}"
+        stability = t.get("stability", {})
+        windows = stability.get("windows", []) if isinstance(stability, dict) else []
+        metrics = stability.get("metrics", {}) if isinstance(stability, dict) else {}
+        rewards = metrics.get("critic/rewards/mean", []) if isinstance(metrics, dict) else []
+        window_size = stability.get("window_size") if isinstance(stability, dict) else None
+        tail_reward = "-"
+        for window, reward in reversed(list(zip(windows, rewards))):
+            if isinstance(window, dict) and window.get("sample_count") == window_size and isinstance(reward, (int, float)):
+                tail_reward = f"{reward:.4f}"
+                break
         mem = t.get("resource", {}).get("max_observed_memory_pct", "-")
         if isinstance(mem, (int, float)):
             mem = f"{mem:.1f}%"
@@ -577,7 +585,7 @@ def process_experiment(exp_dir: Path, output_path: Path) -> None:
         health_str = str(health_count) if health_count else "-"
 
         lines.append(
-            f"| {tid} | {stage} | {result} | {tp} | {rw_mean} | {rw_max} "
+            f"| {tid} | {stage} | {result} | {tp} | {tail_reward} "
             f"| {mem} | {health_str} | {tool_str} |"
         )
     lines.append("")

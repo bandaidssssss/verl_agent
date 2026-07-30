@@ -4,10 +4,11 @@ import unittest
 import json
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 from agents import AgentConversation, AgentResponseError, AgentRun
 from config_utils import load_json
-from orchestrator import TuningOrchestrator, _normalize_proposal_changes, determine_stage
+from orchestrator import TuningOrchestrator, _normalize_proposal_changes, best_stability_trial, determine_stage
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,15 +23,18 @@ def hardware_trial(trial_id: int, throughput: float, result: str = "success") ->
     }
 
 
-def stability_trial(trial_id: int, reward: float, slope: float = 0.01, kl: float = 0.02) -> dict:
+def stability_trial(trial_id: int, reward: float, kl: float = 0.02) -> dict:
     return {
         "trial_id": trial_id,
         "stage": "stability_tuning",
         "result": "success",
         "stability": {
-            "reward": {"mean": reward},
-            "reward_slope": slope,
-            "actor_ppo_kl": {"max": kl},
+            "window_size": 5,
+            "windows": [{"start_step": 6, "end_step": 10, "sample_count": 5}],
+            "metrics": {
+                "critic/rewards/mean": [reward],
+                "actor/ppo_kl": [kl],
+            },
         },
     }
 
@@ -66,6 +70,14 @@ class OrchestratorStageTest(unittest.TestCase):
         trials = [hardware_trial(index, 100 + index) for index in range(1, 7)]
         trials.extend([stability_trial(7, 0.1), stability_trial(8, 0.2)])
         self.assertEqual(determine_stage(trials, self.config), "confirm")
+
+    def test_best_stability_uses_last_complete_window_reward(self) -> None:
+        earlier = stability_trial(7, 0.2)
+        later = stability_trial(8, 0.1)
+        later["stability"]["windows"].append({"start_step": 11, "end_step": 15, "sample_count": 5})
+        later["stability"]["metrics"]["critic/rewards/mean"].append(0.3)
+        later["stability"]["metrics"]["actor/ppo_kl"].append(0.02)
+        self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 8)
 
 
 class ProposalProvenanceTest(unittest.TestCase):
@@ -142,6 +154,93 @@ class ProposalProvenanceTest(unittest.TestCase):
         self.assertIsNone(
             details["actor_rollout_ref.rollout.max_num_batched_tokens"]["from"]
         )
+
+
+class ProposalSeriesContextTest(unittest.TestCase):
+    def test_hardware_proposal_receives_reference_metric_windows_without_summary(self) -> None:
+        base = load_json(ROOT / "config" / "base_parameters.json")
+        config = load_json(ROOT / "config" / "agent_config.json")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config.update({"output_dir": temp_dir, "stream_agent_events": False})
+            orchestrator = TuningOrchestrator(ROOT, base, config)
+
+            class FakeAgents:
+                def propose(self, context=None, conversation=None):
+                    assert context is not None
+                    assert "stability" not in context["reference_trial"]
+                    series = context["reference_stability_series"]
+                    assert series["trial_id"] == 1
+                    assert series["metrics"]["critic/rewards/mean"] == [0.1]
+                    conversation = AgentConversation("proposal", dict(context), [])
+                    return AgentRun({"decision": "keep", "reason": "test"}, conversation)
+
+                def diagnose(self, context):
+                    raise AssertionError("successful trial should not be diagnosed")
+
+            orchestrator.agents = FakeAgents()
+            trials = [
+                {
+                    "trial_id": 1,
+                    "stage": "hardware_tuning",
+                    "result": "success",
+                    "parameters": base,
+                    "performance": {"throughput": {"mean": 1.0}},
+                    "stability": {
+                        "window_size": 5,
+                        "windows": [{"start_step": 6, "end_step": 10, "sample_count": 5}],
+                        "metrics": {"critic/rewards/mean": [0.1]},
+                    },
+                }
+            ]
+            _, proposal, _, _ = orchestrator._propose_candidate("hardware_tuning", base, trials)
+            self.assertEqual(proposal["decision"], "keep")
+
+    def test_first_stability_trial_receives_hardware_series_and_keep_runs_baseline(self) -> None:
+        base = load_json(ROOT / "config" / "base_parameters.json")
+        config = load_json(ROOT / "config" / "agent_config.json")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config.update(
+                {
+                    "output_dir": temp_dir,
+                    "stream_agent_events": False,
+                    "min_hardware_trials": 1,
+                    "max_hardware_trials": 1,
+                }
+            )
+            orchestrator = TuningOrchestrator(ROOT, base, config)
+            trials = [
+                {
+                    "trial_id": 1,
+                    "stage": "hardware_tuning",
+                    "result": "success",
+                    "parameters": base,
+                    "performance": {"throughput": {"mean": 1.0}},
+                    "stability": {
+                        "window_size": 5,
+                        "windows": [{"start_step": 6, "end_step": 10, "sample_count": 5}],
+                        "metrics": {"critic/rewards/mean": [0.1]},
+                    },
+                }
+            ]
+            orchestrator.trials = lambda: trials
+
+            class FakeAgents:
+                def propose(self, context=None, conversation=None):
+                    assert context["current_stage"] == "stability_tuning"
+                    assert context["reference_stability_series"]["stage"] == "hardware_tuning"
+                    return AgentRun(
+                        {"decision": "keep", "reason": "hardware trajectory is the stability baseline"},
+                        AgentConversation("proposal", dict(context), []),
+                    )
+
+                def diagnose(self, context):
+                    raise AssertionError("successful trial should not be diagnosed")
+
+            orchestrator.agents = FakeAgents()
+            with mock.patch("orchestrator.run_trial", return_value={}) as run_trial:
+                reports = orchestrator.run(max_trials=1, dry_run=True)
+            self.assertEqual(len(reports), 1)
+            self.assertEqual(run_trial.call_args.args[3], "stability_tuning")
 
 
 class RejectionConversationTest(unittest.TestCase):

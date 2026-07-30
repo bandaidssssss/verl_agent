@@ -8,10 +8,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from runner import GPUSampler, HealthAgentWorker, PhaseTracker, build_command
+from runner import GPUSampler, HealthAgentWorker, PhaseTracker, _resource_gate_enabled, build_command
 
 
 class BuildCommandTest(unittest.TestCase):
+    def test_stability_does_not_apply_the_preemptive_memory_gate(self) -> None:
+        self.assertFalse(_resource_gate_enabled("stability_tuning"))
+        self.assertTrue(_resource_gate_enabled("hardware_tuning"))
+        self.assertTrue(_resource_gate_enabled("confirm"))
+
     def test_preserves_base_trainer_runtime_fields_in_stability_stage(self) -> None:
         parameters = {
             "trainer.total_epochs": 2,

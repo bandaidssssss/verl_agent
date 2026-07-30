@@ -44,6 +44,7 @@
   "preserve_hardware_token_budget": true,
   "token_budget_tolerance": 0.0,
   "reward_window": 5,
+  "stability_window_size": 5,
   "reward_thresholds": [0.0, 0.1, 0.2, 0.3],
   "kl_warning": 0.1,
   "reward_collapse_slope": -0.01

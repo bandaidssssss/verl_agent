@@ -51,7 +51,7 @@ def best_hardware_trial(trials: list[dict[str, Any]]) -> dict[str, Any] | None:
 def best_stability_trial(trials: list[dict[str, Any]]) -> dict[str, Any] | None:
     candidates = []
     for trial in _successful(_stability_trials(trials)):
-        reward = _metric_mean(trial, "stability", "reward")
+        reward = _last_complete_stability_value(trial, "critic/rewards/mean")
         if reward is not None:
             candidates.append((reward, trial))
     return max(candidates, default=(None, None), key=lambda item: item[0])[1]
@@ -75,8 +75,14 @@ def hardware_plateaued(trials: list[dict[str, Any]], config: Mapping[str, Any]) 
 def stability_healthy(trial: Mapping[str, Any], config: Mapping[str, Any]) -> bool:
     if trial.get("result") != "success":
         return False
-    slope = trial.get("stability", {}).get("reward_slope")
-    kl_max = trial.get("stability", {}).get("actor_ppo_kl", {}).get("max")
+    reward_points = _complete_stability_points(trial, "critic/rewards/mean")
+    slope = None
+    if len(reward_points) >= 2:
+        previous, current = reward_points[-2:]
+        delta_step = current[0] - previous[0]
+        slope = (current[1] - previous[1]) / delta_step if delta_step else 0.0
+    kl_points = _complete_stability_points(trial, "actor/ppo_kl")
+    kl_max = max((value for _, value in kl_points), default=None)
     if slope is not None and slope < float(config.get("reward_collapse_slope", -0.01)):
         return False
     if kl_max is not None and kl_max > float(config.get("kl_warning", 0.1)):
@@ -139,6 +145,55 @@ def _compact_trial(trial: Mapping[str, Any]) -> dict[str, Any]:
     return {key: copy.deepcopy(trial[key]) for key in keys if key in trial}
 
 
+def _complete_stability_points(trial: Mapping[str, Any], metric: str) -> list[tuple[int, float]]:
+    """Read complete report windows for a metric, retaining old reports as fallback."""
+    stability = trial.get("stability")
+    if not isinstance(stability, Mapping):
+        return []
+    windows = stability.get("windows")
+    metrics = stability.get("metrics")
+    window_size = stability.get("window_size")
+    values = metrics.get(metric) if isinstance(metrics, Mapping) else None
+    if isinstance(windows, list) and isinstance(values, list):
+        points = []
+        for window, value in zip(windows, values):
+            if not isinstance(window, Mapping) or not isinstance(value, (int, float)):
+                continue
+            required = window_size if isinstance(window_size, int) else window.get("sample_count")
+            if window.get("sample_count") != required:
+                continue
+            end_step = window.get("end_step")
+            if isinstance(end_step, int):
+                points.append((end_step, float(value)))
+        return points
+
+    # Existing histories retain the legacy summary.  It is only a migration
+    # fallback; newly written reports always use complete metric windows.
+    legacy_key = {
+        "critic/rewards/mean": "reward",
+        "actor/ppo_kl": "actor_ppo_kl",
+    }.get(metric)
+    legacy_value = _metric_mean(trial, "stability", legacy_key) if legacy_key else None
+    return [(0, legacy_value)] if legacy_value is not None else []
+
+
+def _last_complete_stability_value(trial: Mapping[str, Any], metric: str) -> float | None:
+    points = _complete_stability_points(trial, metric)
+    return points[-1][1] if points else None
+
+
+def _trial_stability_series(trial: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(trial, Mapping):
+        return None
+    stability = trial.get("stability")
+    if not isinstance(stability, Mapping) or not isinstance(stability.get("windows"), list):
+        return None
+    series = copy.deepcopy(dict(stability))
+    series["trial_id"] = trial.get("trial_id")
+    series["stage"] = trial.get("stage")
+    return series
+
+
 def _reference_descriptor(trial: Mapping[str, Any] | None, selection_reason: str) -> dict[str, Any]:
     if trial is None:
         return {
@@ -156,7 +211,6 @@ def _reference_descriptor(trial: Mapping[str, Any] | None, selection_reason: str
         "resource",
         "memory_by_phase_pct",
         "performance",
-        "stability",
         "error",
         "termination",
     )
@@ -374,6 +428,16 @@ class TuningOrchestrator:
             "mode": "failure_repair" if diagnosis else stage,
             "current_parameters": dict(current),
             "reference_trial": copy.deepcopy(dict(reference)),
+            "reference_stability_series": _trial_stability_series(
+                next(
+                    (
+                        trial
+                        for trial in trials
+                        if trial.get("trial_id") == reference.get("trial_id")
+                    ),
+                    None,
+                )
+            ),
             "editable_parameters": editable_parameters(stage),
             "constraints": {
                 "max_parameter_changes": self.config.get("max_parameter_changes", 3),
@@ -557,8 +621,7 @@ class TuningOrchestrator:
             agent_trace: dict[str, Any] | None = None
 
             first_hardware = not _hardware_trials(trials)
-            first_stability = stage == "stability_tuning" and not _stability_trials(trials)
-            if not first_hardware and not first_stability and stage != "confirm":
+            if not first_hardware and stage != "confirm":
                 try:
                     parameters, proposal, review, agent_trace = self._propose_candidate(
                         stage, parameters, trials, reference
@@ -601,7 +664,13 @@ class TuningOrchestrator:
                     )
                     break
                 if proposal.get("decision") in {"keep", "stop"}:
-                    if stage.startswith("hardware") and best_hardware_trial(trials):
+                    # The first stability trial now receives a proposal context
+                    # based on the selected hardware trial.  A justified
+                    # ``keep`` still needs to run that no-change stability
+                    # baseline; it is not a terminal "no candidate" state.
+                    if stage == "stability_tuning" and not _stability_trials(trials):
+                        pass
+                    elif stage.startswith("hardware") and best_hardware_trial(trials):
                         stage = "stability_tuning"
                         selected = best_hardware_trial(trials)
                         parameters = dict(selected["parameters"])

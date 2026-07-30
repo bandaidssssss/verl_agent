@@ -24,7 +24,32 @@ step:2 - critic/rewards/mean:0.2 - actor/ppo_kl:0.02 - actor/entropy:0.2 - actor
         self.assertEqual(report["updates_completed"], 2)
         self.assertEqual(report["performance"]["time_bottleneck"], "rollout")
         self.assertAlmostEqual(report["memory_by_phase_pct"]["actor_log_prob"]["max"], 90.625)
-        self.assertAlmostEqual(report["stability"]["reward_slope"], 0.4)
+        stability = report["stability"]
+        self.assertEqual(stability["window_size"], 5)
+        self.assertEqual(stability["windows"], [{"start_step": 1, "end_step": 2, "sample_count": 2}])
+        self.assertAlmostEqual(stability["metrics"]["critic/rewards/mean"][0], 0.0)
+
+    def test_stability_metrics_are_aligned_in_five_step_windows(self) -> None:
+        text = "\n".join(
+            f"step:{step} - critic/rewards/mean:{step / 10} - actor/ppo_kl:{step / 100} - "
+            f"actor/pg_clipfrac:{step / 1000} - actor/entropy:{1 - step / 100} - "
+            f"actor/lr:0.000003 - response_length/clip_ratio:{step / 1000}"
+            for step in range(1, 11)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "train.log"
+            path.write_text(text, encoding="utf-8")
+            report = analyze_trial(path, None, warmup_updates=0, stability_window_size=5)
+        stability = report["stability"]
+        self.assertEqual(
+            stability["windows"],
+            [
+                {"start_step": 1, "end_step": 5, "sample_count": 5},
+                {"start_step": 6, "end_step": 10, "sample_count": 5},
+            ],
+        )
+        self.assertAlmostEqual(stability["metrics"]["critic/rewards/mean"][0], 0.3)
+        self.assertAlmostEqual(stability["metrics"]["critic/rewards/mean"][1], 0.8)
 
     def test_threshold_stats(self) -> None:
         records = {

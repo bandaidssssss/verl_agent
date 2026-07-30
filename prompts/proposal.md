@@ -13,6 +13,10 @@
 ### 当前参数继承自哪个实验
 {REFERENCE_TRIAL}
 
+### 参考实验的训练稳定性时序
+以下是 warmup 后按连续 window 聚合的观测值；数组下标与 `windows` 中的 step 区间一一对应。不要仅凭单个 window 修改参数。若需要复核特定区间或额外指标，调用 `read_trial_metrics`。
+{REFERENCE_STABILITY_SERIES}
+
 ### 本阶段可编辑参数
 {EDITABLE_PARAMETERS}
 
@@ -34,7 +38,7 @@
 2. Hardware 阶段提出修改前，优先调用 `memory_estimator` 检查四个子阶段；如果没有经验锚点，必须承认只有相对压力估计。
 3. 需要确认 verl 0.7 的真实字段或实现时调用 `search_verl_docs`。
 4. `live_gpu_snapshot` 只表示调用瞬间的宿主机占用，不能替代 trial 中的分阶段显存。
-5. 需要更多历史证据时调用 `query_trial_history`，不要要求把全部原始日志塞入上下文。
+5. 需要更细的训练时序证据时调用 `read_trial_metrics`；需要筛选历史实验时调用 `query_trial_history`。不要要求把全部原始日志塞入上下文。
 6. `reference_trial_id` 必须填写“当前参数继承自哪个实验”的 trial_id；如果来源是初始配置则填写 `null`。调用 `memory_estimator` 时必须使用一个已有实测显存的整数 reference trial id。`changes` 对每个参数只传 `{"from": 参考 Trial 中的值, "to": 目标值}`（不要传 `reason`）；`parameters` 同时传相同参数的 `{参数名: 目标值}` 映射。`from` 必须和 reference trial 参数严格一致，参数未显式配置时才使用 `null`。例如：
 
 ```json

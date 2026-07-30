@@ -244,7 +244,8 @@ def hardware_plateaued(trials, config) -> bool:
 
 ```python
 def stability_healthy(trial, config) -> bool:
-    # 两个条件: reward 斜率不低于 -0.01，KL 最大值不超过 0.1
+    # 两个条件: 最后两个完整 reward window 的斜率不低于 -0.01，
+    # 所有完整 window 的 PPO KL 不超过 0.1
     return (slope >= -0.01) and (kl_max <= 0.1)
 ```
 
@@ -318,12 +319,10 @@ def run(self, max_trials=1, dry_run=False):
         parameters = self._starting_parameters(stage, trials)
 
         # 这些情况跳过 Agent 调用:
-        # - 第一个硬件 trial (基线)
-        # - 第一个 stability trial (基线)
+        # - 第一个硬件 trial (无历史训练证据的基线)
         # - confirm 阶段 (参数冻结)
         first_hardware = not _hardware_trials(trials)
-        first_stability = stage == "stability_tuning" and not _stability_trials(trials)
-        if not first_hardware and not first_stability and stage != "confirm":
+        if not first_hardware and stage != "confirm":
             parameters, proposal, review, trace = self._propose_candidate(...)
             # decision="keep"/"stop" → 推进阶段
             if proposal["decision"] in {"keep", "stop"}:
@@ -335,7 +334,7 @@ def run(self, max_trials=1, dry_run=False):
         append_jsonl(self.history_path, report)
 ```
 
-**基线策略**: 每个新阶段的首个 trial 直接用当前最佳参数运行（不调用 LLM），建立基线后再由 Agent 提出优化。`first_hardware` 和 `first_stability` 两个布尔变量控制这个行为。
+**基线策略**: 只有第一个硬件 trial 在没有训练证据时直接运行。第一个 stability trial 会读取最佳 hardware trial 的训练稳定性时序后调用 Agent；若 Agent 决定 `keep`，仍会用未修改参数运行该 stability 基线。
 
 **阶段终止条件**:
 
@@ -523,9 +522,9 @@ def json_block(value):
 
 **`trial_history_table(trials)`** — 将历史转为表格:
 ```
-|Trial|阶段|结果|修改|吞吐|Step(s)|显存瓶颈|峰值显存%|Reward|KL max|失败类型|
-|---:|---|---|---|---:|---:|---|---:|---:|---:|---|
-| 1 | hardware_tuning | success | baseline/keep | 12.3 | 45.2 | training | 78.5 | - | - | - |
+|Trial|阶段|结果|修改|吞吐|Step(s)|显存瓶颈|峰值显存%|失败类型|
+|---:|---|---|---|---:|---:|---|---:|---|
+| 1 | hardware_tuning | success | baseline/keep | 12.3 | 45.2 | training | 78.5 | - |
 ```
 
 表格化让 LLM 能快速比较不同 trial，而不需要解析嵌套 JSON。
@@ -1149,14 +1148,20 @@ def analyze_trial(log_path, gpu_samples_path, warmup_updates=5,
             "max_observed_memory_pct": 78.5,
         },
 
-        # 稳定性指标
+        # 稳定性时序：每个 window 对应连续的 5 个 update；
+        # metrics 的数组下标与 windows 一一对应。
         "stability": {
-            "reward": {"mean": ..., "p95": ..., "max": ...},
-            "reward_slope": 0.002,         # 近期 reward 变化率
-            "actor_ppo_kl": {...},         # KL 散度
-            "actor_entropy": {...},        # 策略熵
-            "actor_pg_loss": {...},        # 策略梯度损失
-            "actor_pg_clipfrac": {...},    # PPO clip 比例
+            "warmup_updates": 5,
+            "window_size": 5,
+            "windows": [{"start_step": 6, "end_step": 10, "sample_count": 5}],
+            "metrics": {
+                "critic/rewards/mean": [...],
+                "actor/ppo_kl": [...],
+                "actor/pg_clipfrac": [...],
+                "actor/entropy": [...],
+                "actor/lr": [...],
+                "response_length/clip_ratio": [...],
+            },
         },
 
         # 端到端 reward 阈值

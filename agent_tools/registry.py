@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from agent_tools.memory_estimator import estimate_phase_memory
+from metrics import STABILITY_QUERY_METRICS, build_metric_windows, parse_step_records
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,25 @@ def _nested_metric(trial: Mapping[str, Any], *path: str) -> float | None:
     if isinstance(value, Mapping):
         value = value.get("mean")
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _last_stability_reward(trial: Mapping[str, Any]) -> float | None:
+    stability = trial.get("stability")
+    if not isinstance(stability, Mapping):
+        return None
+    windows = stability.get("windows")
+    metrics = stability.get("metrics")
+    rewards = metrics.get("critic/rewards/mean") if isinstance(metrics, Mapping) else None
+    window_size = stability.get("window_size")
+    if isinstance(windows, list) and isinstance(rewards, list):
+        for window, reward in reversed(list(zip(windows, rewards))):
+            if not isinstance(window, Mapping) or not isinstance(reward, (int, float)):
+                continue
+            required = window_size if isinstance(window_size, int) else window.get("sample_count")
+            if window.get("sample_count") == required:
+                return float(reward)
+        return None
+    return _nested_metric(trial, "stability", "reward")
 
 
 def _normalize_memory_changes(
@@ -110,6 +130,7 @@ class ToolRegistry:
             "search_verl_docs": self._search_verl_docs,
             "query_trial_history": self._query_trial_history,
             "read_trial_log_excerpt": self._read_trial_log_excerpt,
+            "read_trial_metrics": self._read_trial_metrics,
         }
 
     def definitions(self, role: str) -> list[dict[str, Any]]:
@@ -427,11 +448,12 @@ class ToolRegistry:
         sort_by = arguments.get("sort_by", "trial_id")
         metric_paths = {
             "throughput": ("performance", "throughput"),
-            "reward": ("stability", "reward"),
             "memory": ("resource", "max_observed_memory_pct"),
         }
         if sort_by == "trial_id":
             trials.sort(key=lambda trial: int(trial.get("trial_id", 0)), reverse=True)
+        elif sort_by == "reward":
+            trials.sort(key=lambda trial: _last_stability_reward(trial) or float("-inf"), reverse=True)
         elif sort_by in metric_paths:
             path = metric_paths[sort_by]
             trials.sort(key=lambda trial: _nested_metric(trial, *path) or float("-inf"), reverse=True)
@@ -495,4 +517,66 @@ class ToolRegistry:
             "log_path": str(log_path),
             "pattern": pattern,
             "lines": [{"line": index, "text": line[:1200]} for index, line in selected],
+        }
+
+    def _read_trial_metrics(self, arguments: Mapping[str, Any], runtime: ToolRuntime) -> dict[str, Any]:
+        """Read bounded, ordered step metrics from a recorded trial log."""
+        trial_id = arguments.get("trial_id")
+        if not isinstance(trial_id, int):
+            raise ToolError("trial_id must be an integer")
+        metrics = arguments.get("metrics")
+        if not isinstance(metrics, list) or not metrics or len(metrics) > len(STABILITY_QUERY_METRICS):
+            raise ToolError("metrics must be a non-empty list within the allowed metric limit")
+        requested = [str(metric) for metric in metrics]
+        unknown = sorted(set(requested) - set(STABILITY_QUERY_METRICS))
+        if unknown:
+            raise ToolError(f"unsupported metrics: {unknown}")
+        if len(set(requested)) != len(requested):
+            raise ToolError("metrics must not contain duplicates")
+
+        start_step = arguments.get("start_step")
+        end_step = arguments.get("end_step")
+        if start_step is not None and (not isinstance(start_step, int) or start_step < 1):
+            raise ToolError("start_step must be a positive integer")
+        if end_step is not None and (not isinstance(end_step, int) or end_step < 1):
+            raise ToolError("end_step must be a positive integer")
+        if isinstance(start_step, int) and isinstance(end_step, int) and start_step > end_step:
+            raise ToolError("start_step must not exceed end_step")
+        window_size = arguments.get("window_size", 5)
+        if not isinstance(window_size, int) or not 1 <= window_size <= 20:
+            raise ToolError("window_size must be an integer from 1 to 20")
+
+        trial = next((row for row in _read_jsonl(runtime.history_path) if row.get("trial_id") == trial_id), None)
+        if not trial or not trial.get("log_path"):
+            return {"available": False, "trial_id": trial_id, "error": "trial or recorded log_path not found"}
+        log_path = Path(str(trial["log_path"])).expanduser().resolve()
+        allowed_root = runtime.history_path.parent.resolve()
+        try:
+            log_path.relative_to(allowed_root)
+        except ValueError as exc:
+            raise ToolError("recorded log path is outside the configured output directory") from exc
+        if not log_path.is_file():
+            return {"available": False, "trial_id": trial_id, "log_path": str(log_path), "error": "log not found"}
+
+        records = parse_step_records(log_path)
+        series = build_metric_windows(
+            records,
+            requested,
+            window_size,
+            start_step=start_step,
+            end_step=end_step,
+        )
+        if len(series["windows"]) > 32:
+            raise ToolError("query would return more than 32 windows; narrow the step range or increase window_size")
+        missing_metrics = [
+            metric
+            for metric, values in series["metrics"].items()
+            if not any(value is not None for value in values)
+        ]
+        return {
+            "available": True,
+            "trial_id": trial_id,
+            "log_path": str(log_path),
+            **series,
+            "missing_metrics": missing_metrics,
         }

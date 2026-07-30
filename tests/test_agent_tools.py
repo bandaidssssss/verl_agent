@@ -304,6 +304,35 @@ class AgentToolsTest(unittest.TestCase):
         self.assertEqual(result["matched"], 1)
         self.assertEqual(result["trials"][0]["parameters"], {"x": 2})
 
+    def test_proposal_can_read_bounded_trial_metric_windows(self) -> None:
+        log_path = self.history_path.parent / "trials" / "0001" / "train.log"
+        log_path.parent.mkdir(parents=True)
+        log_path.write_text(
+            "\n".join(
+                f"step:{step} - critic/rewards/mean:{step / 10} - actor/ppo_kl:{step / 100} - actor/lr:0.000003"
+                for step in range(1, 11)
+            ),
+            encoding="utf-8",
+        )
+        self.history_path.write_text(
+            json.dumps({"trial_id": 1, "log_path": str(log_path)}) + "\n",
+            encoding="utf-8",
+        )
+        registry = self.registry()
+        result = registry.execute(
+            "proposal",
+            "read_trial_metrics",
+            {
+                "trial_id": 1,
+                "metrics": ["critic/rewards/mean", "actor/ppo_kl", "actor/lr"],
+                "window_size": 5,
+            },
+            registry.runtime({}),
+        )
+        self.assertTrue(result["available"])
+        self.assertEqual(result["windows"][0], {"start_step": 1, "end_step": 5, "sample_count": 5})
+        self.assertAlmostEqual(result["metrics"]["critic/rewards/mean"][1], 0.8)
+
 
 if __name__ == "__main__":
     unittest.main()

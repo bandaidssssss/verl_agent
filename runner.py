@@ -294,6 +294,11 @@ def _terminate(process: subprocess.Popen[str]) -> None:
             pass
 
 
+def _resource_gate_enabled(stage: str) -> bool:
+    """Stability trials may use the full device unless a real fatal error occurs."""
+    return stage != "stability_tuning"
+
+
 def run_trial(
     parameters: Mapping[str, Any],
     agent_config: Mapping[str, Any],
@@ -467,7 +472,12 @@ def run_trial(
                     )
                     _terminate(process)
                     break
-                if current_step is not None and current_step >= gate_updates and sampler.max_memory_pct >= hard_limit:
+                if (
+                    _resource_gate_enabled(stage)
+                    and current_step is not None
+                    and current_step >= gate_updates
+                    and sampler.max_memory_pct >= hard_limit
+                ):
                     stop_reason = "resource_gate_memory_limit"
                     _terminate(process)
                     break
@@ -528,6 +538,7 @@ def run_trial(
         samples_path,
         warmup_updates=int(agent_config.get("warmup_updates", 5)),
         reward_window=int(agent_config.get("reward_window", 5)),
+        stability_window_size=int(agent_config.get("stability_window_size", 5)),
         reward_thresholds=agent_config.get("reward_thresholds", [0.0, 0.1, 0.2, 0.3]),
     )
     metrics.update(

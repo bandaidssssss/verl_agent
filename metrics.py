@@ -41,6 +41,25 @@ TIMING_KEYS = {
     "training": "timing_s/update_actor",
 }
 
+# These are the primary time-series signals supplied to a proposal agent.  The
+# names intentionally match the train-log keys so the same names can be passed
+# to the bounded ``read_trial_metrics`` tool for a more detailed follow-up.
+STABILITY_SERIES_METRICS = (
+    "critic/rewards/mean",
+    "actor/ppo_kl",
+    "actor/pg_clipfrac",
+    "actor/entropy",
+    "actor/lr",
+    "response_length/clip_ratio",
+)
+STABILITY_QUERY_METRICS = STABILITY_SERIES_METRICS + (
+    "actor/pg_loss",
+    "response_length/mean",
+    "response/aborted_ratio",
+    "actor/kl_loss",
+    "actor/grad_norm",
+)
+
 
 def parse_step_records(log_path: str | Path) -> dict[int, dict[str, float]]:
     records: dict[int, dict[str, float]] = {}
@@ -69,6 +88,50 @@ def _summary(values: Iterable[float]) -> dict[str, float | None]:
         "mean": mean(rows) if rows else None,
         "p95": _percentile(rows, 0.95),
         "max": max(rows) if rows else None,
+    }
+
+
+def build_metric_windows(
+    records: Mapping[int, Mapping[str, float]],
+    metrics: Iterable[str],
+    window_size: int,
+    *,
+    start_step: int | None = None,
+    end_step: int | None = None,
+) -> dict[str, Any]:
+    """Return aligned, step-sorted metric windows without derived judgments.
+
+    A window contains consecutive observed updates rather than an assumed
+    numeric step range.  This keeps the output correct when a log has missing
+    steps, while its start/end fields make the covered range explicit.
+    """
+    if window_size < 1:
+        raise ValueError("window_size must be positive")
+    metric_names = tuple(dict.fromkeys(str(metric) for metric in metrics))
+    selected = [
+        (step, row)
+        for step, row in sorted(records.items())
+        if (start_step is None or step >= start_step) and (end_step is None or step <= end_step)
+    ]
+    windows: list[dict[str, int]] = []
+    values_by_metric: dict[str, list[float | None]] = {metric: [] for metric in metric_names}
+    for offset in range(0, len(selected), window_size):
+        group = selected[offset : offset + window_size]
+        windows.append(
+            {
+                "start_step": group[0][0],
+                "end_step": group[-1][0],
+                "sample_count": len(group),
+            }
+        )
+        for metric in metric_names:
+            values = [row[metric] for _, row in group if metric in row]
+            values_by_metric[metric].append(mean(values) if values else None)
+    return {
+        "step_range": [selected[0][0], selected[-1][0]] if selected else [None, None],
+        "window_size": window_size,
+        "windows": windows,
+        "metrics": values_by_metric,
     }
 
 
@@ -165,12 +228,14 @@ def analyze_trial(
     warmup_updates: int = 5,
     reward_window: int = 5,
     reward_thresholds: Iterable[float] = (0.0, 0.1, 0.2, 0.3),
+    stability_window_size: int = 5,
 ) -> dict[str, Any]:
     records = parse_step_records(log_path)
     phase_log_memory = parse_phase_memory_from_log(log_path)
     sampled_memory, sampled_util, sampled_memory_by_gpu = parse_gpu_samples(gpu_samples_path)
     error_type, error_evidence = detect_error(log_path)
-    stable_rows = [row for step, row in records.items() if step > warmup_updates]
+    stable_records = {step: row for step, row in records.items() if step > warmup_updates}
+    stable_rows = list(stable_records.values())
     if not stable_rows:
         stable_rows = list(records.values())
 
@@ -191,7 +256,12 @@ def analyze_trial(
         phase: values["mean"] for phase, values in phase_duration.items() if values["mean"] is not None
     }
     reward_values = [row["critic/rewards/mean"] for row in records.values() if "critic/rewards/mean" in row]
-    stability_keys = ["actor/ppo_kl", "actor/entropy", "actor/pg_loss", "actor/pg_clipfrac"]
+    stability_series = build_metric_windows(
+        stable_records,
+        STABILITY_SERIES_METRICS,
+        stability_window_size,
+    )
+    stability_series["warmup_updates"] = warmup_updates
 
     return {
         "updates_completed": max(records, default=0),
@@ -219,13 +289,7 @@ def analyze_trial(
             "memory_bottleneck": max(known_phase_peaks, key=known_phase_peaks.get) if known_phase_peaks else None,
             "max_observed_memory_pct": max(known_phase_peaks.values()) if known_phase_peaks else None,
         },
-        "stability": {
-            "reward": _summary(reward_values),
-            "reward_slope": _recent_slope(records, "critic/rewards/mean", reward_window),
-            **{key.replace("/", "_"): metric_summary(key) for key in stability_keys},
-            "response_length": metric_summary("response_length/mean"),
-            "response_clip_ratio": metric_summary("response_length/clip_ratio"),
-        },
+        "stability": stability_series,
         "end_to_end_reward": {
             "thresholds": compute_threshold_stats(records, reward_thresholds, reward_window),
             "peak_reward": max(reward_values) if reward_values else None,

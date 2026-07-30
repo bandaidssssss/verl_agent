@@ -152,6 +152,44 @@
         "required": ["trial_id"],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "read_trial_metrics",
+      "handler": "read_trial_metrics",
+      "roles": ["proposal", "diagnosis"],
+      "description": "Read ordered, bounded per-step training metrics from a recorded trial log. Returns aligned metric windows; use it to inspect reward, KL, entropy, clip fraction, learning rate, and generation-health trends without reading arbitrary log text.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "trial_id": {"type": "integer"},
+          "metrics": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 11,
+            "items": {
+              "type": "string",
+              "enum": [
+                "critic/rewards/mean",
+                "actor/ppo_kl",
+                "actor/pg_clipfrac",
+                "actor/entropy",
+                "actor/lr",
+                "response_length/clip_ratio",
+                "actor/pg_loss",
+                "response_length/mean",
+                "response/aborted_ratio",
+                "actor/kl_loss",
+                "actor/grad_norm"
+              ]
+            }
+          },
+          "start_step": {"type": "integer", "minimum": 1},
+          "end_step": {"type": "integer", "minimum": 1},
+          "window_size": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5}
+        },
+        "required": ["trial_id", "metrics"],
+        "additionalProperties": false
+      }
     }
   ]
 }
