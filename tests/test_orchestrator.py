@@ -8,7 +8,13 @@ from unittest import mock
 
 from agents import AgentConversation, AgentResponseError, AgentRun
 from config_utils import load_json
-from orchestrator import TuningOrchestrator, _normalize_proposal_changes, best_stability_trial, determine_stage
+from orchestrator import (
+    TuningOrchestrator,
+    _feasibility_selection_violations,
+    _normalize_proposal_changes,
+    best_stability_trial,
+    determine_stage,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,7 +51,6 @@ class OrchestratorStageTest(unittest.TestCase):
             "min_hardware_trials": 2,
             "max_hardware_trials": 6,
             "plateau_rounds": 2,
-            "min_throughput_improvement": 0.02,
             "min_stability_trials": 2,
             "max_stability_trials": 4,
             "reward_collapse_slope": -0.01,
@@ -63,21 +68,48 @@ class OrchestratorStageTest(unittest.TestCase):
             hardware_trial(2, 110),
             hardware_trial(3, 111),
             hardware_trial(4, 109),
+            hardware_trial(5, 108),
         ]
         self.assertEqual(determine_stage(trials, self.config), "stability_tuning")
+
+    def test_latest_hardware_best_resets_plateau_patience(self) -> None:
+        trials = [
+            hardware_trial(1, 100),
+            hardware_trial(2, 110),
+            hardware_trial(3, 109),
+            hardware_trial(4, 108),
+            hardware_trial(5, 111),
+        ]
+        self.assertEqual(determine_stage(trials, self.config), "hardware_tuning")
 
     def test_two_healthy_stability_trials_move_to_confirm(self) -> None:
         trials = [hardware_trial(index, 100 + index) for index in range(1, 7)]
         trials.extend([stability_trial(7, 0.1), stability_trial(8, 0.2)])
         self.assertEqual(determine_stage(trials, self.config), "confirm")
 
-    def test_best_stability_uses_last_complete_window_reward(self) -> None:
+    def test_best_stability_uses_terminal_reward_mean(self) -> None:
         earlier = stability_trial(7, 0.2)
-        later = stability_trial(8, 0.1)
+        earlier["stability"]["terminal_metrics"] = {
+            "critic/rewards/mean": 0.25
+        }
+        later = stability_trial(8, 0.4)
         later["stability"]["windows"].append({"start_step": 11, "end_step": 15, "sample_count": 5})
-        later["stability"]["metrics"]["critic/rewards/mean"].append(0.3)
+        later["stability"]["metrics"]["critic/rewards/mean"].append(0.5)
         later["stability"]["metrics"]["actor/ppo_kl"].append(0.02)
-        self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 8)
+        later["stability"]["terminal_metrics"] = {
+            "critic/rewards/mean": 0.1
+        }
+        self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 7)
+
+    def test_best_stability_legacy_fallback_uses_last_reported_window(self) -> None:
+        earlier = stability_trial(7, 0.2)
+        later = stability_trial(8, 0.4)
+        later["stability"]["windows"].append(
+            {"start_step": 11, "end_step": 12, "sample_count": 2}
+        )
+        later["stability"]["metrics"]["critic/rewards/mean"].append(0.1)
+        later["stability"]["metrics"]["actor/ppo_kl"].append(0.02)
+        self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 7)
 
 
 class ProposalProvenanceTest(unittest.TestCase):
@@ -125,7 +157,7 @@ class ProposalProvenanceTest(unittest.TestCase):
             {"source": "trial", "trial_id": 7},
         )
         self.assertTrue(any("reference_trial_id" in row for row in violations))
-        self.assertTrue(any("from must equal current value" in row for row in violations))
+        self.assertTrue(any("from must equal reference value" in row for row in violations))
 
     def test_null_from_adds_an_unset_override(self) -> None:
         proposal = {
@@ -153,6 +185,40 @@ class ProposalProvenanceTest(unittest.TestCase):
         )
         self.assertIsNone(
             details["actor_rollout_ref.rollout.max_num_batched_tokens"]["from"]
+        )
+
+
+class FeasibilitySelectionTest(unittest.TestCase):
+    def test_selection_must_cover_and_choose_a_valid_canonical_candidate(self) -> None:
+        candidate_ids = {"actor_batch", "rollout_memory"}
+        valid_review = {
+            "verdict": "valid",
+            "selected_candidate_id": "rollout_memory",
+            "candidate_reviews": [
+                {"candidate_id": "actor_batch", "verdict": "invalid"},
+                {"candidate_id": "rollout_memory", "verdict": "valid"},
+            ],
+        }
+        self.assertEqual(
+            _feasibility_selection_violations(valid_review, candidate_ids),
+            [],
+        )
+
+        invalid_review = {
+            "verdict": "valid",
+            "selected_candidate_id": "invented_candidate",
+            "candidate_reviews": [
+                {"candidate_id": "rollout_memory", "verdict": "valid"},
+            ],
+        }
+        violations = _feasibility_selection_violations(
+            invalid_review, candidate_ids
+        )
+        self.assertTrue(
+            any("selected_candidate_id" in row for row in violations)
+        )
+        self.assertTrue(
+            any("cover exactly" in row for row in violations)
         )
 
 
@@ -244,14 +310,20 @@ class ProposalSeriesContextTest(unittest.TestCase):
 
 
 class RejectionConversationTest(unittest.TestCase):
-    def test_validator_rejection_is_added_to_same_proposal_conversation(self) -> None:
+    def test_feasibility_selects_valid_candidate_with_its_own_reference(self) -> None:
         base = load_json(ROOT / "config" / "base_parameters.json")
+        alternate = {
+            **base,
+            "actor_rollout_ref.rollout.gpu_memory_utilization": 0.6,
+        }
         config = load_json(ROOT / "config" / "agent_config.json")
         with tempfile.TemporaryDirectory() as temp_dir:
             config.update(
                 {
                     "output_dir": temp_dir,
                     "max_validation_rounds": 3,
+                    "min_proposal_candidates": 2,
+                    "max_proposal_candidates": 2,
                     "stream_agent_events": False,
                 }
             )
@@ -267,32 +339,96 @@ class RejectionConversationTest(unittest.TestCase):
                         conversation = AgentConversation("proposal", dict(context), [{"role": "user", "content": "start"}])
                     else:
                         assert any(
-                            "Proposal Attempt 1 Was Rejected" in row["content"]
+                            "Proposal Batch Attempt 1 Was Rejected" in row["content"]
                             for row in conversation.messages
                         )
-                    value = 3 if self.calls == 1 else (
-                        base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"] * 2
-                    )
+                    if self.calls == 1:
+                        candidates = [
+                            {
+                                "candidate_id": "bad_divisibility",
+                                "reference_trial_id": 1,
+                                "reference_reason": "trial 1 is the baseline",
+                                "reason": "invalid micro batch",
+                                "changes": {
+                                    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": {
+                                        "from": base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"],
+                                        "to": 3,
+                                        "reason": "first attempt",
+                                    }
+                                },
+                                "expected_effect": {"throughput": "increase"},
+                            },
+                            {
+                                "candidate_id": "missing_reference",
+                                "reference_trial_id": 99,
+                                "reference_reason": "nonexistent trial",
+                                "reason": "invalid reference",
+                                "changes": {
+                                    "actor_rollout_ref.rollout.gpu_memory_utilization": {
+                                        "from": 0.6,
+                                        "to": 0.65,
+                                        "reason": "first attempt",
+                                    }
+                                },
+                                "expected_effect": {"rollout_throughput": "increase"},
+                            },
+                        ]
+                    else:
+                        candidates = [
+                            {
+                                "candidate_id": "actor_batch",
+                                "reference_trial_id": 1,
+                                "reference_reason": "trial 1 measured actor behavior",
+                                "reason": "increase actor micro batching",
+                                "changes": {
+                                    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": {
+                                        "from": base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"],
+                                        "to": base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"] * 2,
+                                        "reason": "test actor throughput",
+                                    }
+                                },
+                                "expected_effect": {"throughput": "increase"},
+                            },
+                            {
+                                "candidate_id": "rollout_memory",
+                                "reference_trial_id": 2,
+                                "reference_reason": "trial 2 measured the alternate rollout baseline",
+                                "reason": "increase rollout memory budget",
+                                "changes": {
+                                    "actor_rollout_ref.rollout.gpu_memory_utilization": {
+                                        "from": 0.6,
+                                        "to": 0.65,
+                                        "reason": "test rollout concurrency",
+                                    }
+                                },
+                                "expected_effect": {"rollout_throughput": "increase"},
+                            },
+                        ]
                     result = {
                         "decision": "modify",
-                        "reference_trial_id": 1,
-                        "reference_reason": "trial 1 is the current parameter source",
                         "reason": f"attempt {self.calls}",
-                        "changes": {
-                            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": {
-                                "from": base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"],
-                                "to": value,
-                                "reason": f"test attempt {self.calls}",
-                            }
-                        },
-                        "expected_effect": {"throughput": "increase"},
+                        "candidates": candidates,
                     }
                     conversation.messages.append({"role": "assistant", "content": json.dumps(result)})
                     conversation.completed_turns += 1
                     return AgentRun(result, conversation)
 
                 def review(self, context):
-                    result = {"verdict": "valid", "reason": "feasible", "risks": []}
+                    assert [row["candidate_id"] for row in context["candidates"]] == [
+                        "actor_batch",
+                        "rollout_memory",
+                    ]
+                    assert context["candidates"][1]["reference_trial_id"] == 2
+                    result = {
+                        "verdict": "valid",
+                        "selected_candidate_id": "rollout_memory",
+                        "reason": "candidate 2 has the better evidence/risk trade-off",
+                        "candidate_reviews": [
+                            {"candidate_id": "actor_batch", "verdict": "valid"},
+                            {"candidate_id": "rollout_memory", "verdict": "valid"},
+                        ],
+                        "risks": [],
+                    }
                     conversation = AgentConversation("feasibility", dict(context), [])
                     return AgentRun(result, conversation)
 
@@ -308,22 +444,35 @@ class RejectionConversationTest(unittest.TestCase):
                     "result": "success",
                     "parameters": base,
                     "performance": {"throughput": {"mean": 1.0}},
-                }
+                },
+                {
+                    "trial_id": 2,
+                    "stage": "hardware_tuning",
+                    "result": "success",
+                    "parameters": alternate,
+                    "performance": {"throughput": {"mean": 0.9}},
+                },
             ]
             candidate, proposal, review, trace = orchestrator._propose_candidate(
                 "hardware_tuning", base, trials
             )
             self.assertEqual(
+                candidate["actor_rollout_ref.rollout.gpu_memory_utilization"],
+                0.65,
+            )
+            self.assertEqual(
                 candidate["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"],
-                base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"] * 2,
+                alternate["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"],
             )
             self.assertEqual(fake.calls, 2)
-            self.assertEqual(proposal["reason"], "attempt 2")
+            self.assertEqual(proposal["candidate_id"], "rollout_memory")
+            self.assertEqual(proposal["reference_trial_id"], 2)
             self.assertEqual(review["verdict"], "valid")
+            self.assertEqual(review["selected_candidate_id"], "rollout_memory")
             self.assertEqual(trace["rejections"][0]["source"], "deterministic_validator")
             self.assertTrue(
                 any(
-                    "Proposal Attempt 1 Was Rejected" in row["content"]
+                    "Proposal Batch Attempt 1 Was Rejected" in row["content"]
                     for row in trace["proposal_conversation"]["messages"]
                 )
             )

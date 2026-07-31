@@ -90,8 +90,10 @@ def render_prompt(
         "MODE": f"`{context.get('mode', 'unknown')}`",
         "CURRENT_PARAMETERS": json_block(context.get("current_parameters")),
         "REFERENCE_TRIAL": json_block(context.get("reference_trial")),
+        "REFERENCE_OPTIONS": json_block(context.get("reference_options")),
         "REFERENCE_STABILITY_SERIES": json_block(context.get("reference_stability_series")),
         "CANDIDATE_PARAMETERS": json_block(context.get("candidate_parameters")),
+        "CANDIDATES": json_block(context.get("candidates")),
         "CHANGES": json_block(context.get("changes")),
         "TARGET_CHANGES": json_block(context.get("target_changes")),
         "EDITABLE_PARAMETERS": json_block(context.get("editable_parameters")),
@@ -119,16 +121,17 @@ def rejection_feedback(
     result: Mapping[str, Any],
 ) -> str:
     return (
-        f"## Proposal Attempt {attempt} Was Rejected\n\n"
+        f"## Proposal Batch Attempt {attempt} Was Rejected\n\n"
         f"- Rejection source: `{source}`\n\n"
-        f"- Proposed changes:\n{json_block(proposal)}\n\n"
-        f"- The modified parameters are:\n{json_block(candidate)}\n\n"
+        f"- Proposal batch:\n{json_block(proposal)}\n\n"
+        f"- Canonical candidate parameters constructed before rejection:\n{json_block(candidate)}\n\n"
         f"- Validation result:\n{json_block(result)}\n\n"
-        "Treat this rejection and its reason as evidence for the next proposal. If a field is not "
+        "Treat every per-candidate rejection and its reason as evidence for the next proposal batch. "
+        "If a field is not "
         "in the editable whitelist for the current stage, abandon that field and choose an allowed "
-        "parameter. If a field is editable but absent from the reference trial's explicit "
+        "parameter. If a field is editable but absent from that candidate's reference trial "
         "configuration, use `from: null` to add an override. You may continue using tools to verify "
         "parameter semantics, memory, or verl documentation, but after tool use you must return a "
-        "complete Proposal rather than tool arguments. The final response must still be exactly the "
+        "complete Proposal batch rather than tool arguments. The final response must still be exactly the "
         "required JSON object."
     )

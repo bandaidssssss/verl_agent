@@ -410,16 +410,44 @@ class AgentSet:
             return self._rules_run(
                 "proposal",
                 rule_context,
-                {"decision": "keep", "reason": "rules mode keeps the current configuration", "changes": {}},
+                {
+                    "decision": "keep",
+                    "reason": "rules mode keeps the current configuration",
+                    "candidates": [],
+                    "changes": {},
+                },
             )
         return self.proposal.run(context, conversation)
 
     def review(self, context: Mapping[str, Any]) -> AgentRun:
         if self.mode == "rules":
+            candidates = context.get("candidates")
+            selected_id = None
+            candidate_reviews = []
+            if isinstance(candidates, list) and candidates:
+                first = candidates[0]
+                if isinstance(first, Mapping):
+                    selected_id = first.get("candidate_id")
+                candidate_reviews = [
+                    {
+                        "candidate_id": row.get("candidate_id"),
+                        "verdict": "valid",
+                        "reason": "deterministic validation passed",
+                        "risks": [],
+                    }
+                    for row in candidates
+                    if isinstance(row, Mapping)
+                ]
             return self._rules_run(
                 "feasibility",
                 context,
-                {"verdict": "valid", "reason": "deterministic validation passed", "risks": []},
+                {
+                    "verdict": "valid",
+                    "selected_candidate_id": selected_id,
+                    "reason": "deterministic validation passed",
+                    "candidate_reviews": candidate_reviews,
+                    "risks": [],
+                },
             )
         return self.feasibility.run(context)
 

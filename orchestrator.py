@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -51,7 +52,7 @@ def best_hardware_trial(trials: list[dict[str, Any]]) -> dict[str, Any] | None:
 def best_stability_trial(trials: list[dict[str, Any]]) -> dict[str, Any] | None:
     candidates = []
     for trial in _successful(_stability_trials(trials)):
-        reward = _last_complete_stability_value(trial, "critic/rewards/mean")
+        reward = _terminal_stability_value(trial, "critic/rewards/mean")
         if reward is not None:
             candidates.append((reward, trial))
     return max(candidates, default=(None, None), key=lambda item: item[0])[1]
@@ -60,16 +61,20 @@ def best_stability_trial(trials: list[dict[str, Any]]) -> dict[str, Any] | None:
 def hardware_plateaued(trials: list[dict[str, Any]], config: Mapping[str, Any]) -> bool:
     successful = _successful(_hardware_trials(trials))
     minimum = int(config.get("min_hardware_trials", 2))
-    plateau_rounds = int(config.get("plateau_rounds", 2))
+    plateau_rounds = max(1, int(config.get("plateau_rounds", 2)))
     if len(successful) < minimum + plateau_rounds:
         return False
     scores = [_metric_mean(trial, "performance", "throughput") for trial in successful]
     scores = [score for score in scores if score is not None]
     if len(scores) < minimum + plateau_rounds:
         return False
-    threshold = float(config.get("min_throughput_improvement", 0.02))
-    best_before = max(scores[:-plateau_rounds])
-    return all(score <= best_before * (1.0 + threshold) for score in scores[-plateau_rounds:])
+
+    # Plateau patience starts after the most recent strict throughput record.
+    # ``max`` returns the first index on a tie, so equal/noisy repeats do not
+    # reset patience, while a new raw best always does.
+    best_index = max(range(len(scores)), key=scores.__getitem__)
+    rounds_since_best = len(scores) - best_index - 1
+    return rounds_since_best >= plateau_rounds
 
 
 def stability_healthy(trial: Mapping[str, Any], config: Mapping[str, Any]) -> bool:
@@ -177,7 +182,28 @@ def _complete_stability_points(trial: Mapping[str, Any], metric: str) -> list[tu
     return [(0, legacy_value)] if legacy_value is not None else []
 
 
-def _last_complete_stability_value(trial: Mapping[str, Any], metric: str) -> float | None:
+def _terminal_stability_value(
+    trial: Mapping[str, Any], metric: str
+) -> float | None:
+    """Read the trailing metric mean used to compare completed stability trials."""
+    stability = trial.get("stability")
+    if not isinstance(stability, Mapping):
+        return None
+    terminal_metrics = stability.get("terminal_metrics")
+    if isinstance(terminal_metrics, Mapping):
+        value = terminal_metrics.get(metric)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+
+    # Migration fallback for histories written before terminal_metrics existed:
+    # use the final reported window mean, including a shorter terminal window.
+    metrics = stability.get("metrics")
+    values = metrics.get(metric) if isinstance(metrics, Mapping) else None
+    if isinstance(values, list):
+        for value in reversed(values):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+
     points = _complete_stability_points(trial, metric)
     return points[-1][1] if points else None
 
@@ -230,7 +256,6 @@ def _stream_orchestrator_event(
 ) -> None:
     if not bool(config.get("stream_agent_events", True)):
         return
-    import json
 
     print(
         f"\n[Orchestrator] {event}\n"
@@ -241,7 +266,7 @@ def _stream_orchestrator_event(
 
 def _normalize_proposal_changes(
     proposal: Mapping[str, Any],
-    current: Mapping[str, Any],
+    reference_parameters: Mapping[str, Any],
     reference: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[str]]:
     """Validate the Agent's provenance and derive executable target values."""
@@ -279,14 +304,15 @@ def _normalize_proposal_changes(
         if missing:
             violations.append(f"{parameter} change is missing: {', '.join(missing)}")
             continue
-        is_explicitly_configured = parameter in current
-        actual_from = current.get(parameter)
+        is_explicitly_configured = parameter in reference_parameters
+        actual_from = reference_parameters.get(parameter)
         declared_from = raw_detail.get("from")
         target = raw_detail.get("to")
         reason = raw_detail.get("reason")
         if is_explicitly_configured and declared_from != actual_from:
             violations.append(
-                f"{parameter} from must equal current value {actual_from!r}, got {declared_from!r}"
+                f"{parameter} from must equal reference value "
+                f"{actual_from!r}, got {declared_from!r}"
             )
         if not is_explicitly_configured and declared_from is not None:
             violations.append(
@@ -305,6 +331,106 @@ def _normalize_proposal_changes(
             "reason": reason.strip() if isinstance(reason, str) else reason,
         }
     return targets, details, violations
+
+
+def _resolve_candidate_reference(
+    reference_trial_id: Any,
+    reference_reason: Any,
+    trials: list[dict[str, Any]],
+    base_parameters: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
+    """Resolve one Proposal candidate's independently selected parameter source."""
+    if reference_trial_id is None:
+        return (
+            dict(base_parameters),
+            _reference_descriptor(
+                None,
+                reference_reason
+                if isinstance(reference_reason, str) and reference_reason.strip()
+                else "initial base parameters selected by Proposal",
+            ),
+            [],
+        )
+    if not isinstance(reference_trial_id, int) or isinstance(reference_trial_id, bool):
+        return None, None, ["reference_trial_id must be an integer trial ID or null"]
+    trial = next(
+        (row for row in trials if row.get("trial_id") == reference_trial_id),
+        None,
+    )
+    if trial is None:
+        return None, None, [f"reference trial {reference_trial_id} does not exist"]
+    parameters = trial.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return None, None, [f"reference trial {reference_trial_id} has no parameter map"]
+    return (
+        dict(parameters),
+        _reference_descriptor(
+            trial,
+            reference_reason
+            if isinstance(reference_reason, str) and reference_reason.strip()
+            else "recorded trial selected by Proposal",
+        ),
+        [],
+    )
+
+
+def _feasibility_selection_violations(
+    review: Mapping[str, Any],
+    candidate_ids: set[str],
+) -> list[str]:
+    """Validate that Feasibility selected, but did not rewrite, a reviewed candidate."""
+    violations: list[str] = []
+    verdict = review.get("verdict")
+    selected_id = review.get("selected_candidate_id")
+    if verdict not in {"valid", "invalid"}:
+        violations.append("verdict must be valid or invalid")
+    if verdict == "valid" and selected_id not in candidate_ids:
+        violations.append(
+            "selected_candidate_id must identify a deterministically valid "
+            f"candidate; got {selected_id!r}"
+        )
+    if verdict == "invalid" and selected_id is not None:
+        violations.append(
+            "selected_candidate_id must be null when verdict is invalid"
+        )
+
+    raw_candidate_reviews = review.get("candidate_reviews")
+    if not isinstance(raw_candidate_reviews, list):
+        violations.append("candidate_reviews must be an array covering every candidate")
+        return violations
+    reviewed_ids: list[str] = []
+    review_verdicts: dict[str, Any] = {}
+    for row in raw_candidate_reviews:
+        if not isinstance(row, Mapping):
+            violations.append("every candidate_reviews entry must be an object")
+            continue
+        candidate_id = row.get("candidate_id")
+        if not isinstance(candidate_id, str):
+            violations.append(
+                "every candidate_reviews entry must contain a string candidate_id"
+            )
+            continue
+        reviewed_ids.append(candidate_id)
+        candidate_verdict = row.get("verdict")
+        if candidate_verdict not in {"valid", "invalid"}:
+            violations.append(
+                f"candidate review {candidate_id!r} must use verdict valid or invalid"
+            )
+        review_verdicts[candidate_id] = candidate_verdict
+    reviewed_set = set(reviewed_ids)
+    if len(reviewed_ids) != len(reviewed_set):
+        violations.append("candidate_reviews contains duplicate candidate IDs")
+    if reviewed_set != candidate_ids:
+        violations.append(
+            "candidate_reviews must cover exactly the deterministically valid "
+            f"candidate IDs; expected={sorted(candidate_ids)}, got={sorted(reviewed_set)}"
+        )
+    if verdict == "valid" and selected_id in candidate_ids:
+        if review_verdicts.get(str(selected_id)) != "valid":
+            violations.append(
+                "the selected candidate's individual review must have verdict valid"
+            )
+    return violations
 
 
 class TuningOrchestrator:
@@ -352,7 +478,7 @@ class TuningOrchestrator:
             if not best:
                 raise RuntimeError("stability tuning requires a successful hardware trial")
             reason = (
-                "best successful stability trial by reward"
+                "best successful stability trial by terminal reward mean"
                 if stability is not None
                 else "best successful hardware trial used as stability baseline"
             )
@@ -363,7 +489,8 @@ class TuningOrchestrator:
             if not best:
                 raise RuntimeError("confirmation requires a successful candidate")
             reason = (
-                "best successful stability trial selected for confirmation"
+                "best successful stability trial by terminal reward mean "
+                "selected for confirmation"
                 if stability is not None
                 else "best successful hardware trial selected for confirmation"
             )
@@ -423,11 +550,22 @@ class TuningOrchestrator:
         rejections: list[dict[str, Any]] = []
         max_rounds = int(self.config.get("max_validation_rounds", 3))
         history_limit = int(self.config.get("history_prompt_trials", 8))
+        min_candidates = max(
+            2, int(self.config.get("min_proposal_candidates", 2))
+        )
+        max_candidates = max(
+            min_candidates, int(self.config.get("max_proposal_candidates", 3))
+        )
         context = {
             "current_stage": stage,
             "mode": "failure_repair" if diagnosis else stage,
             "current_parameters": dict(current),
             "reference_trial": copy.deepcopy(dict(reference)),
+            "reference_options": [
+                _reference_descriptor(trial, "recorded candidate reference option")
+                for trial in trials[-history_limit:]
+                if isinstance(trial.get("parameters"), Mapping)
+            ],
             "reference_stability_series": _trial_stability_series(
                 next(
                     (
@@ -440,6 +578,8 @@ class TuningOrchestrator:
             ),
             "editable_parameters": editable_parameters(stage),
             "constraints": {
+                "min_proposal_candidates": min_candidates,
+                "max_proposal_candidates": max_candidates,
                 "max_parameter_changes": self.config.get("max_parameter_changes", 3),
                 "preserve_hardware_token_budget": self.config.get("preserve_hardware_token_budget", True),
                 "resource_memory_limit_pct": self.config.get("resource_memory_limit_pct", 95.0),
@@ -453,6 +593,7 @@ class TuningOrchestrator:
             "diagnosis": diagnosis_trace,
             "proposal_conversation": None,
             "feasibility_reviews": [],
+            "candidate_validations": [],
             "rejections": rejections,
         }
         for attempt in range(1, max_rounds + 1):
@@ -465,48 +606,250 @@ class TuningOrchestrator:
             trace["proposal_conversation"] = proposal_run.as_trace()
             decision = proposal.get("decision")
             if decision in {"keep", "stop"}:
+                if proposal.get("candidates") not in (None, []):
+                    validation = {
+                        "valid": False,
+                        "violations": [
+                            f"{decision} decisions must return an empty candidates array"
+                        ],
+                    }
+                    rejections.append(
+                        {
+                            "attempt": attempt,
+                            "source": "deterministic_validator",
+                            "proposal": proposal,
+                            **validation,
+                        }
+                    )
+                    proposal_conversation.add_user_message(
+                        rejection_feedback(
+                            attempt,
+                            proposal,
+                            {},
+                            "deterministic_validator",
+                            validation,
+                        )
+                    )
+                    trace["proposal_conversation"] = proposal_conversation.as_trace()
+                    continue
                 proposal.setdefault("reference_trial_id", reference.get("trial_id"))
                 proposal["reference_trial"] = copy.deepcopy(dict(reference))
+                proposal.setdefault("candidates", [])
+                proposal.setdefault("changes", {})
+                proposal.setdefault("expected_effect", {})
                 return (
                     dict(current),
                     proposal,
                     {"verdict": "valid", "reason": "no parameter change"},
                     trace,
                 )
-            target_changes, change_details, proposal_violations = _normalize_proposal_changes(
-                proposal, current, reference
-            )
-            if proposal_violations:
-                candidate = dict(current)
-                validation = {"valid": False, "violations": proposal_violations}
-                rejections.append({"attempt": attempt, "source": "deterministic_validator", "proposal": proposal, **validation})
+
+            raw_candidates = proposal.get("candidates")
+            batch_violations: list[str] = []
+            if decision != "modify":
+                batch_violations.append(
+                    "decision must be modify, keep, or stop; candidates require decision=modify"
+                )
+            batch_reason = proposal.get("reason")
+            if not isinstance(batch_reason, str) or not batch_reason.strip():
+                batch_violations.append(
+                    "reason must be a non-empty batch-level explanation"
+                )
+            if not isinstance(raw_candidates, list):
+                batch_violations.append("candidates must be an array")
+                candidate_rows: list[Any] = []
+            else:
+                candidate_rows = raw_candidates
+                if not min_candidates <= len(candidate_rows) <= max_candidates:
+                    batch_violations.append(
+                        f"modify decisions require {min_candidates} to {max_candidates} candidates, "
+                        f"got {len(candidate_rows)}"
+                    )
+            if batch_violations:
+                validation = {"valid": False, "violations": batch_violations}
+                rejections.append(
+                    {
+                        "attempt": attempt,
+                        "source": "deterministic_validator",
+                        "proposal": proposal,
+                        **validation,
+                    }
+                )
                 _stream_orchestrator_event(
                     self.config,
                     "proposal_rejected",
                     {"attempt": attempt, "source": "proposal_schema", **validation},
                 )
                 proposal_conversation.add_user_message(
-                    rejection_feedback(attempt, proposal, candidate, "deterministic_validator", validation)
+                    rejection_feedback(
+                        attempt,
+                        proposal,
+                        {},
+                        "deterministic_validator",
+                        validation,
+                    )
                 )
                 trace["proposal_conversation"] = proposal_conversation.as_trace()
                 continue
-            proposal["changes"] = change_details
-            proposal["target_changes"] = dict(target_changes)
-            proposal["reference_trial"] = copy.deepcopy(dict(reference))
-            candidate = apply_changes(current, target_changes)
-            validation = validate_candidate(
-                candidate, target_changes, stage, self.config, self.base_parameters, trials
+
+            validated: dict[str, dict[str, Any]] = {}
+            candidate_results: list[dict[str, Any]] = []
+            canonical_configurations: set[str] = set()
+            seen_ids: set[str] = set()
+            candidate_parameters_for_feedback: dict[str, Any] = {}
+            for index, raw_candidate in enumerate(candidate_rows, start=1):
+                violations: list[str] = []
+                if not isinstance(raw_candidate, Mapping):
+                    candidate_results.append(
+                        {
+                            "candidate_id": None,
+                            "index": index,
+                            "valid": False,
+                            "violations": ["candidate must be an object"],
+                        }
+                    )
+                    continue
+                candidate_id = raw_candidate.get("candidate_id")
+                if not isinstance(candidate_id, str) or not candidate_id.strip():
+                    violations.append("candidate_id must be a non-empty string")
+                    normalized_id = f"candidate_at_index_{index}"
+                else:
+                    normalized_id = candidate_id.strip()
+                    if len(normalized_id) > 64:
+                        violations.append(
+                            "candidate_id must not exceed 64 characters"
+                        )
+                    if normalized_id in seen_ids:
+                        violations.append(
+                            f"candidate_id {normalized_id!r} is duplicated in this proposal batch"
+                        )
+                    seen_ids.add(normalized_id)
+                candidate_reason = raw_candidate.get("reason")
+                if (
+                    not isinstance(candidate_reason, str)
+                    or not candidate_reason.strip()
+                ):
+                    violations.append(
+                        "candidate reason must be a non-empty causal explanation"
+                    )
+
+                reference_parameters, candidate_reference, reference_violations = (
+                    _resolve_candidate_reference(
+                        raw_candidate.get("reference_trial_id"),
+                        raw_candidate.get("reference_reason"),
+                        trials,
+                        self.base_parameters,
+                    )
+                )
+                violations.extend(reference_violations)
+                normalized_proposal = copy.deepcopy(dict(raw_candidate))
+                normalized_proposal["decision"] = "modify"
+                normalized_proposal["candidate_id"] = normalized_id
+
+                target_changes: dict[str, Any] = {}
+                change_details: dict[str, dict[str, Any]] = {}
+                if reference_parameters is not None and candidate_reference is not None:
+                    target_changes, change_details, provenance_violations = (
+                        _normalize_proposal_changes(
+                            normalized_proposal,
+                            reference_parameters,
+                            candidate_reference,
+                        )
+                    )
+                    violations.extend(provenance_violations)
+
+                executable_parameters: dict[str, Any] | None = None
+                if not violations and reference_parameters is not None:
+                    executable_parameters = apply_changes(
+                        reference_parameters, target_changes
+                    )
+                    deterministic = validate_candidate(
+                        executable_parameters,
+                        target_changes,
+                        stage,
+                        self.config,
+                        self.base_parameters,
+                        trials,
+                    )
+                    if not deterministic.valid:
+                        violations.extend(deterministic.violations)
+                    else:
+                        canonical = json.dumps(
+                            executable_parameters,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            default=str,
+                        )
+                        if canonical in canonical_configurations:
+                            violations.append(
+                                "candidate resolves to the same complete configuration "
+                                "as another candidate in this batch"
+                            )
+                        else:
+                            canonical_configurations.add(canonical)
+
+                if executable_parameters is not None:
+                    candidate_parameters_for_feedback[normalized_id] = copy.deepcopy(
+                        executable_parameters
+                    )
+                result: dict[str, Any] = {
+                    "candidate_id": normalized_id,
+                    "index": index,
+                    "valid": not violations,
+                    "violations": violations,
+                }
+                if any("not editable in stage" in row for row in violations):
+                    result["editable_parameters"] = editable_parameters(stage)
+                candidate_results.append(result)
+                if violations:
+                    continue
+
+                normalized_proposal["changes"] = change_details
+                normalized_proposal["target_changes"] = dict(target_changes)
+                normalized_proposal["reference_trial"] = copy.deepcopy(
+                    dict(candidate_reference)
+                )
+                packet = {
+                    "candidate_id": normalized_id,
+                    "reference_trial_id": normalized_proposal.get(
+                        "reference_trial_id"
+                    ),
+                    "reference_reason": normalized_proposal.get("reference_reason"),
+                    "reference_trial": copy.deepcopy(dict(candidate_reference)),
+                    "reason": normalized_proposal.get("reason"),
+                    "changes": copy.deepcopy(change_details),
+                    "target_changes": dict(target_changes),
+                    "candidate_parameters": copy.deepcopy(executable_parameters),
+                    "expected_effect": copy.deepcopy(
+                        normalized_proposal.get("expected_effect")
+                    ),
+                    "confidence": normalized_proposal.get("confidence"),
+                }
+                validated[normalized_id] = {
+                    "proposal": normalized_proposal,
+                    "parameters": executable_parameters,
+                    "packet": packet,
+                }
+
+            trace["candidate_validations"].append(
+                {"attempt": attempt, "candidates": copy.deepcopy(candidate_results)}
             )
-            if not validation.valid:
-                validation_result = validation.as_dict()
-                if any("not editable in stage" in row for row in validation_result["violations"]):
-                    validation_result["editable_parameters"] = editable_parameters(stage)
+            if len(validated) < min_candidates:
+                validation = {
+                    "valid": False,
+                    "violations": [
+                        f"only {len(validated)} proposal candidates passed deterministic "
+                        f"validation; at least {min_candidates} are required before "
+                        "Feasibility can select among them"
+                    ],
+                    "candidate_validations": candidate_results,
+                }
                 rejections.append(
                     {
                         "attempt": attempt,
                         "source": "deterministic_validator",
                         "proposal": proposal,
-                        **validation_result,
+                        **validation,
                     }
                 )
                 _stream_orchestrator_event(
@@ -515,31 +858,33 @@ class TuningOrchestrator:
                     {
                         "attempt": attempt,
                         "source": "deterministic_validator",
-                        **validation_result,
+                        **validation,
                     },
                 )
                 proposal_conversation.add_user_message(
                     rejection_feedback(
                         attempt,
                         proposal,
-                        candidate,
+                        candidate_parameters_for_feedback,
                         "deterministic_validator",
-                        validation_result,
+                        validation,
                     )
                 )
                 trace["proposal_conversation"] = proposal_conversation.as_trace()
                 continue
+
             review_run = self.agents.review(
                 {
                     "current_stage": stage,
                     "current_parameters": dict(current),
-                    "candidate_parameters": candidate,
-                    "changes": copy.deepcopy(change_details),
-                    "target_changes": dict(target_changes),
-                    "reference_trial": copy.deepcopy(dict(reference)),
-                    "proposal_reason": proposal.get("reason"),
+                    "candidates": [
+                        copy.deepcopy(row["packet"]) for row in validated.values()
+                    ],
                     "last_trial": _compact_trial(trials[-1]) if trials else None,
-                    "recent_trials": [_compact_trial(trial) for trial in trials[-history_limit:]],
+                    "recent_trials": [
+                        _compact_trial(trial)
+                        for trial in trials[-history_limit:]
+                    ],
                     "diagnosis": diagnosis,
                     "memory_limits": {
                         "resource": self.config.get("resource_memory_limit_pct", 95.0),
@@ -547,11 +892,32 @@ class TuningOrchestrator:
                     },
                 }
             )
-            review = review_run.result
-            trace["feasibility_reviews"].append({"attempt": attempt, **review_run.as_trace()})
+            raw_review = review_run.result
+            review = copy.deepcopy(raw_review)
+            verdict = review.get("verdict")
+            selection_violations = _feasibility_selection_violations(
+                review, set(validated)
+            )
+            if selection_violations:
+                review = {
+                    **review,
+                    "verdict": "invalid",
+                    "reason": "Feasibility returned an invalid candidate selection",
+                    "selection_violations": selection_violations,
+                    "raw_verdict": verdict,
+                }
+            trace["feasibility_reviews"].append(
+                {"attempt": attempt, **review_run.as_trace()}
+            )
             if review.get("verdict") == "valid":
                 trace["proposal_conversation"] = proposal_run.as_trace()
-                return candidate, proposal, review, trace
+                selected = validated[str(review["selected_candidate_id"])]
+                return (
+                    copy.deepcopy(selected["parameters"]),
+                    copy.deepcopy(selected["proposal"]),
+                    review,
+                    trace,
+                )
             rejection = {
                 "attempt": attempt,
                 "source": "feasibility_agent",
@@ -569,7 +935,13 @@ class TuningOrchestrator:
                 },
             )
             proposal_conversation.add_user_message(
-                rejection_feedback(attempt, proposal, candidate, "feasibility_agent", review)
+                rejection_feedback(
+                    attempt,
+                    proposal,
+                    candidate_parameters_for_feedback,
+                    "feasibility_agent",
+                    review,
+                )
             )
             trace["proposal_conversation"] = proposal_conversation.as_trace()
         write_json(self.output_dir / "last_agent_rejection.json", trace)
@@ -682,7 +1054,9 @@ class TuningOrchestrator:
                         selected = best_stability_trial(trials)
                         parameters = dict(selected["parameters"])
                         reference = _reference_descriptor(
-                            selected, "best successful stability trial selected for confirmation"
+                            selected,
+                            "best successful stability trial by terminal reward mean "
+                            "selected for confirmation",
                         )
                     else:
                         write_json(

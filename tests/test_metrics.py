@@ -50,6 +50,43 @@ step:2 - critic/rewards/mean:0.2 - actor/ppo_kl:0.02 - actor/entropy:0.2 - actor
         )
         self.assertAlmostEqual(stability["metrics"]["critic/rewards/mean"][0], 0.3)
         self.assertAlmostEqual(stability["metrics"]["critic/rewards/mean"][1], 0.8)
+        self.assertEqual(
+            stability["terminal_window"],
+            {"start_step": 6, "end_step": 10, "sample_count": 5},
+        )
+        self.assertAlmostEqual(
+            stability["terminal_metrics"]["critic/rewards/mean"], 0.8
+        )
+
+    def test_terminal_metrics_use_the_actual_final_five_updates(self) -> None:
+        text = "\n".join(
+            f"step:{step} - critic/rewards/mean:{step / 10}"
+            for step in range(1, 8)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "train.log"
+            path.write_text(text, encoding="utf-8")
+            report = analyze_trial(
+                path,
+                None,
+                warmup_updates=0,
+                stability_window_size=5,
+            )
+        stability = report["stability"]
+        self.assertEqual(
+            stability["windows"],
+            [
+                {"start_step": 1, "end_step": 5, "sample_count": 5},
+                {"start_step": 6, "end_step": 7, "sample_count": 2},
+            ],
+        )
+        self.assertEqual(
+            stability["terminal_window"],
+            {"start_step": 3, "end_step": 7, "sample_count": 5},
+        )
+        self.assertAlmostEqual(
+            stability["terminal_metrics"]["critic/rewards/mean"], 0.5
+        )
 
     def test_threshold_stats(self) -> None:
         records = {

@@ -52,7 +52,7 @@
 
 ### 核心能力一句话总结
 
-> 状态机决定当前阶段 → Proposal Agent 在同一对话中调用工具并提出候选 → Validator 检查硬约束 → Feasibility Agent 独立审查 → 拒绝证据回灌 → 通过后启动短跑训练 → 真实指标写回历史。
+> 状态机决定当前阶段 → Proposal Agent 在同一对话中调用工具并提出多组候选 → Validator 按各自 reference trial 检查硬约束 → Feasibility Agent 从合法候选中选择一组 → 拒绝证据回灌 → 通过后启动短跑训练 → 真实指标写回历史。
 
 ### 两个嵌套循环
 
@@ -60,7 +60,7 @@
 
 1. **内层 — LLM 主动工具调用循环**（`agents.py` `LLMRoleAgent.run()`）: Agent 在一次推理中可以多次调用工具（查询参数、估算显存、搜索文档），每次工具结果追加到对话中，直到 Agent 认为证据足够后输出最终 JSON。
 
-2. **外层 — Proposal 与 Validator/Feasibility 对抗循环**（`orchestrator.py` `_propose_candidate()`）: Proposal 被拒绝后，拒绝原因注入同一个对话，Agent 看到自己的失败过程后重新提议，最多 3 轮。
+2. **外层 — Proposal 与 Validator/Feasibility 对抗循环**（`orchestrator.py` `_propose_candidate()`）: Proposal 每轮给出 2–3 组可使用不同 reference trial 的候选。Validator 逐组构造并过滤，Feasibility 只在合法候选 ID 中选择；整批未通过时，逐项原因注入同一个对话后重新提议。
 
 ### 技术栈
 
@@ -235,9 +235,10 @@ def determine_stage(trials, config) -> str:
 
 ```python
 def hardware_plateaued(trials, config) -> bool:
-    # 最后 plateau_rounds 个成功 trial 的吞吐改善均不超过 2%
-    best_before = max(scores[:-plateau_rounds])
-    return all(score <= best_before * 1.02 for score in scores[-plateau_rounds:])
+
+    best_index = max(range(len(scores)), key=scores.__getitem__)
+    rounds_since_best = len(scores) - best_index - 1
+    return rounds_since_best >= plateau_rounds
 ```
 
 **稳定性健康检查** (`stability_healthy`, lines 75-84):
@@ -248,6 +249,11 @@ def stability_healthy(trial, config) -> bool:
     # 所有完整 window 的 PPO KL 不超过 0.1
     return (slope >= -0.01) and (kl_max <= 0.1)
 ```
+
+`best_stability_trial()` 不按全程 reward 均值或单个末尾 step 排序。新报告在
+`stability.terminal_metrics` 中保存最后 `stability_window_size` 个实际 update
+的 trailing mean，并以 `critic/rewards/mean` 的 terminal mean 选择最佳实验；
+旧报告没有该字段时回退到最后一个已记录窗口均值。
 
 #### 3.3.3 Agent 协作闭环: `_propose_candidate()`
 
@@ -270,21 +276,30 @@ def _propose_candidate(self, stage, current, trials):
         if proposal["decision"] in {"keep", "stop"}:
             return current, proposal, {"verdict": "valid"}, trace
 
-        # 3. 应用修改 → 确定性校验
-        candidate = apply_changes(current, proposal["changes"])
-        validation = validate_candidate(candidate, proposal["changes"], ...)
-        if not validation.valid:
+        # 3. 每组候选解析自己的 reference trial，并独立构造、校验
+        valid_candidates = {}
+        for item in proposal["candidates"]:
+            reference = resolve_reference(item["reference_trial_id"])
+            candidate = apply_changes(reference["parameters"], item["changes"])
+            validation = validate_candidate(candidate, item["changes"], ...)
+            if validation.valid:
+                valid_candidates[item["candidate_id"]] = canonical_packet(
+                    item, reference, candidate
+                )
+
+        if len(valid_candidates) < min_proposal_candidates:
             # 拒绝原因注入对话，continue 让 Agent 看到失败
             proposal_conversation.add_user_message(
-                rejection_feedback(attempt, proposal, candidate,
+                rejection_feedback(attempt, proposal, valid_candidates,
                                    "deterministic_validator", validation_result)
             )
             continue
 
-        # 4. Feasibility Agent LLM 审查
-        review_run = self.agents.review({candidate 的上下文})
-        if review["verdict"] == "valid":
-            return candidate, proposal, review, trace
+        # 4. Feasibility Agent 比较合法候选，只返回 selected_candidate_id
+        review_run = self.agents.review({"candidates": valid_candidates, ...})
+        if review["verdict"] == "valid" and selected_id in valid_candidates:
+            selected = valid_candidates[review["selected_candidate_id"]]
+            return selected.parameters, selected.proposal, review, trace
 
         # 拒绝原因注入对话
         proposal_conversation.add_user_message(
@@ -292,9 +307,9 @@ def _propose_candidate(self, stage, current, trials):
                                "feasibility_agent", review)
         )
 
-    # 全部失败 → 保存完整轨迹 → 抛出异常
+    # 全部失败 → 保存完整轨迹并返回 blocked
     write_json("output/last_agent_rejection.json", trace)
-    raise AgentError(f"no feasible proposal after {max_rounds} rounds")
+    return current, blocked_proposal, blocked_review, trace
 ```
 
 **对话连续性是关键设计**（lines 240-243, 298-300）: 拒绝消息是结构化的 Markdown，包含:
@@ -553,10 +568,24 @@ return (
 ```json
 {
   "decision": "modify|keep|stop",
-  "reason": "基于观测证据的简短因果说明",
-  "changes": {"完整 Hydra 参数名": "新值"},
-  "expected_effect": {"指标": "increase|decrease|stable"},
-  "confidence": 0.0
+  "reason": "批次级说明",
+  "candidates": [
+    {
+      "candidate_id": "candidate_a",
+      "reference_trial_id": 3,
+      "reference_reason": "为什么继承该实验",
+      "reason": "该候选的因果假设",
+      "changes": {
+        "完整 Hydra 参数名": {
+          "from": "reference 中的值",
+          "to": "目标值",
+          "reason": "参数级原因"
+        }
+      },
+      "expected_effect": {"指标": "increase|decrease|stable"},
+      "confidence": 0.0
+    }
+  ]
 }
 ```
 
@@ -578,18 +607,26 @@ return (
 ```json
 {
   "verdict": "valid|invalid",
-  "reason": "基于独立证据的简短说明",
-  "risks": ["仍需由短跑测试验证的风险"],
-  "predicted_memory_pct": {"rollout": null, "actor_log_prob": null, "ref_log_prob": null, "training": null}
+  "selected_candidate_id": "candidate_b",
+  "reason": "选择该候选或全部拒绝的原因",
+  "candidate_reviews": [
+    {
+      "candidate_id": "candidate_a",
+      "verdict": "valid|invalid",
+      "reason": "独立审查结论",
+      "risks": ["仍需由短跑测试验证的风险"]
+    }
+  ]
 }
 ```
 
 **核心约束**:
-- 必须独立查询参数影响，不直接相信 Proposal 的理由
-- Hardware 候选必须调用 `memory_estimator`
+- 必须逐组独立查询参数影响，不直接相信 Proposal 的理由
+- 每组 Hardware 候选必须使用自己的 reference 调用 `memory_estimator`
 - 检查 actor、rollout、ref 共置时的跨阶段影响
 - 拒绝局部改善但可能降低端到端吞吐的修改
 - Stability 阶段修改硬件参数 → invalid
+- 只能选择输入中已经确定性校验通过的 `candidate_id`，不能修改或合并候选
 
 #### 4.3.3 `prompts/diagnosis.md`
 
@@ -1330,7 +1367,6 @@ def hydra_value(value):
 | 阶段控制 | `min_hardware_trials` | 2 | 最少硬件 trial 数 |
 | | `max_hardware_trials` | 6 | 最多硬件 trial 数 |
 | | `plateau_rounds` | 2 | 平台期判断窗口 |
-| | `min_throughput_improvement` | 0.02 | 最小改善阈值 (2%) |
 | Agent | `max_validation_rounds` | 3 | Proposal 最多重试 |
 | | `max_tool_rounds` | 6 | 工具调用最多轮次 |
 | | `max_parameter_changes` | 3 | 单次最多修改参数 |

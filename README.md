@@ -1,6 +1,6 @@
 # verl Stage Tuning Agent
 
-这个目录实现了一个参考 OptiCo 的 verl 0.7 GRPO 自动调优闭环：Proposal Agent 生成参数，确定性 Validator 检查硬约束，Feasibility Agent 审查多阶段显存 trade-off，Diagnosis Agent 在失败后归因。Proposal 支持参数查询、调优策略、分阶段显存估算、实时 GPU、verl 本地文档和历史 trial 等主动工具调用；被 Validator/Feasibility 拒绝后，会在同一个对话中看到失败建议和拒绝原因并继续推理。
+这个目录实现了一个参考 OptiCo 的 verl 0.7 GRPO 自动调优闭环：Proposal Agent 每轮生成 2–3 组候选，确定性 Validator 按候选各自的 reference trial 检查硬约束，Feasibility Agent 从合法候选中选择一组，Diagnosis Agent 在失败后归因。Proposal 支持参数查询、调优策略、分阶段显存估算、实时 GPU、verl 本地文档和历史 trial 等主动工具调用；候选批次被 Validator/Feasibility 拒绝后，会在同一个对话中看到逐项拒绝原因并继续推理。
 
 完整架构、源码阅读顺序和调试方法见 [`docs/Agent架构与源码学习指南.md`](docs/Agent架构与源码学习指南.md)。
 
@@ -73,7 +73,7 @@ PLATFORM=C550 MAX_TRIALS=10 bash run_circle.sh
 
 默认一次只运行一个 trial，便于检查实际 GPU 环境。确认配置和监控正确后再提高 `--max-trials`。
 
-Proposal 会显式记录候选继承自哪个 trial，并逐项输出参数的 `from → to`、修改原因和预期指标变化。orchestrator 会核对 reference trial 与旧值，再提取 `target_changes` 交给 Validator、显存估算和 Feasibility；参考实验或旧值不一致的建议会被确定性拒绝。
+Proposal 返回由 `min_proposal_candidates` / `max_proposal_candidates` 限制的候选数组；每组候选独立记录 `candidate_id`、`reference_trial_id`，并逐项输出参数的 `from → to`、修改原因和预期指标变化。orchestrator 会按各自 reference trial 构造完整参数并逐组校验，至少两组通过后才交给 Feasibility。Feasibility 只能返回已验证的 `selected_candidate_id`，选中后转换回原有单 proposal/candidate 接口，训练及后续状态机不变。
 
 参考 trial 未显式配置、但位于当前阶段 editable 白名单中的字段，可使用 `from: null` 表示新增 Hydra override；白名单外字段仍会被拒绝，并把原因和 editable 字段列表反馈给 Proposal。默认 `stream_agent_events=true`，终端会实时显示每次 Agent 工具调用、最终回答和审查拒绝。所有 Proposal 轮次都失败时写入 `state.json: proposal_blocked` 和 `last_agent_rejection.json` 后安全退出，不再抛出 traceback。
 

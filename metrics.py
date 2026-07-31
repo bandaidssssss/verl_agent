@@ -135,6 +135,34 @@ def build_metric_windows(
     }
 
 
+def build_terminal_metric_window(
+    records: Mapping[int, Mapping[str, float]],
+    metrics: Iterable[str],
+    window_size: int,
+) -> dict[str, Any]:
+    """Return the mean over the final observed updates, aligned from the end."""
+    if window_size < 1:
+        raise ValueError("window_size must be positive")
+    metric_names = tuple(dict.fromkeys(str(metric) for metric in metrics))
+    selected = sorted(records.items())[-window_size:]
+    terminal_metrics: dict[str, float | None] = {}
+    for metric in metric_names:
+        values = [row[metric] for _, row in selected if metric in row]
+        terminal_metrics[metric] = mean(values) if values else None
+    return {
+        "terminal_window": (
+            {
+                "start_step": selected[0][0],
+                "end_step": selected[-1][0],
+                "sample_count": len(selected),
+            }
+            if selected
+            else None
+        ),
+        "terminal_metrics": terminal_metrics,
+    }
+
+
 def parse_phase_memory_from_log(log_path: str | Path) -> dict[str, list[float]]:
     values: dict[str, list[float]] = defaultdict(list)
     with Path(log_path).open("r", encoding="utf-8", errors="replace") as handle:
@@ -260,6 +288,13 @@ def analyze_trial(
         stable_records,
         STABILITY_SERIES_METRICS,
         stability_window_size,
+    )
+    stability_series.update(
+        build_terminal_metric_window(
+            stable_records,
+            STABILITY_SERIES_METRICS,
+            stability_window_size,
+        )
     )
     stability_series["warmup_updates"] = warmup_updates
 

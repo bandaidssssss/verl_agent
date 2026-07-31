@@ -86,7 +86,7 @@ class LLMRoleAgentTest(unittest.TestCase):
                     '{"items":["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"]}',
                 ),
                 response_with_json(
-                    '{"decision":"modify","reference_trial_id":1,"reason":"tested","changes":{"actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu":{"from":1,"to":2,"reason":"increase throughput"}},"expected_effect":{"throughput":"increase"}}'
+                    '{"decision":"modify","reason":"two hypotheses","candidates":[{"candidate_id":"micro_batch","reference_trial_id":1,"reference_reason":"measured baseline","reason":"tested","changes":{"actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu":{"from":1,"to":2,"reason":"increase throughput"}},"expected_effect":{"throughput":"increase"}},{"candidate_id":"rollout_limit","reference_trial_id":1,"reference_reason":"measured baseline","reason":"test rollout scheduling","changes":{"actor_rollout_ref.rollout.max_num_seqs":{"from":128,"to":256,"reason":"increase scheduler concurrency"}},"expected_effect":{"rollout_throughput":"increase"}}]}'
                 ),
             ]
         )
@@ -110,8 +110,8 @@ class LLMRoleAgentTest(unittest.TestCase):
     def test_rejection_continues_the_same_conversation(self) -> None:
         fake = FakeClient(
             [
-                response_with_json('{"decision":"modify","reference_trial_id":1,"reason":"first","changes":{"x":{"from":0,"to":1,"reason":"first attempt"}}}'),
-                response_with_json('{"decision":"modify","reference_trial_id":1,"reason":"second","changes":{"x":{"from":0,"to":2,"reason":"second attempt"}}}'),
+                response_with_json('{"decision":"modify","reason":"first","candidates":[{"candidate_id":"a","reference_trial_id":1,"reference_reason":"baseline","reason":"first a","changes":{"x":{"from":0,"to":1,"reason":"first attempt"}}},{"candidate_id":"b","reference_trial_id":1,"reference_reason":"baseline","reason":"first b","changes":{"y":{"from":0,"to":1,"reason":"first attempt"}}}]}'),
+                response_with_json('{"decision":"modify","reason":"second","candidates":[{"candidate_id":"a","reference_trial_id":1,"reference_reason":"baseline","reason":"second a","changes":{"x":{"from":0,"to":2,"reason":"second attempt"}}},{"candidate_id":"b","reference_trial_id":1,"reference_reason":"baseline","reason":"second b","changes":{"y":{"from":0,"to":2,"reason":"second attempt"}}}]}'),
             ]
         )
         agent = LLMRoleAgent(
@@ -122,13 +122,13 @@ class LLMRoleAgentTest(unittest.TestCase):
             client_factory=lambda: fake,
         )
         first = agent.run(self.context)
-        first.conversation.add_user_message("## Proposal Attempt 1 Was Rejected\nValidator says x=1 is invalid")
+        first.conversation.add_user_message("## Proposal Batch Attempt 1 Was Rejected\nValidator says x=1 is invalid")
         second = agent.run(conversation=first.conversation)
-        self.assertEqual(second.result["changes"]["x"]["to"], 2)
+        self.assertEqual(second.result["candidates"][0]["changes"]["x"]["to"], 2)
         self.assertEqual(second.conversation.completed_turns, 2)
         request_messages = fake.responses.requests[1]["messages"]
         self.assertTrue(
-            any("Proposal Attempt 1 Was Rejected" in message["content"] for message in request_messages)
+            any("Proposal Batch Attempt 1 Was Rejected" in message["content"] for message in request_messages)
         )
         self.assertTrue(any('"reason":"first"' in message["content"] for message in request_messages))
 
