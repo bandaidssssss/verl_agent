@@ -43,7 +43,6 @@ Every entry contains its own reference trial, normalized changes, target-value m
 10. A candidate is valid only when it tests a coherent hypothesis, has sufficient evidence for its direction, respects stage boundaries, and has an acceptable risk profile.
 11. If one or more candidates are valid, return top-level `verdict: "valid"` and select exactly one of their IDs. Choose the candidate with the best end-to-end evidence/risk trade-off, not merely the highest Proposal confidence.
 12. If none are valid, return top-level `verdict: "invalid"` and `selected_candidate_id: null`. Never return parameter values outside the per-candidate reviews.
-13. For every candidate that changes vLLM `gpu_memory_utilization`, `max_num_seqs`, or `max_num_batched_tokens`, call `analyze_rollout_metrics` on its reference trial. Reject an asserted scheduler bottleneck when the corresponding binding metric is missing or contradicts the proposal; keep an explicitly isolated exploratory trial only when its uncertainty and resource-gate dependence are disclosed.
 
 After all tool calls, output exactly one JSON object and no Markdown or additional explanation:
 

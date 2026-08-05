@@ -1,5 +1,5 @@
 {
-  "skill_version": "2.0",
+  "skill_version": "2.1",
   "description": "Allowlisted tools for the verl tuning agents",
   "skills": [
     {
@@ -94,6 +94,23 @@
           }
         },
         "required": ["changes", "parameters", "reference_trial_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "analyze_rollout_metrics",
+      "handler": "analyze_rollout_metrics",
+      "roles": ["proposal", "feasibility"],
+      "description": "Analyze one recorded trial's compact vLLM metrics and determine whether gpu_memory_utilization, max_num_seqs, or max_num_batched_tokens has direct binding evidence. Use before proposing or approving changes to those rollout capacity knobs. The result distinguishes GPU compute utilization from the vLLM memory budget, treats missing exporter metrics as unknown, and returns one-change-per-trial guardrails.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "trial_id": {
+            "type": "integer",
+            "description": "Recorded reference trial whose rollout metrics and exact parameters should be analyzed"
+          }
+        },
+        "required": ["trial_id"],
         "additionalProperties": false
       }
     },

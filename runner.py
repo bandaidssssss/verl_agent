@@ -15,6 +15,13 @@ from typing import Any, Callable, Mapping
 from config_utils import append_jsonl, hydra_overrides, write_json
 from health_monitor import OnlineHealthMonitor, parse_online_step
 from metrics import analyze_trial
+from vllm_metrics import (
+    DISABLE_LOG_STATS_PARAMETER,
+    ROLLOUT_ENGINE_PARAMETER,
+    VLLMMetricsSampler,
+    summarize_vllm_metrics,
+    vllm_metrics_enabled,
+)
 
 
 STEP_RE = re.compile(r"step:(\d+)")
@@ -313,6 +320,7 @@ def run_trial(
     trial_dir.mkdir(parents=True, exist_ok=True)
     log_path = trial_dir / "train.log"
     samples_path = trial_dir / "gpu_samples.csv"
+    vllm_metrics_path = trial_dir / "vllm_metrics.csv"
     health_events_path = trial_dir / "health_events.jsonl"
     health_traces_path = trial_dir / "health_agent_traces.jsonl"
     platform = os.getenv("PLATFORM", str(agent_config.get("platform", "V5000")))
@@ -344,6 +352,15 @@ def run_trial(
         float(agent_config.get("monitor_interval_seconds", 1.0)),
         platform,
     )
+    collect_vllm_metrics = vllm_metrics_enabled(parameters)
+    vllm_sampler = (
+        VLLMMetricsSampler(
+            vllm_metrics_path,
+            float(agent_config.get("vllm_metrics_interval_seconds", 5.0)),
+        )
+        if collect_vllm_metrics
+        else None
+    )
     health_monitor = None
     health_worker = None
     if stage == "stability_tuning" and bool(agent_config.get("health_monitor_enabled", True)):
@@ -370,6 +387,8 @@ def run_trial(
         start_new_session=True,
     )
     sampler.start()
+    if vllm_sampler is not None:
+        vllm_sampler.start()
     stop_reason = None
     health_events: list[dict[str, Any]] = []
     health_decisions: list[dict[str, Any]] = []
@@ -389,6 +408,8 @@ def run_trial(
                 log_handle.write(line)
                 log_handle.flush()
                 tracker.update_from_log(line)
+                if vllm_sampler is not None:
+                    vllm_sampler.observe_log_line(line)
 
                 agent_result = health_worker.poll() if health_worker is not None else None
                 if agent_result is not None:
@@ -531,6 +552,9 @@ def run_trial(
     finally:
         sampler.stop()
         sampler.join(timeout=5)
+        if vllm_sampler is not None:
+            vllm_sampler.stop()
+            vllm_sampler.join(timeout=5)
         _terminate(process)
 
     metrics = analyze_trial(
@@ -553,6 +577,28 @@ def run_trial(
             "failure_phase": tracker.get() if stop_reason or return_code != 0 else None,
             "log_path": str(log_path),
             "gpu_samples_path": str(samples_path) if samples_path.exists() else None,
+            "vllm_metrics_path": (
+                str(vllm_metrics_path) if collect_vllm_metrics and vllm_metrics_path.exists() else None
+            ),
+            "rollout_engine": {
+                "name": parameters.get(ROLLOUT_ENGINE_PARAMETER),
+                "disable_log_stats": parameters.get(DISABLE_LOG_STATS_PARAMETER),
+                "monitor": (
+                    vllm_sampler.snapshot()
+                    if vllm_sampler is not None
+                    else {
+                        "enabled": False,
+                        "reason": (
+                            "rollout engine is not vllm"
+                            if str(parameters.get(ROLLOUT_ENGINE_PARAMETER, "")).lower() != "vllm"
+                            else f"{DISABLE_LOG_STATS_PARAMETER} must be explicitly false"
+                        ),
+                    }
+                ),
+                "metrics": summarize_vllm_metrics(
+                    vllm_metrics_path if collect_vllm_metrics else None
+                ),
+            },
             "health_events_path": str(health_events_path) if health_events_path.exists() else None,
             "health_agent_traces_path": str(health_traces_path) if health_traces_path.exists() else None,
             "health_monitor": health_monitor.summary() if health_monitor is not None else {"enabled": False},

@@ -137,6 +137,7 @@ def _compact_trial(trial: Mapping[str, Any]) -> dict[str, Any]:
         "resource",
         "memory_by_phase_pct",
         "performance",
+        "rollout_engine",
         "stability",
         "health_monitor",
         "health_decisions",
@@ -146,6 +147,7 @@ def _compact_trial(trial: Mapping[str, Any]) -> dict[str, Any]:
         "proposal",
         "feasibility",
         "log_path",
+        "vllm_metrics_path",
     ]
     return {key: copy.deepcopy(trial[key]) for key in keys if key in trial}
 

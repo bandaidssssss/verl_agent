@@ -12,6 +12,7 @@ from typing import Any, Callable, Mapping
 
 from agent_tools.memory_estimator import estimate_phase_memory
 from metrics import STABILITY_QUERY_METRICS, build_metric_windows, parse_step_records
+from vllm_metrics import assess_rollout_metrics, summarize_vllm_metrics
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,7 @@ class ToolRegistry:
             "parameter_understanding": self._parameter_understanding,
             "tuning_strategies": self._tuning_strategies,
             "memory_estimator": self._memory_estimator,
+            "analyze_rollout_metrics": self._analyze_rollout_metrics,
             "live_gpu_snapshot": self._live_gpu_snapshot,
             "search_verl_docs": self._search_verl_docs,
             "query_trial_history": self._query_trial_history,
@@ -276,6 +278,76 @@ class ToolRegistry:
             for key, metadata in change_metadata.items()
         }
         return result
+
+    def _analyze_rollout_metrics(
+        self, arguments: Mapping[str, Any], runtime: ToolRuntime
+    ) -> dict[str, Any]:
+        trial_id = arguments.get("trial_id")
+        if not isinstance(trial_id, int) or isinstance(trial_id, bool):
+            raise ToolError("trial_id must be an integer")
+        trial = next(
+            (row for row in _read_jsonl(runtime.history_path) if row.get("trial_id") == trial_id),
+            None,
+        )
+        if trial is None:
+            return {"available": False, "trial_id": trial_id, "error": "trial not found"}
+
+        parameters = trial.get("parameters")
+        if not isinstance(parameters, Mapping):
+            return {
+                "available": False,
+                "trial_id": trial_id,
+                "error": "trial has no recorded parameters",
+            }
+        rollout_engine = trial.get("rollout_engine")
+        recorded_summary = (
+            rollout_engine.get("metrics") if isinstance(rollout_engine, Mapping) else None
+        )
+        summary = dict(recorded_summary) if isinstance(recorded_summary, Mapping) else {}
+        metrics_path_value = trial.get("vllm_metrics_path")
+        if metrics_path_value:
+            metrics_path = Path(str(metrics_path_value)).expanduser().resolve()
+            allowed_root = runtime.history_path.parent.resolve()
+            try:
+                metrics_path.relative_to(allowed_root)
+            except ValueError as exc:
+                raise ToolError(
+                    "recorded vLLM metrics path is outside the configured output directory"
+                ) from exc
+            if metrics_path.is_file():
+                summary = summarize_vllm_metrics(metrics_path)
+
+        rollout_memory = trial.get("memory_by_phase_pct", {}).get("rollout", {})
+        rollout_util = trial.get("gpu_utilization_by_phase_pct", {}).get("rollout", {})
+        memory_peak = (
+            float(rollout_memory["max"])
+            if isinstance(rollout_memory, Mapping)
+            and isinstance(rollout_memory.get("max"), (int, float))
+            else None
+        )
+        utilization_mean = (
+            float(rollout_util["mean"])
+            if isinstance(rollout_util, Mapping)
+            and isinstance(rollout_util.get("mean"), (int, float))
+            else None
+        )
+        assessment = assess_rollout_metrics(
+            summary,
+            parameters,
+            rollout_memory_peak_pct=memory_peak,
+            rollout_gpu_util_mean_pct=utilization_mean,
+            memory_limit_pct=float(
+                runtime.agent_config.get("throughput_memory_limit_pct", 92.0)
+            ),
+        )
+        monitor = rollout_engine.get("monitor") if isinstance(rollout_engine, Mapping) else None
+        return {
+            "available": bool(summary.get("available")),
+            "trial_id": trial_id,
+            "monitor": monitor,
+            "metrics": summary,
+            "assessment": assessment,
+        }
 
     def _live_gpu_snapshot(self, arguments: Mapping[str, Any], runtime: ToolRuntime) -> dict[str, Any]:
         if arguments:
@@ -471,6 +543,7 @@ class ToolRegistry:
                 "result": trial.get("result"),
                 "changes": trial.get("proposal", {}).get("changes"),
                 "performance": trial.get("performance"),
+                "rollout_engine": trial.get("rollout_engine"),
                 "resource": trial.get("resource"),
                 "memory_by_phase_pct": trial.get("memory_by_phase_pct"),
                 "stability": trial.get("stability"),

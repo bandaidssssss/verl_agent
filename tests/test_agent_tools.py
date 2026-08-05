@@ -333,6 +333,49 @@ class AgentToolsTest(unittest.TestCase):
         self.assertEqual(result["windows"][0], {"start_step": 1, "end_step": 5, "sample_count": 5})
         self.assertAlmostEqual(result["metrics"]["critic/rewards/mean"][1], 0.8)
 
+    def test_rollout_metrics_skill_uses_recorded_vllm_summary(self) -> None:
+        trial = {
+            "trial_id": 4,
+            "parameters": {
+                **self.base,
+                "actor_rollout_ref.rollout.disable_log_stats": False,
+                "actor_rollout_ref.rollout.max_num_seqs": 256,
+                "actor_rollout_ref.rollout.max_num_batched_tokens": 65536,
+            },
+            "memory_by_phase_pct": {"rollout": {"max": 70.0}},
+            "gpu_utilization_by_phase_pct": {"rollout": {"mean": 60.0}},
+            "rollout_engine": {
+                "monitor": {"enabled": True},
+                "metrics": {
+                    "available": True,
+                    "requests_running": {"mean": 220.0, "p95": 256.0, "max": 256.0},
+                    "requests_waiting": {"mean": 100.0, "p95": 500.0, "max": 581.0},
+                    "kv_cache_usage_pct": {"mean": 40.0, "p95": 50.0, "max": 55.0},
+                    "waiting_positive_fraction": 1.0,
+                    "preemptions_total": 0.0,
+                    "missing_metrics": ["iteration_tokens_p95_upper_bound"],
+                },
+            },
+        }
+        self.history_path.write_text(json.dumps(trial) + "\n", encoding="utf-8")
+        registry = self.registry()
+        result = registry.execute(
+            "proposal",
+            "analyze_rollout_metrics",
+            {"trial_id": 4},
+            registry.runtime({}),
+        )
+        self.assertTrue(result["available"])
+        knobs = result["assessment"]["knobs"]
+        self.assertEqual(
+            knobs["actor_rollout_ref.rollout.max_num_seqs"]["status"],
+            "binding_consider_increase_one_step",
+        )
+        self.assertEqual(
+            knobs["actor_rollout_ref.rollout.max_num_batched_tokens"]["status"],
+            "unknown_metric_not_exported",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
