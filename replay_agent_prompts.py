@@ -38,6 +38,7 @@ from orchestrator import (
     best_stability_trial,
     determine_stage,
 )
+from vllm_metrics import summarize_vllm_metrics
 
 
 ROOT = Path(__file__).resolve().parent
@@ -47,7 +48,7 @@ ROOT = Path(__file__).resolve().parent
 # =============================================================================
 
 # 一次完整实验的目录。脚本会读取其中的 trials.jsonl 和 trials/NNNN/。
-DEFAULT_RUN_DIR = ROOT / "output" / "0731_0959_2026"
+DEFAULT_RUN_DIR = ROOT / "output" / "0731_1702_2026"
 
 # 表示“第几次实验已经结束”。填 6 就是基于 trial 1..6 决定 trial 7。
 DEFAULT_AFTER_TRIAL = 3
@@ -79,6 +80,10 @@ DEFAULT_RENDER_ONLY = False
 
 # True：隐藏逐条工具调用与回答；最终比较结果仍会打印。
 DEFAULT_QUIET = False
+
+# False：默认只回放紧凑的 JSON 历史，不复制每个 trial 的 train.log。
+# 需要测试 read_trial_log_excerpt/read_trial_metrics 时，可传 --copy-logs。
+DEFAULT_COPY_LOGS = False
 
 
 def _absolute(path: str | Path) -> Path:
@@ -151,12 +156,20 @@ def _write_replay_history(
     source_run: Path,
     sandbox_dir: Path,
     history: Sequence[Mapping[str, Any]],
-) -> tuple[Path, list[int]]:
-    """Write a future-free history and local log copies for agent tools."""
+    *,
+    copy_logs: bool = False,
+) -> tuple[Path, list[int], list[int]]:
+    """Write isolated history without carrying large trial artifacts by default.
+
+    vLLM CSV samples are summarized into the replay history instead of copied.
+    This keeps ``analyze_rollout_metrics`` accurate while preventing it from
+    following an absolute path back into the historical run.
+    """
     sandbox_dir.mkdir(parents=True, exist_ok=True)
     history_path = sandbox_dir / "trials.jsonl"
     rewritten: list[dict[str, Any]] = []
     copied_logs: list[int] = []
+    summarized_vllm_metrics: list[int] = []
 
     for source_row in history:
         row = copy.deepcopy(dict(source_row))
@@ -164,17 +177,37 @@ def _write_replay_history(
         local_trial_dir = sandbox_dir / "trials" / f"{trial_id:04d}"
         source_log = source_run / "trials" / f"{trial_id:04d}" / "train.log"
         local_log = local_trial_dir / "train.log"
-        if source_log.is_file():
+        if copy_logs and source_log.is_file():
             local_trial_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_log, local_log)
             copied_logs.append(trial_id)
-        row["log_path"] = str(local_log.resolve())
+            row["log_path"] = str(local_log.resolve())
+        else:
+            row["log_path"] = None
+
+        source_vllm_metrics = (
+            source_run / "trials" / f"{trial_id:04d}" / "vllm_metrics.csv"
+        )
+        if source_vllm_metrics.is_file():
+            rollout_engine = row.get("rollout_engine")
+            rollout_engine = (
+                copy.deepcopy(dict(rollout_engine))
+                if isinstance(rollout_engine, Mapping)
+                else {}
+            )
+            rollout_engine["metrics"] = summarize_vllm_metrics(source_vllm_metrics)
+            row["rollout_engine"] = rollout_engine
+            summarized_vllm_metrics.append(trial_id)
+
+        # The replay tool consumes the embedded summary above.  Never retain
+        # an absolute source-run path or copy the raw CSV into the sandbox.
+        row["vllm_metrics_path"] = None
         rewritten.append(row)
 
     with history_path.open("w", encoding="utf-8") as handle:
         for row in rewritten:
             handle.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
-    return history_path, copied_logs
+    return history_path, copied_logs, summarized_vllm_metrics
 
 
 def _recorded_diagnosis(target_report: Mapping[str, Any]) -> Any:
@@ -569,6 +602,15 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_QUIET,
         help="Do not stream individual agent tool calls and answers",
     )
+    parser.add_argument(
+        "--copy-logs",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_COPY_LOGS,
+        help=(
+            "Copy historical train.log files into the replay sandbox so log-reading tools "
+            "remain available; disabled by default to avoid duplicate storage"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -623,7 +665,12 @@ def main() -> int:
             raise ValueError(f"output directory already exists: {result_dir}")
         result_dir.mkdir(parents=True, exist_ok=False)
         sandbox_dir = result_dir / "sandbox"
-        history_path, copied_logs = _write_replay_history(run_dir, sandbox_dir, history)
+        history_path, copied_logs, summarized_vllm_metrics = _write_replay_history(
+            run_dir,
+            sandbox_dir,
+            history,
+            copy_logs=args.copy_logs,
+        )
 
         configured_base = load_json(_absolute(args.base_config))
         first_parameters = history[0].get("parameters")
@@ -684,6 +731,7 @@ def main() -> int:
             "mode": args.mode,
             "history_trial_ids": [row["trial_id"] for row in history],
             "copied_log_trial_ids": copied_logs,
+            "summarized_vllm_metrics_trial_ids": summarized_vllm_metrics,
             "isolated_history_path": str(history_path),
             "proposal_prompt": {
                 "path": str(proposal_prompt),
