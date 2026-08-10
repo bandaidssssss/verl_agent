@@ -8,11 +8,11 @@ target trial's observed per-phase memory.
 
 Typical use after editing the defaults near the top of this file:
 
-    python tests/test_momory.py
+    python tests/test_memory.py
 
 Command-line values can override every frequently changed default:
 
-    python tests/test_momory.py \
+    python tests/test_memory.py \
       --run-dir output/0807_1110_2026 \
       --target-trial 2
 """
@@ -20,6 +20,7 @@ Command-line values can override every frequently changed default:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import sys
@@ -217,7 +218,7 @@ def _memory_limit_from_report(
     return 92.0, "fallback"
 
 
-def _phase_actual_peaks(report: Mapping[str, Any]) -> dict[str, float]:
+def _phase_actual_peaks_pct(report: Mapping[str, Any]) -> dict[str, float]:
     memory = report.get("memory_by_phase_pct")
     if not isinstance(memory, Mapping):
         return {}
@@ -228,6 +229,67 @@ def _phase_actual_peaks(report: Mapping[str, Any]) -> dict[str, float]:
             value = value.get("max")
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             result[phase] = float(value)
+    return result
+
+
+def _actual_phase_measurements(
+    run_dir: Path,
+    target_trial_id: int,
+    report: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Read target-trial peaks in both GiB and percent.
+
+    The estimator now predicts physical memory, so the replay comparison must
+    use the same raw per-GPU samples rather than reconstructing everything from
+    rounded percentages.  Percentage-only histories remain supported.
+    """
+
+    pct_peaks = _phase_actual_peaks_pct(report)
+    sample_candidates = [
+        run_dir / "trials" / f"{target_trial_id:04d}" / "gpu_samples.csv"
+    ]
+    recorded = report.get("gpu_samples_path")
+    if isinstance(recorded, str) and recorded:
+        recorded_path = Path(recorded).expanduser()
+        if recorded_path.is_file():
+            sample_candidates.insert(0, recorded_path)
+    samples_path = next((path for path in sample_candidates if path.is_file()), None)
+
+    used_by_phase: dict[str, list[float]] = {phase: [] for phase in PHASES}
+    totals: list[float] = []
+    if samples_path is not None:
+        with samples_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for row in csv.DictReader(handle):
+                phase = row.get("phase")
+                if phase not in used_by_phase:
+                    continue
+                try:
+                    used_mb = float(row["memory_used_mb"])
+                    total_mb = float(row["memory_total_mb"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if used_mb >= 0 and total_mb > 0:
+                    used_by_phase[phase].append(used_mb)
+                    totals.append(total_mb)
+
+    capacity_mb = sorted(totals)[len(totals) // 2] if totals else None
+    result: dict[str, dict[str, Any]] = {}
+    for phase in PHASES:
+        used_mb = max(used_by_phase[phase]) if used_by_phase[phase] else None
+        pct = pct_peaks.get(phase)
+        if used_mb is None and pct is not None and capacity_mb is not None:
+            used_mb = capacity_mb * pct / 100.0
+        if pct is None and used_mb is not None and capacity_mb is not None:
+            pct = 100.0 * used_mb / capacity_mb
+        result[phase] = {
+            "memory_mb": used_mb,
+            "memory_gib": used_mb / 1024.0 if used_mb is not None else None,
+            "memory_pct": pct,
+            "gpu_capacity_gib": (
+                capacity_mb / 1024.0 if capacity_mb is not None else None
+            ),
+            "source": str(samples_path) if samples_path is not None else "trial_pct",
+        }
     return result
 
 
@@ -339,58 +401,126 @@ def replay_memory_estimate(
             f"reference trial {reference_trial_id} has no phase memory observations"
         )
 
-    actual_peaks = _phase_actual_peaks(target)
+    actual_measurements = _actual_phase_measurements(
+        run_dir, target_trial_id, target
+    )
     comparison: dict[str, Any] = {}
-    absolute_errors: list[float] = []
-    signed_errors: list[float] = []
+    absolute_errors_pct: list[float] = []
+    signed_errors_pct: list[float] = []
+    absolute_errors_gib: list[float] = []
+    signed_errors_gib: list[float] = []
     false_safe_phases: list[str] = []
     upper_bound_misses: list[str] = []
     for phase in PHASES:
-        predicted = estimate["phases"][phase].get("projected_pct")
-        upper = estimate["phases"][phase].get("upper_bound_pct")
-        actual = actual_peaks.get(phase)
-        signed_error = (
-            float(predicted) - actual
-            if isinstance(predicted, (int, float)) and actual is not None
+        phase_estimate = estimate["phases"][phase]
+        predicted_pct = phase_estimate.get("projected_pct")
+        upper_pct = phase_estimate.get("upper_bound_pct")
+        predicted_gib = phase_estimate.get("projected_memory_gib")
+        upper_gib = phase_estimate.get("upper_bound_memory_gib")
+        actual_pct = actual_measurements[phase]["memory_pct"]
+        actual_gib = actual_measurements[phase]["memory_gib"]
+        if (
+            actual_gib is None
+            and actual_pct is not None
+            and isinstance(phase_estimate.get("gpu_capacity_gib"), (int, float))
+        ):
+            actual_gib = (
+                float(phase_estimate["gpu_capacity_gib"])
+                * float(actual_pct)
+                / 100.0
+            )
+            actual_measurements[phase]["source"] = (
+                "target_pct_times_reference_gpu_capacity"
+            )
+        signed_error_pct = (
+            float(predicted_pct) - actual_pct
+            if isinstance(predicted_pct, (int, float)) and actual_pct is not None
             else None
         )
-        absolute_error = abs(signed_error) if signed_error is not None else None
+        absolute_error_pct = (
+            abs(signed_error_pct) if signed_error_pct is not None else None
+        )
+        signed_error_gib = (
+            float(predicted_gib) - actual_gib
+            if isinstance(predicted_gib, (int, float)) and actual_gib is not None
+            else None
+        )
+        absolute_error_gib = (
+            abs(signed_error_gib) if signed_error_gib is not None else None
+        )
         within_upper = (
-            actual <= float(upper)
-            if isinstance(upper, (int, float)) and actual is not None
-            else None
+            actual_gib <= float(upper_gib)
+            if isinstance(upper_gib, (int, float)) and actual_gib is not None
+            else (
+                actual_pct <= float(upper_pct)
+                if isinstance(upper_pct, (int, float)) and actual_pct is not None
+                else None
+            )
         )
-        if absolute_error is not None:
-            absolute_errors.append(absolute_error)
-            signed_errors.append(signed_error)
+        if absolute_error_pct is not None:
+            absolute_errors_pct.append(absolute_error_pct)
+            signed_errors_pct.append(signed_error_pct)
+        if absolute_error_gib is not None:
+            absolute_errors_gib.append(absolute_error_gib)
+            signed_errors_gib.append(signed_error_gib)
         if within_upper is False:
             upper_bound_misses.append(phase)
         if (
-            actual is not None
-            and actual >= limit
-            and isinstance(upper, (int, float))
-            and float(upper) < limit
+            actual_pct is not None
+            and actual_pct >= limit
+            and isinstance(upper_pct, (int, float))
+            and float(upper_pct) < limit
         ):
             false_safe_phases.append(phase)
+        drivers = phase_estimate.get("drivers", {})
+        affected_components = (
+            drivers.get("affected_components")
+            if isinstance(drivers, Mapping)
+            else None
+        )
         comparison[phase] = {
-            "reference_pct": estimate["phases"][phase].get("reference_pct"),
-            "delta_pct": estimate["phases"][phase].get("delta_pct"),
-            "predicted_pct": predicted,
-            "upper_bound_pct": upper,
-            "actual_pct": round(actual, 2) if actual is not None else None,
+            "reference_gib": phase_estimate.get("reference_memory_gib"),
+            "delta_gib": phase_estimate.get("delta_memory_gib"),
+            "predicted_gib": predicted_gib,
+            "upper_bound_gib": upper_gib,
+            "actual_gib": round(actual_gib, 2) if actual_gib is not None else None,
+            "signed_error_gib": (
+                round(signed_error_gib, 2)
+                if signed_error_gib is not None
+                else None
+            ),
+            "absolute_error_gib": (
+                round(absolute_error_gib, 2)
+                if absolute_error_gib is not None
+                else None
+            ),
+            "gpu_capacity_gib": phase_estimate.get("gpu_capacity_gib"),
+            "reference_pct": phase_estimate.get("reference_pct"),
+            "delta_pct": phase_estimate.get("delta_pct"),
+            "predicted_pct": predicted_pct,
+            "upper_bound_pct": upper_pct,
+            "actual_pct": round(actual_pct, 2) if actual_pct is not None else None,
             "signed_error_pct": (
-                round(signed_error, 2) if signed_error is not None else None
+                round(signed_error_pct, 2)
+                if signed_error_pct is not None
+                else None
             ),
             "absolute_error_pct": (
-                round(absolute_error, 2) if absolute_error is not None else None
+                round(absolute_error_pct, 2)
+                if absolute_error_pct is not None
+                else None
             ),
             "actual_within_upper_bound": within_upper,
-            "predicted_risk": estimate["phases"][phase].get("risk"),
-            "confidence": estimate["phases"][phase].get("confidence"),
-            "model": estimate["phases"][phase].get("model"),
-            "calibration": estimate["phases"][phase]
-            .get("drivers", {})
-            .get("calibration"),
+            "predicted_risk": phase_estimate.get("risk"),
+            "confidence": phase_estimate.get("confidence"),
+            "model": phase_estimate.get("model"),
+            "affected_components": affected_components or [],
+            "calibration": (
+                drivers.get("calibration")
+                if isinstance(drivers, Mapping)
+                else None
+            ),
+            "actual_source": actual_measurements[phase]["source"],
         }
 
     parameter_comparison = _parameter_comparison(
@@ -422,20 +552,35 @@ def replay_memory_estimate(
         "estimate": estimate,
         "comparison": comparison,
         "summary": {
-            "compared_phase_count": len(absolute_errors),
+            "compared_phase_count": len(absolute_errors_pct),
             "mae_pct": (
-                round(sum(absolute_errors) / len(absolute_errors), 2)
-                if absolute_errors
+                round(sum(absolute_errors_pct) / len(absolute_errors_pct), 2)
+                if absolute_errors_pct
                 else None
             ),
             "mean_signed_error_pct": (
-                round(sum(signed_errors) / len(signed_errors), 2)
-                if signed_errors
+                round(sum(signed_errors_pct) / len(signed_errors_pct), 2)
+                if signed_errors_pct
                 else None
             ),
             "max_underestimate_pct": (
-                round(max([0.0, *(-value for value in signed_errors)]), 2)
-                if signed_errors
+                round(max([0.0, *(-value for value in signed_errors_pct)]), 2)
+                if signed_errors_pct
+                else None
+            ),
+            "mae_gib": (
+                round(sum(absolute_errors_gib) / len(absolute_errors_gib), 2)
+                if absolute_errors_gib
+                else None
+            ),
+            "mean_signed_error_gib": (
+                round(sum(signed_errors_gib) / len(signed_errors_gib), 2)
+                if signed_errors_gib
+                else None
+            ),
+            "max_underestimate_gib": (
+                round(max([0.0, *(-value for value in signed_errors_gib)]), 2)
+                if signed_errors_gib
                 else None
             ),
             "upper_bound_miss_phases": upper_bound_misses,
@@ -509,22 +654,36 @@ def print_report(report: Mapping[str, Any]) -> None:
         )
     _print_table(change_rows, ("parameter", "from", "to"))
 
-    print("\nPrediction versus observation (percentage points)")
+    sequence = report["estimate"].get("sequence_length", {})
+    reference_sequence = sequence.get("reference", {})
+    if reference_sequence:
+        print(
+            "\nEffective sequence length: "
+            f"point={_format_value(reference_sequence.get('point_tokens'), 0)} "
+            f"tokens, upper={_format_value(reference_sequence.get('upper_tokens'), 0)} "
+            f"tokens ({reference_sequence.get('source')})"
+        )
+
+    print("\nPrediction versus observation (GiB; percent in parentheses)")
     comparison_rows = []
     for phase in PHASES:
         item = report["comparison"][phase]
         comparison_rows.append(
             [
                 phase,
-                _format_value(item["reference_pct"]),
-                _format_value(item["delta_pct"]),
-                _format_value(item["predicted_pct"]),
-                _format_value(item["upper_bound_pct"]),
-                _format_value(item["actual_pct"]),
-                _format_value(item["signed_error_pct"]),
+                _format_value(item["reference_gib"]),
+                _format_value(item["delta_gib"]),
+                _format_value(item["predicted_gib"]),
+                _format_value(item["upper_bound_gib"]),
+                _format_value(item["actual_gib"]),
+                _format_value(item["signed_error_gib"]),
+                (
+                    f"{_format_value(item['predicted_pct'])}/"
+                    f"{_format_value(item['actual_pct'])}"
+                ),
                 _format_value(item["actual_within_upper_bound"]),
                 str(item["predicted_risk"]),
-                str(item["calibration"]),
+                ",".join(item["affected_components"]) or "unchanged",
             ]
         )
     _print_table(
@@ -537,9 +696,10 @@ def print_report(report: Mapping[str, Any]) -> None:
             "upper",
             "actual",
             "pred-actual",
+            "pred%/actual%",
             "covered",
             "risk",
-            "calibration",
+            "components",
         ),
     )
 
@@ -550,9 +710,15 @@ def print_report(report: Mapping[str, Any]) -> None:
         "  proposal changes match actual parameters: "
         f"{parameter_comparison['proposal_changes_match_actual']}"
     )
+    print(
+        "  full assembled candidate matches actual parameters: "
+        f"{parameter_comparison['full_candidate_matches_actual']}"
+    )
+    print(f"  phase MAE: {_format_value(summary['mae_gib'])} GiB")
     print(f"  phase MAE: {_format_value(summary['mae_pct'])} pct-points")
     print(
         "  max underestimate: "
+        f"{_format_value(summary['max_underestimate_gib'])} GiB / "
         f"{_format_value(summary['max_underestimate_pct'])} pct-points"
     )
     print(f"  upper-bound misses: {summary['upper_bound_miss_phases']}")
