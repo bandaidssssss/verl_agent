@@ -2,7 +2,8 @@
 env.sh
 id_ed25519
 id_ed25519.pub
-
+output/
+experiment_data/
 # Python caches
 **/__pycache__/
 *.py[cod]

@@ -65,20 +65,6 @@ NUMBER = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
 PAIR_RE = re.compile(rf"([^\s:]+):({NUMBER})")
 STEP_RE = re.compile(r"step:(\d+)")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-LOG_MEMORY_RE = re.compile(
-    rf"(?P<when>Before|After) "
-    rf"(?P<name>generate_sequences|compute_log_prob|compute_ref_log_prob|"
-    rf"update_actor|rollout offload),.*?device memory used/total \(GB\): "
-    rf"(?P<used>{NUMBER})/(?P<total>{NUMBER})"
-)
-
-PHASE_LOG_NAMES = {
-    "generate_sequences": "rollout",
-    "rollout offload": "rollout",
-    "compute_log_prob": "actor_log_prob",
-    "compute_ref_log_prob": "ref_log_prob",
-    "update_actor": "training",
-}
 
 MODEL_CONFIG_FIELDS = (
     "model_type",
@@ -438,6 +424,14 @@ def _phase_percentage_peaks(trial: Mapping[str, Any]) -> dict[str, float]:
 def _phase_measurements(
     trial: Mapping[str, Any], log_path: Path | None
 ) -> dict[str, dict[str, Any]]:
+    """Read phase peaks from trial.jsonl and capacity from gpu_samples.csv.
+
+    C550's phase boundary messages in train.log are not a reliable physical
+    memory source.  ``memory_by_phase_pct`` is the authoritative phase summary;
+    the CSV is used for GPU capacity and as a fallback only when that summary
+    is absent.
+    """
+
     pct_peaks = _phase_percentage_peaks(trial)
     samples_path = _gpu_samples_path(trial, log_path)
     used_by_phase: dict[str, list[float]] = {phase: [] for phase in PHASES}
@@ -461,37 +455,27 @@ def _phase_measurements(
         except OSError:
             pass
 
-    log_used: dict[str, list[float]] = {phase: [] for phase in PHASES}
-    log_totals: list[float] = []
-    if log_path is not None and not any(used_by_phase.values()):
-        try:
-            with log_path.open("r", encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    match = LOG_MEMORY_RE.search(ANSI_RE.sub("", line))
-                    if not match:
-                        continue
-                    phase = PHASE_LOG_NAMES[match.group("name")]
-                    log_used[phase].append(float(match.group("used")) * GIB_IN_MIB)
-                    log_totals.append(float(match.group("total")) * GIB_IN_MIB)
-        except OSError:
-            pass
-
-    capacity_mb = statistics.median(totals or log_totals) if totals or log_totals else None
-    source = (
-        str(samples_path)
-        if any(used_by_phase.values()) and samples_path is not None
-        else (f"{log_path}:phase_memory_log" if any(log_used.values()) else None)
-    )
+    capacity_mb = statistics.median(totals) if totals else None
     result: dict[str, dict[str, Any]] = {}
     for phase in PHASES:
-        used_values = used_by_phase[phase] or log_used[phase]
-        used_mb = max(used_values) if used_values else None
         pct = pct_peaks.get(phase)
-        if used_mb is None and pct is not None and capacity_mb is not None:
+        raw_csv_peak_mb = (
+            max(used_by_phase[phase]) if used_by_phase[phase] else None
+        )
+        if pct is not None and capacity_mb is not None:
             used_mb = capacity_mb * pct / 100.0
-            phase_source = "trial_percentage_times_observed_capacity"
+            phase_source = "trial.memory_by_phase_pct.max * gpu_samples.capacity"
         else:
-            phase_source = source
+            used_mb = raw_csv_peak_mb
+            phase_source = (
+                f"{samples_path}:raw_phase_peak_fallback"
+                if raw_csv_peak_mb is not None and samples_path is not None
+                else (
+                    "trial.memory_by_phase_pct.max_without_capacity"
+                    if pct is not None
+                    else None
+                )
+            )
         if pct is None and used_mb is not None and capacity_mb is not None:
             pct = 100.0 * used_mb / capacity_mb
         result[phase] = {

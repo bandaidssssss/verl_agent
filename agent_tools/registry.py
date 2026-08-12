@@ -133,6 +133,7 @@ class ToolRegistry:
             "query_trial_history": self._query_trial_history,
             "read_trial_log_excerpt": self._read_trial_log_excerpt,
             "read_trial_metrics": self._read_trial_metrics,
+            "read_current_trial_metrics": self._read_current_trial_metrics,
         }
 
     def definitions(self, role: str) -> list[dict[str, Any]]:
@@ -592,11 +593,12 @@ class ToolRegistry:
             "lines": [{"line": index, "text": line[:1200]} for index, line in selected],
         }
 
-    def _read_trial_metrics(self, arguments: Mapping[str, Any], runtime: ToolRuntime) -> dict[str, Any]:
-        """Read bounded, ordered step metrics from a recorded trial log."""
-        trial_id = arguments.get("trial_id")
-        if not isinstance(trial_id, int):
-            raise ToolError("trial_id must be an integer")
+    @staticmethod
+    def _metric_query_arguments(
+        arguments: Mapping[str, Any],
+        *,
+        snapshot_step: int | None = None,
+    ) -> tuple[list[str], int | None, int | None, int]:
         metrics = arguments.get("metrics")
         if not isinstance(metrics, list) or not metrics or len(metrics) > len(STABILITY_QUERY_METRICS):
             raise ToolError("metrics must be a non-empty list within the allowed metric limit")
@@ -615,22 +617,28 @@ class ToolRegistry:
             raise ToolError("end_step must be a positive integer")
         if isinstance(start_step, int) and isinstance(end_step, int) and start_step > end_step:
             raise ToolError("start_step must not exceed end_step")
+        if snapshot_step is not None:
+            if end_step is not None and end_step > snapshot_step:
+                raise ToolError(
+                    f"end_step must not exceed the fixed snapshot_step {snapshot_step}"
+                )
+            end_step = snapshot_step if end_step is None else end_step
         window_size = arguments.get("window_size", 5)
         if not isinstance(window_size, int) or not 1 <= window_size <= 20:
             raise ToolError("window_size must be an integer from 1 to 20")
+        return requested, start_step, end_step, window_size
 
-        trial = next((row for row in _read_jsonl(runtime.history_path) if row.get("trial_id") == trial_id), None)
-        if not trial or not trial.get("log_path"):
-            return {"available": False, "trial_id": trial_id, "error": "trial or recorded log_path not found"}
-        log_path = Path(str(trial["log_path"])).expanduser().resolve()
-        allowed_root = runtime.history_path.parent.resolve()
-        try:
-            log_path.relative_to(allowed_root)
-        except ValueError as exc:
-            raise ToolError("recorded log path is outside the configured output directory") from exc
-        if not log_path.is_file():
-            return {"available": False, "trial_id": trial_id, "log_path": str(log_path), "error": "log not found"}
-
+    @staticmethod
+    def _metric_result(
+        log_path: Path,
+        *,
+        trial_id: int,
+        requested: list[str],
+        start_step: int | None,
+        end_step: int | None,
+        window_size: int,
+        snapshot_step: int | None = None,
+    ) -> dict[str, Any]:
         records = parse_step_records(log_path)
         series = build_metric_windows(
             records,
@@ -646,10 +654,92 @@ class ToolRegistry:
             for metric, values in series["metrics"].items()
             if not any(value is not None for value in values)
         ]
-        return {
+        result = {
             "available": True,
             "trial_id": trial_id,
             "log_path": str(log_path),
             **series,
             "missing_metrics": missing_metrics,
         }
+        if snapshot_step is not None:
+            result["snapshot_step"] = snapshot_step
+            result["latest_available_step"] = max(
+                (step for step in records if step <= snapshot_step),
+                default=None,
+            )
+        return result
+
+    def _read_trial_metrics(self, arguments: Mapping[str, Any], runtime: ToolRuntime) -> dict[str, Any]:
+        """Read bounded, ordered step metrics from a recorded trial log."""
+        trial_id = arguments.get("trial_id")
+        if not isinstance(trial_id, int):
+            raise ToolError("trial_id must be an integer")
+        requested, start_step, end_step, window_size = self._metric_query_arguments(
+            arguments
+        )
+
+        trial = next((row for row in _read_jsonl(runtime.history_path) if row.get("trial_id") == trial_id), None)
+        if not trial or not trial.get("log_path"):
+            return {"available": False, "trial_id": trial_id, "error": "trial or recorded log_path not found"}
+        log_path = Path(str(trial["log_path"])).expanduser().resolve()
+        allowed_root = runtime.history_path.parent.resolve()
+        try:
+            log_path.relative_to(allowed_root)
+        except ValueError as exc:
+            raise ToolError("recorded log path is outside the configured output directory") from exc
+        if not log_path.is_file():
+            return {"available": False, "trial_id": trial_id, "log_path": str(log_path), "error": "log not found"}
+
+        return self._metric_result(
+            log_path,
+            trial_id=trial_id,
+            requested=requested,
+            start_step=start_step,
+            end_step=end_step,
+            window_size=window_size,
+        )
+
+    def _read_current_trial_metrics(
+        self, arguments: Mapping[str, Any], runtime: ToolRuntime
+    ) -> dict[str, Any]:
+        """Read a reproducible metric snapshot from the active runner-owned trial."""
+        active_trial = runtime.context.get("active_trial")
+        if not isinstance(active_trial, Mapping):
+            return {"available": False, "error": "active trial context is not available"}
+        trial_id = active_trial.get("trial_id")
+        snapshot_step = active_trial.get("snapshot_step")
+        raw_log_path = active_trial.get("log_path")
+        if not isinstance(trial_id, int) or isinstance(trial_id, bool):
+            raise ToolError("active trial context has an invalid trial_id")
+        if not isinstance(snapshot_step, int) or isinstance(snapshot_step, bool) or snapshot_step < 1:
+            raise ToolError("active trial context has an invalid snapshot_step")
+        if not isinstance(raw_log_path, str) or not raw_log_path:
+            raise ToolError("active trial context has no log_path")
+
+        log_path = Path(raw_log_path).expanduser().resolve()
+        allowed_root = runtime.history_path.parent.resolve()
+        try:
+            log_path.relative_to(allowed_root)
+        except ValueError as exc:
+            raise ToolError("active trial log path is outside the configured output directory") from exc
+        if not log_path.is_file():
+            return {
+                "available": False,
+                "trial_id": trial_id,
+                "snapshot_step": snapshot_step,
+                "error": "active trial log not found",
+            }
+
+        requested, start_step, end_step, window_size = self._metric_query_arguments(
+            arguments,
+            snapshot_step=snapshot_step,
+        )
+        return self._metric_result(
+            log_path,
+            trial_id=trial_id,
+            requested=requested,
+            start_step=start_step,
+            end_step=end_step,
+            window_size=window_size,
+            snapshot_step=snapshot_step,
+        )

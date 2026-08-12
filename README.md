@@ -13,14 +13,23 @@
 2. `stability_tuning`
    - 默认运行 80 update。
    - 冻结硬件参数，只允许修改 lr、warmup、KL、entropy 和 rollout.n。
-   - 每个完整 update 使用 JF-HPO 规则检查 KL 增长、reward 下降和 reward 连续为零；触发后异步交给 Train Health Agent 复核。
+   - 每个完整 update 检查 reward 趋势恶化、KL 突变和 entropy 骤降；触发后异步交给 Train Health Agent 复核。
    - Agent 只有返回 `unhealthy + stop` 且置信度达到门槛时，才会在下一个完整 update 边界早停；Agent 失败或证据不足时继续训练。
-   - 默认每 5 update 保存 checkpoint，主动早停记录为 `early_stopped`，不与 OOM/NCCL 失败混淆。
+   - Agent 返回 `observe N` 后，runner 会建立独立于规则 cooldown 的复审期限；第 N 个新 update 到期时即使没有规则再次触发，也会读取当前 trial 的固定指标快照并强制复审。
+   - Train Health Agent 可通过 `read_current_trial_metrics` 读取当前运行日志中受限的 reward、KL、entropy、gradient 和生成健康指标；路径和最大可见 step 均由 runner 固定，Agent 不能读取任意文件或未来 step。
+   - 主动早停记录为 `early_stopped`，不与 OOM/NCCL 失败混淆；当前基础参数为 `trainer.save_freq=-1`，不会周期保存 checkpoint。
 3. `confirm`
    - 默认运行 300 update。
    - 配置冻结，记录 reward 到阈值的累计时间、累计 token 和 peak reward。
 
 一次 update 内的监控阶段为 `rollout`、`actor_log_prob`、`ref_log_prob`、`training`。runner 设置 `VERL_LOGGING_LEVEL=DEBUG`，使用 verl 的 `GPUMemoryLogger` 阶段边界，同时调用平台对应的 SMI 每秒采样每张卡。若没有可用 SMI，阶段显存会使用日志观测值；没有可靠数据时输出 `null`。
+
+当 rollout 后端为 vLLM，并且参数中明确设置
+`actor_rollout_ref.rollout.disable_log_stats=false` 时，runner 还会自动发现每个
+vLLM replica 的 `/metrics` 地址，默认每 5 秒采集一次。采集结果只保留调节
+`gpu_memory_utilization`、`max_num_seqs` 和 `max_num_batched_tokens` 所需的活动期指标；
+字段为 `true` 或未配置时不会启动监控，也不会创建 `vllm_metrics.csv`。采样间隔可通过
+`config/agent_config.json` 的 `vllm_metrics_interval_seconds` 调整。
 
 支持的平台：
 
@@ -36,14 +45,16 @@
 - `config/base_parameters.json`：由参考脚本 `qwen3_8B_baseline.sh` 转换出的初始 verl Hydra 参数。数据集、模型路径、GPU 数在这里修改。
 - `config/agent_config.json`：verl 仓库路径、update 预算、显存阈值和调优轮数。
 
-在线健康监控默认采用 JF-HPO 论文实验参数：
+在线健康监控只保留三类触发信号：
 
-- `health_kl_growth_threshold=0.15`：相邻 update 的 KL loss 增长率超过 15%。
-- `health_reward_drop_threshold=0.10`：相邻 update 的 reward 下降率超过 10%。
-- `health_consecutive_steps=5`：上述条件或 reward 为零连续 5 个 update 后触发 Agent。
+- reward：`health_reward_trend_steps=5` 个 update 内，用大小为 `health_reward_window_size=3` 的多个滑动窗口均值判断持续下降或低位横盘；相对历史最佳窗口至少回撤 `health_reward_trend_min_drawdown=0.15`，并允许 `health_reward_trend_tolerance=0.01` 的噪声。
+- KL：相邻 update 的变化同时达到 `health_kl_change_ratio_threshold=0.50` 和 `health_kl_change_absolute_threshold=0.02`，避免接近零时仅因比例放大而误触发。
+- entropy：相邻 update 相对下降达到 `health_entropy_drop_ratio_threshold=0.30`，用于捕获突然倒塌，不使用固定绝对 entropy 地板。
 - `health_agent_stop_confidence=0.8`：Agent 早停建议的最低置信度。
 - `health_agent_shadow_mode=false`：实际应用早停；改为 `true` 可只记录判断、不停止。
 - `health_agent_max_calls_per_trial=0`：单个 trial 不限制调用次数；仍受单请求并发和 5-update cooldown 约束。
+
+这些规则只负责触发复核，最终早停仍由 Train Health Agent 读取当前 trial 指标后决定；不存在固定 reward 失败地板，也不会因 KL 或 entropy 的绝对值较高就单独触发。
 
 服务器上的 verl 路径可以直接通过 `VERL_ROOT` 设置。环境脚本只能设置环境变量，不能包含训练命令。API 凭据通过环境变量提供——复制 [`env.sh`](env.sh) 填入实际值后 `source env.sh` 即可。
 
@@ -67,6 +78,16 @@ PLATFORM=C550 MAX_TRIALS=1 bash run_circle.sh
 PLATFORM=C550 MAX_TRIALS=10 bash run_circle.sh
 ```
 
+调试 stability 时可以跳过 hardware 搜索。请使用一个新的 `OUTPUT_PATH`，首个 trial 会直接以 `base_parameters.json` 作为冻结硬件基线运行 stability：
+
+```bash
+PLATFORM=C550 START_STAGE=stability_tuning \
+  OUTPUT_PATH=/absolute/path/to/new-stability-debug-run \
+  MAX_TRIALS=1 bash run_circle.sh
+```
+
+也可以传 `--start-stage stability_tuning`，或把 `config/agent_config.json` 的 `start_stage` 从 `auto` 改为 `stability_tuning`。默认 `auto` 保持原有 hardware → stability → confirm 状态机。
+
 每次运行的终端标准输出和标准错误也会保存到本次实验目录的
 `run_circle.log`；训练子进程的逐 trial 日志仍保存在
 `trials/NNNN/train.log`。
@@ -84,7 +105,8 @@ Proposal 返回由 `min_proposal_candidates` / `max_proposal_candidates` 限制�
 - `output/last_agent_rejection.json`：多轮建议仍未通过时的完整拒绝轨迹。
 - `output/trials/NNNN/train.log`：原始 verl 日志。
 - `output/trials/NNNN/gpu_samples.csv`：带训练子阶段标签的逐 GPU 采样。
-- `output/trials/NNNN/health_events.jsonl`：JF-HPO 规则触发、Agent 决策及停止动作。
+- `output/trials/NNNN/vllm_metrics.csv`：仅在 vLLM stats 明确启用时生成的紧凑 rollout 调度、KV-cache 和 preemption 采样。
+- `output/trials/NNNN/health_events.jsonl`：健康规则触发、Agent 决策及停止动作。
 - `output/trials/NNNN/health_agent_traces.jsonl`：Train Health Agent 的完整对话、工具和 token trace。
 - `output/trials/NNNN/trial_report.json`：单轮结构化报告与 Agent 工具调用轨迹。
 

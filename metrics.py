@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping
 
 NUMBER = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
 PAIR_RE = re.compile(rf"([^\s:]+):({NUMBER})")
-STEP_RE = re.compile(r"step:(\d+)")
+STEP_RE = re.compile(r"(?<![\w/])step:(\d+)")
 MEMORY_RE = re.compile(
     rf"(?P<when>Before|After) (?P<name>generate_sequences|compute_log_prob|compute_ref_log_prob|update_actor|rollout offload),.*?"
     rf"device memory used/total \(GB\): (?P<used>{NUMBER})/(?P<total>{NUMBER})"
@@ -51,13 +51,13 @@ STABILITY_SERIES_METRICS = (
     "actor/entropy",
     "actor/lr",
     "response_length/clip_ratio",
+    "actor/kl_loss",
+    "actor/grad_norm",
 )
 STABILITY_QUERY_METRICS = STABILITY_SERIES_METRICS + (
     "actor/pg_loss",
     "response_length/mean",
     "response/aborted_ratio",
-    "actor/kl_loss",
-    "actor/grad_norm",
 )
 
 

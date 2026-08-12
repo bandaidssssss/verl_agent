@@ -8,7 +8,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from runner import GPUSampler, HealthAgentWorker, PhaseTracker, _resource_gate_enabled, build_command
+from runner import (
+    GPUSampler,
+    HealthAgentWorker,
+    HealthReviewSchedule,
+    PhaseTracker,
+    _resource_gate_enabled,
+    build_command,
+)
 
 
 class BuildCommandTest(unittest.TestCase):
@@ -101,6 +108,30 @@ class HealthAgentWorkerTest(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertFalse((result or {}).get("ok"))
         self.assertIn("agent unavailable", (result or {}).get("error", ""))
+
+
+class HealthReviewScheduleTest(unittest.TestCase):
+    def test_observation_is_due_without_a_new_rule_trigger(self) -> None:
+        schedule = HealthReviewSchedule()
+        schedule.observe(
+            "event-step-12",
+            origin_step=12,
+            observe_for_updates=3,
+            decision={"action": "observe", "observe_for_updates": 3},
+        )
+        self.assertFalse(schedule.due(14))
+        self.assertTrue(schedule.due(15))
+        self.assertEqual((schedule.snapshot() or {})["due_step"], 15)
+        schedule.mark_submitted()
+        self.assertFalse(schedule.due(16))
+
+    def test_a_followup_observation_replaces_the_previous_deadline(self) -> None:
+        schedule = HealthReviewSchedule()
+        schedule.observe("event-1", 7, 5, {"action": "observe"})
+        schedule.observe("event-2", 12, 3, {"action": "observe"})
+        snapshot = schedule.snapshot() or {}
+        self.assertEqual(snapshot["origin_event_id"], "event-2")
+        self.assertEqual(snapshot["due_step"], 15)
 
 
 if __name__ == "__main__":

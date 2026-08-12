@@ -236,7 +236,7 @@ class LLMRoleAgentTest(unittest.TestCase):
 
 
 class TrainHealthRulesAgentTest(unittest.TestCase):
-    def test_rules_mode_accepts_jf_hpo_trigger(self) -> None:
+    def test_rules_mode_accepts_health_trigger(self) -> None:
         config = load_json(ROOT / "config" / "agent_config.json")
         config["stream_agent_events"] = False
         with tempfile.TemporaryDirectory() as directory:
@@ -250,7 +250,7 @@ class TrainHealthRulesAgentTest(unittest.TestCase):
                 {
                     "current_stage": "stability_tuning",
                     "health_event": {
-                        "rules": [{"name": "jf_hpo_kl_growth"}],
+                        "rules": [{"name": "kl_sudden_change"}],
                     },
                     "recent_trials": [],
                 }

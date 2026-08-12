@@ -333,6 +333,72 @@ class AgentToolsTest(unittest.TestCase):
         self.assertEqual(result["windows"][0], {"start_step": 1, "end_step": 5, "sample_count": 5})
         self.assertAlmostEqual(result["metrics"]["critic/rewards/mean"][1], 0.8)
 
+    def test_train_health_can_read_immutable_current_trial_snapshot(self) -> None:
+        log_path = self.history_path.parent / "trials" / "0008" / "train.log"
+        log_path.parent.mkdir(parents=True)
+        log_path.write_text(
+            "\n".join(
+                f"step:{step} - critic/rewards/mean:{-step / 10} - actor/kl_loss:{step / 100}"
+                for step in range(1, 8)
+            ),
+            encoding="utf-8",
+        )
+        registry = self.registry()
+        runtime = registry.runtime(
+            {
+                "active_trial": {
+                    "trial_id": 8,
+                    "log_path": str(log_path),
+                    "snapshot_step": 5,
+                }
+            }
+        )
+        result = registry.execute(
+            "train_health",
+            "read_current_trial_metrics",
+            {
+                "metrics": ["critic/rewards/mean", "actor/kl_loss"],
+                "window_size": 1,
+            },
+            runtime,
+        )
+        self.assertTrue(result["available"])
+        self.assertEqual(result["snapshot_step"], 5)
+        self.assertEqual(result["latest_available_step"], 5)
+        self.assertEqual(result["step_range"], [1, 5])
+        self.assertEqual(len(result["windows"]), 5)
+        with self.assertRaisesRegex(RuntimeError, "snapshot_step 5"):
+            registry.execute(
+                "train_health",
+                "read_current_trial_metrics",
+                {
+                    "metrics": ["critic/rewards/mean"],
+                    "end_step": 6,
+                },
+                runtime,
+            )
+
+    def test_current_trial_metrics_rejects_runner_path_outside_output(self) -> None:
+        outside = self.temp_root / "outside.log"
+        outside.write_text("step:1 - critic/rewards/mean:0.1\n", encoding="utf-8")
+        registry = self.registry()
+        runtime = registry.runtime(
+            {
+                "active_trial": {
+                    "trial_id": 8,
+                    "log_path": str(outside),
+                    "snapshot_step": 1,
+                }
+            }
+        )
+        with self.assertRaisesRegex(RuntimeError, "outside the configured output"):
+            registry.execute(
+                "train_health",
+                "read_current_trial_metrics",
+                {"metrics": ["critic/rewards/mean"]},
+                runtime,
+            )
+
     def test_rollout_metrics_skill_uses_recorded_vllm_summary(self) -> None:
         trial = {
             "trial_id": 4,

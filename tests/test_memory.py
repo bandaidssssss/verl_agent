@@ -239,9 +239,9 @@ def _actual_phase_measurements(
 ) -> dict[str, dict[str, Any]]:
     """Read target-trial peaks in both GiB and percent.
 
-    The estimator now predicts physical memory, so the replay comparison must
-    use the same raw per-GPU samples rather than reconstructing everything from
-    rounded percentages.  Percentage-only histories remain supported.
+    ``memory_by_phase_pct`` in trial.jsonl is the authoritative phase summary.
+    The raw CSV supplies GPU capacity so that percentage peaks can be converted
+    to GiB; its per-phase used values are fallback data only.
     """
 
     pct_peaks = _phase_actual_peaks_pct(report)
@@ -275,10 +275,20 @@ def _actual_phase_measurements(
     capacity_mb = sorted(totals)[len(totals) // 2] if totals else None
     result: dict[str, dict[str, Any]] = {}
     for phase in PHASES:
-        used_mb = max(used_by_phase[phase]) if used_by_phase[phase] else None
         pct = pct_peaks.get(phase)
-        if used_mb is None and pct is not None and capacity_mb is not None:
+        raw_csv_peak_mb = (
+            max(used_by_phase[phase]) if used_by_phase[phase] else None
+        )
+        if pct is not None and capacity_mb is not None:
             used_mb = capacity_mb * pct / 100.0
+            source = "trial.memory_by_phase_pct.max * gpu_samples.capacity"
+        else:
+            used_mb = raw_csv_peak_mb
+            source = (
+                "gpu_samples.raw_phase_peak_fallback"
+                if raw_csv_peak_mb is not None
+                else "trial_pct_without_capacity"
+            )
         if pct is None and used_mb is not None and capacity_mb is not None:
             pct = 100.0 * used_mb / capacity_mb
         result[phase] = {
@@ -288,7 +298,7 @@ def _actual_phase_measurements(
             "gpu_capacity_gib": (
                 capacity_mb / 1024.0 if capacity_mb is not None else None
             ),
-            "source": str(samples_path) if samples_path is not None else "trial_pct",
+            "source": source,
         }
     return result
 

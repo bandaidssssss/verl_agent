@@ -4,6 +4,7 @@ import copy
 import json
 import os
 from pathlib import Path
+from statistics import mean
 from typing import Any, Mapping
 
 from agents import AgentResponseError, AgentSet
@@ -77,20 +78,84 @@ def hardware_plateaued(trials: list[dict[str, Any]], config: Mapping[str, Any]) 
     return rounds_since_best >= plateau_rounds
 
 
+def _reward_trend_degraded(
+    reward_points: list[tuple[int, float]],
+    config: Mapping[str, Any],
+) -> bool:
+    observation_steps = max(2, int(config.get("health_reward_trend_steps", 5)))
+    window_size = max(1, int(config.get("health_reward_window_size", 3)))
+    if window_size >= observation_steps or len(reward_points) < observation_steps:
+        return False
+
+    values = [value for _, value in reward_points]
+    recent = values[-observation_steps:]
+    recent_means = [
+        mean(recent[index : index + window_size])
+        for index in range(observation_steps - window_size + 1)
+    ]
+    tolerance = max(0.0, float(config.get("health_reward_trend_tolerance", 0.01)))
+    non_improving = all(
+        current <= previous + tolerance
+        for previous, current in zip(recent_means, recent_means[1:])
+    )
+    historical_means = [
+        mean(values[index : index + window_size])
+        for index in range(len(values) - window_size + 1)
+    ]
+    drawdown = max(historical_means) - recent_means[-1]
+    minimum_drawdown = max(
+        0.0,
+        float(config.get("health_reward_trend_min_drawdown", 0.15)),
+    )
+    return non_improving and drawdown >= minimum_drawdown
+
+
+def _kl_changed_suddenly(
+    kl_points: list[tuple[int, float]],
+    config: Mapping[str, Any],
+) -> bool:
+    ratio_threshold = max(
+        0.0,
+        float(config.get("health_kl_change_ratio_threshold", 0.50)),
+    )
+    absolute_threshold = max(
+        0.0,
+        float(config.get("health_kl_change_absolute_threshold", 0.02)),
+    )
+    for (_, previous), (_, current) in zip(kl_points, kl_points[1:]):
+        change = current - previous
+        ratio = abs(change) / max(abs(previous), 1e-12)
+        if abs(change) >= absolute_threshold and ratio >= ratio_threshold:
+            return True
+    return False
+
+
+def _entropy_collapsed_suddenly(
+    entropy_points: list[tuple[int, float]],
+    config: Mapping[str, Any],
+) -> bool:
+    threshold = max(
+        0.0,
+        float(config.get("health_entropy_drop_ratio_threshold", 0.30)),
+    )
+    for (_, previous), (_, current) in zip(entropy_points, entropy_points[1:]):
+        drop_ratio = (previous - current) / max(abs(previous), 1e-3)
+        if drop_ratio >= threshold:
+            return True
+    return False
+
+
 def stability_healthy(trial: Mapping[str, Any], config: Mapping[str, Any]) -> bool:
     if trial.get("result") != "success":
         return False
     reward_points = _complete_stability_points(trial, "critic/rewards/mean")
-    slope = None
-    if len(reward_points) >= 2:
-        previous, current = reward_points[-2:]
-        delta_step = current[0] - previous[0]
-        slope = (current[1] - previous[1]) / delta_step if delta_step else 0.0
-    kl_points = _complete_stability_points(trial, "actor/ppo_kl")
-    kl_max = max((value for _, value in kl_points), default=None)
-    if slope is not None and slope < float(config.get("reward_collapse_slope", -0.01)):
+    if _reward_trend_degraded(reward_points, config):
         return False
-    if kl_max is not None and kl_max > float(config.get("kl_warning", 0.1)):
+    kl_points = _complete_stability_points(trial, "actor/kl_loss")
+    if _kl_changed_suddenly(kl_points, config):
+        return False
+    entropy_points = _complete_stability_points(trial, "actor/entropy")
+    if _entropy_collapsed_suddenly(entropy_points, config):
         return False
     return True
 
@@ -98,6 +163,19 @@ def stability_healthy(trial: Mapping[str, Any], config: Mapping[str, Any]) -> bo
 def determine_stage(trials: list[dict[str, Any]], config: Mapping[str, Any]) -> str:
     if _confirm_trials(trials):
         return "done"
+    start_stage = str(config.get("start_stage", "auto"))
+    if start_stage not in {"auto", "hardware_tuning", "stability_tuning"}:
+        raise ValueError(
+            "start_stage must be auto, hardware_tuning, or stability_tuning"
+        )
+    if start_stage == "stability_tuning":
+        stability = _stability_trials(trials)
+        healthy = [trial for trial in stability if stability_healthy(trial, config)]
+        if len(stability) >= int(config.get("max_stability_trials", 4)):
+            return "confirm" if healthy else "stopped_unstable"
+        if len(healthy) >= int(config.get("min_stability_trials", 2)):
+            return "confirm"
+        return "stability_tuning"
     hardware = _hardware_trials(trials)
     successful_hardware = _successful(hardware)
     if not successful_hardware:
@@ -478,6 +556,11 @@ class TuningOrchestrator:
             stability = best_stability_trial(trials)
             best = stability or best_hardware_trial(trials)
             if not best:
+                if str(self.config.get("start_stage", "auto")) == "stability_tuning":
+                    return dict(self.base_parameters), _reference_descriptor(
+                        None,
+                        "initial base parameters used by direct stability mode",
+                    )
                 raise RuntimeError("stability tuning requires a successful hardware trial")
             reason = (
                 "best successful stability trial by terminal reward mean"
@@ -994,8 +1077,8 @@ class TuningOrchestrator:
             review: dict[str, Any] = {"verdict": "valid", "reason": "stage baseline"}
             agent_trace: dict[str, Any] | None = None
 
-            first_hardware = not _hardware_trials(trials)
-            if not first_hardware and stage != "confirm":
+            first_trial = not trials
+            if not first_trial and stage != "confirm":
                 try:
                     parameters, proposal, review, agent_trace = self._propose_candidate(
                         stage, parameters, trials, reference

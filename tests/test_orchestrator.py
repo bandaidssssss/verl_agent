@@ -14,6 +14,7 @@ from orchestrator import (
     _normalize_proposal_changes,
     best_stability_trial,
     determine_stage,
+    stability_healthy,
 )
 
 
@@ -53,14 +54,20 @@ class OrchestratorStageTest(unittest.TestCase):
             "plateau_rounds": 2,
             "min_stability_trials": 2,
             "max_stability_trials": 4,
-            "reward_collapse_slope": -0.01,
-            "kl_warning": 0.1,
         }
 
     def test_initial_and_failed_hardware_stage(self) -> None:
         self.assertEqual(determine_stage([], self.config), "hardware_tuning")
         failed = {"trial_id": 1, "stage": "hardware_tuning", "result": "fail"}
         self.assertEqual(determine_stage([failed], self.config), "hardware_repair")
+
+    def test_direct_stability_mode_skips_hardware_trials(self) -> None:
+        config = {**self.config, "start_stage": "stability_tuning"}
+        self.assertEqual(determine_stage([], config), "stability_tuning")
+        self.assertEqual(
+            determine_stage([stability_trial(1, 0.1)], config),
+            "stability_tuning",
+        )
 
     def test_plateau_moves_to_stability(self) -> None:
         trials = [
@@ -110,6 +117,67 @@ class OrchestratorStageTest(unittest.TestCase):
         later["stability"]["metrics"]["critic/rewards/mean"].append(0.1)
         later["stability"]["metrics"]["actor/ppo_kl"].append(0.02)
         self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 7)
+
+    def test_single_low_reward_is_not_treated_as_a_fixed_failure_floor(self) -> None:
+        low_reward = stability_trial(7, -1.0, kl=0.01)
+        low_reward["stability"]["terminal_metrics"] = {
+            "critic/rewards/mean": -1.0
+        }
+        self.assertTrue(stability_healthy(low_reward, self.config))
+
+    def test_persistent_window_decline_is_not_healthy(self) -> None:
+        collapsed = stability_trial(7, 0.5, kl=0.01)
+        for index, reward in enumerate([0.4, 0.2, -0.2, -0.5, -0.5], 2):
+            collapsed["stability"]["windows"].append(
+                {
+                    "start_step": index * 5 + 1,
+                    "end_step": (index + 1) * 5,
+                    "sample_count": 5,
+                }
+            )
+            collapsed["stability"]["metrics"]["critic/rewards/mean"].append(reward)
+            collapsed["stability"]["metrics"]["actor/ppo_kl"].append(0.01)
+        self.assertFalse(stability_healthy(collapsed, self.config))
+
+    def test_sudden_kl_window_change_is_not_healthy(self) -> None:
+        unstable = stability_trial(7, 0.2, kl=0.01)
+        unstable["stability"]["windows"].append(
+            {"start_step": 11, "end_step": 15, "sample_count": 5}
+        )
+        unstable["stability"]["metrics"]["critic/rewards/mean"].append(0.2)
+        unstable["stability"]["metrics"]["actor/ppo_kl"].append(0.01)
+        unstable["stability"]["metrics"]["actor/kl_loss"] = [0.01, 0.04]
+        self.assertFalse(stability_healthy(unstable, self.config))
+
+    def test_sudden_entropy_window_collapse_is_not_healthy(self) -> None:
+        unstable = stability_trial(7, 0.2, kl=0.01)
+        unstable["stability"]["windows"].append(
+            {"start_step": 11, "end_step": 15, "sample_count": 5}
+        )
+        unstable["stability"]["metrics"]["critic/rewards/mean"].append(0.2)
+        unstable["stability"]["metrics"]["actor/ppo_kl"].append(0.01)
+        unstable["stability"]["metrics"]["actor/entropy"] = [0.5, 0.2]
+        self.assertFalse(stability_healthy(unstable, self.config))
+
+
+class DirectStabilityRunTest(unittest.TestCase):
+    def test_first_direct_trial_uses_base_parameters_without_proposal(self) -> None:
+        base = load_json(ROOT / "config" / "base_parameters.json")
+        config = load_json(ROOT / "config" / "agent_config.json")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config.update(
+                {
+                    "output_dir": temp_dir,
+                    "start_stage": "stability_tuning",
+                    "stream_agent_events": False,
+                }
+            )
+            orchestrator = TuningOrchestrator(ROOT, base, config)
+            with mock.patch("orchestrator.run_trial", return_value={}) as run_trial:
+                reports = orchestrator.run(max_trials=1, dry_run=True)
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(run_trial.call_args.args[0], base)
+        self.assertEqual(run_trial.call_args.args[3], "stability_tuning")
 
 
 class ProposalProvenanceTest(unittest.TestCase):

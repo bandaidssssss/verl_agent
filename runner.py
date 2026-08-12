@@ -9,6 +9,7 @@ import signal
 import subprocess
 import threading
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -24,7 +25,6 @@ from vllm_metrics import (
 )
 
 
-STEP_RE = re.compile(r"step:(\d+)")
 FATAL_RE = re.compile(
     r"CUDA out of memory|OutOfMemoryError|ChildFailedError|DistBackendError|"
     r"NCCL[^\n]{0,80}(?:WARN|ERROR|unhandled|failed|failure)",
@@ -257,6 +257,58 @@ class HealthAgentWorker:
             return self._pending
 
 
+@dataclass
+class PendingHealthObservation:
+    origin_event_id: str
+    origin_step: int
+    due_step: int
+    original_decision: dict[str, Any]
+    review_submitted: bool = False
+
+
+class HealthReviewSchedule:
+    """Track an Agent-requested observation independently of rule cooldowns."""
+
+    def __init__(self) -> None:
+        self.pending: PendingHealthObservation | None = None
+
+    def observe(
+        self,
+        event_id: str,
+        origin_step: int,
+        observe_for_updates: int,
+        decision: Mapping[str, Any],
+    ) -> None:
+        if observe_for_updates < 1:
+            raise ValueError("observe_for_updates must be positive")
+        self.pending = PendingHealthObservation(
+            origin_event_id=event_id,
+            origin_step=int(origin_step),
+            due_step=int(origin_step) + int(observe_for_updates),
+            original_decision=dict(decision),
+        )
+
+    def due(self, step: int) -> bool:
+        return bool(
+            self.pending is not None
+            and not self.pending.review_submitted
+            and int(step) >= self.pending.due_step
+        )
+
+    def active(self) -> bool:
+        return self.pending is not None
+
+    def mark_submitted(self) -> None:
+        if self.pending is not None:
+            self.pending.review_submitted = True
+
+    def clear(self) -> None:
+        self.pending = None
+
+    def snapshot(self) -> dict[str, Any] | None:
+        return asdict(self.pending) if self.pending is not None else None
+
+
 def build_command(
     parameters: Mapping[str, Any],
     agent_config: Mapping[str, Any],
@@ -367,12 +419,25 @@ def run_trial(
         health_monitor = OnlineHealthMonitor(
             kl_metric=str(agent_config.get("health_kl_metric", "actor/kl_loss")),
             reward_metric=str(agent_config.get("health_reward_metric", "critic/rewards/mean")),
-            kl_growth_threshold=float(agent_config.get("health_kl_growth_threshold", 0.15)),
-            reward_drop_threshold=float(agent_config.get("health_reward_drop_threshold", 0.10)),
-            consecutive_steps=int(agent_config.get("health_consecutive_steps", 5)),
-            reward_zero_epsilon=float(agent_config.get("health_reward_zero_epsilon", 0.0)),
+            reward_trend_steps=int(agent_config.get("health_reward_trend_steps", 5)),
             warmup_updates=int(agent_config.get("health_warmup_updates", 0)),
             cooldown_updates=int(agent_config.get("health_agent_cooldown_updates", 5)),
+            reward_window_size=int(agent_config.get("health_reward_window_size", 3)),
+            reward_trend_min_drawdown=float(
+                agent_config.get("health_reward_trend_min_drawdown", 0.15)
+            ),
+            reward_trend_tolerance=float(
+                agent_config.get("health_reward_trend_tolerance", 0.01)
+            ),
+            kl_change_ratio_threshold=float(
+                agent_config.get("health_kl_change_ratio_threshold", 0.50)
+            ),
+            kl_change_absolute_threshold=float(
+                agent_config.get("health_kl_change_absolute_threshold", 0.02)
+            ),
+            entropy_drop_ratio_threshold=float(
+                agent_config.get("health_entropy_drop_ratio_threshold", 0.30)
+            ),
         )
         if health_decider is not None:
             health_worker = HealthAgentWorker(health_decider)
@@ -394,13 +459,40 @@ def run_trial(
     health_decisions: list[dict[str, Any]] = []
     health_agent_calls = 0
     pending_health_stop: dict[str, Any] | None = None
-    next_health_review_step = 0
+    health_review_schedule = HealthReviewSchedule()
+    submitted_health_contexts: dict[str, dict[str, Any]] = {}
     # Zero means unlimited; cooldown and the single-flight worker still prevent storms.
     max_health_calls = max(0, int(agent_config.get("health_agent_max_calls_per_trial", 0)))
     stop_confidence = float(agent_config.get("health_agent_stop_confidence", 0.8))
     shadow_mode = bool(agent_config.get("health_agent_shadow_mode", False))
     gate_updates = int(agent_config.get("resource_gate_updates", 5))
     hard_limit = float(agent_config.get("resource_memory_limit_pct", 95.0))
+
+    def submit_health_review(event: Mapping[str, Any], step: int) -> tuple[bool, str | None]:
+        nonlocal health_agent_calls
+        if health_worker is None:
+            return False, "agent_unavailable"
+        if max_health_calls > 0 and health_agent_calls >= max_health_calls:
+            return False, "max_calls_reached"
+        event_id = str(event["event_id"])
+        context = {
+            "current_stage": stage,
+            "mode": str(event.get("review_type", "online_health_review")),
+            "health_event": dict(event),
+            "active_trial": {
+                "trial_id": trial_id,
+                "stage": stage,
+                "log_path": str(log_path),
+                "snapshot_step": int(step),
+            },
+            "recent_trials": [],
+        }
+        if not health_worker.submit(event_id, context):
+            return False, "review_pending"
+        submitted_health_contexts[event_id] = context
+        health_agent_calls += 1
+        return True, None
+
     try:
         with log_path.open("w", encoding="utf-8") as log_handle:
             assert process.stdout is not None
@@ -414,6 +506,14 @@ def run_trial(
                 agent_result = health_worker.poll() if health_worker is not None else None
                 if agent_result is not None:
                     event_id = str(agent_result["event_id"])
+                    submitted_context = submitted_health_contexts.pop(event_id, {})
+                    active_trial = submitted_context.get("active_trial", {})
+                    decision_step = (
+                        active_trial.get("snapshot_step")
+                        if isinstance(active_trial, Mapping)
+                        else None
+                    )
+                    review_type = submitted_context.get("mode", "online_health_review")
                     if agent_result.get("ok"):
                         payload = agent_result.get("payload", {})
                         decision = payload.get("decision", payload)
@@ -422,6 +522,8 @@ def run_trial(
                             decision = {}
                         compact_decision = {
                             "event_id": event_id,
+                            "review_type": review_type,
+                            "snapshot_step": decision_step,
                             "verdict": decision.get("verdict"),
                             "action": decision.get("action"),
                             "confidence": decision.get("confidence"),
@@ -442,11 +544,20 @@ def run_trial(
                                 {"event_id": event_id, "trace": trace},
                             )
                         observe_for = decision.get("observe_for_updates", 0)
-                        if isinstance(observe_for, int) and observe_for > 0:
-                            next_health_review_step = max(
-                                next_health_review_step,
-                                (health_monitor.last_step if health_monitor else 0) + observe_for,
+                        if (
+                            decision.get("action") == "observe"
+                            and isinstance(observe_for, int)
+                            and observe_for > 0
+                            and isinstance(decision_step, int)
+                        ):
+                            health_review_schedule.observe(
+                                event_id,
+                                decision_step,
+                                observe_for,
+                                compact_decision,
                             )
+                        else:
+                            health_review_schedule.clear()
                         confidence = decision.get("confidence")
                         should_stop = (
                             decision.get("verdict") == "unhealthy"
@@ -461,6 +572,8 @@ def run_trial(
                     else:
                         failure = {
                             "event_id": event_id,
+                            "review_type": review_type,
+                            "snapshot_step": decision_step,
                             "verdict": "insufficient_evidence",
                             "action": "continue",
                             "confidence": 0.0,
@@ -472,6 +585,7 @@ def run_trial(
                         }
                         health_decisions.append(failure)
                         append_jsonl(health_events_path, {"record_type": "agent_error", **failure})
+                        health_review_schedule.clear()
 
                 if FATAL_RE.search(line):
                     stop_reason = "fatal_log"
@@ -479,8 +593,7 @@ def run_trial(
                     break
 
                 parsed_step = parse_online_step(line)
-                step_match = STEP_RE.search(line)
-                current_step = int(step_match.group(1)) if step_match else None
+                current_step = parsed_step[0] if parsed_step is not None else None
                 if current_step is not None and pending_health_stop is not None:
                     stop_reason = "health_agent_early_stop"
                     append_jsonl(
@@ -505,47 +618,72 @@ def run_trial(
                 if parsed_step is not None and health_monitor is not None:
                     step, step_metrics = parsed_step
                     trigger = health_monitor.add_step(step, step_metrics)
-                    if trigger is not None:
+                    scheduled_due = health_review_schedule.due(step)
+                    if trigger is not None or scheduled_due:
                         event_id = f"trial-{trial_id:04d}-step-{step:06d}-event-{len(health_events) + 1:03d}"
+                        review_type = (
+                            "scheduled_followup"
+                            if scheduled_due
+                            else "risk_escalation"
+                            if health_review_schedule.active()
+                            and trigger is not None
+                            and trigger.get("severity") == "high"
+                            else "rule_trigger"
+                        )
                         event = {
                             "event_id": event_id,
                             "trial_id": trial_id,
                             "stage": stage,
                             "updates_target": updates,
-                            "trigger": trigger,
+                            "review_type": review_type,
+                            "trigger": trigger or health_monitor.review_snapshot(),
+                            "observation": health_review_schedule.snapshot(),
                             "resource_snapshot": sampler.snapshot(),
                             "parameters": dict(parameters),
                         }
                         health_events.append(event)
-                        append_jsonl(health_events_path, {"record_type": "rule_trigger", **event})
-                        eligible_for_agent = (
-                            health_worker is not None
-                            and (max_health_calls == 0 or health_agent_calls < max_health_calls)
-                            and step >= next_health_review_step
+                        append_jsonl(
+                            health_events_path,
+                            {
+                                "record_type": (
+                                    "rule_trigger" if trigger is not None else "scheduled_review"
+                                ),
+                                **event,
+                            },
                         )
-                        context = {
-                            "current_stage": stage,
-                            "mode": "online_health_review",
-                            "health_event": event,
-                            "recent_trials": [],
-                        }
-                        if eligible_for_agent and health_worker.submit(event_id, context):
-                            health_agent_calls += 1
+                        should_submit = bool(
+                            scheduled_due
+                            or not health_review_schedule.active()
+                            or review_type == "risk_escalation"
+                        )
+                        if should_submit:
+                            submitted, reason = submit_health_review(event, step)
+                            if submitted:
+                                if scheduled_due or review_type == "risk_escalation":
+                                    health_review_schedule.mark_submitted()
+                            else:
+                                append_jsonl(
+                                    health_events_path,
+                                    {
+                                        "record_type": "agent_not_submitted",
+                                        "event_id": event_id,
+                                        "step": step,
+                                        "reason": reason,
+                                    },
+                                )
+                                if scheduled_due and reason in {
+                                    "agent_unavailable",
+                                    "max_calls_reached",
+                                }:
+                                    health_review_schedule.mark_submitted()
                         else:
-                            reason = (
-                                "agent_unavailable"
-                                if health_worker is None
-                                else "max_calls_reached"
-                                if max_health_calls > 0 and health_agent_calls >= max_health_calls
-                                else "review_deferred_or_pending"
-                            )
                             append_jsonl(
                                 health_events_path,
                                 {
                                     "record_type": "agent_not_submitted",
                                     "event_id": event_id,
                                     "step": step,
-                                    "reason": reason,
+                                    "reason": "observation_active",
                                 },
                             )
         return_code = process.wait()

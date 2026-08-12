@@ -23,6 +23,11 @@ def main() -> int:
     parser.add_argument("--base-config", default=str(ROOT / "config" / "base_parameters.json"))
     parser.add_argument("--agent-config", default=str(ROOT / "config" / "agent_config.json"))
     parser.add_argument("--max-trials", type=int, default=1)
+    parser.add_argument(
+        "--start-stage",
+        choices=["auto", "hardware_tuning", "stability_tuning"],
+        help="Override the configured initial stage; stability_tuning skips hardware search",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rules-only", action="store_true", help="Skip LLM calls; useful for baseline and tests")
     args = parser.parse_args()
@@ -37,6 +42,10 @@ def main() -> int:
         agent_config["output_dir"] = os.environ["OUTPUT_PATH"]
     if os.getenv("VERL_ENV_SCRIPT"):
         agent_config["environment_script"] = os.environ["VERL_ENV_SCRIPT"]
+    if os.getenv("START_STAGE"):
+        agent_config["start_stage"] = os.environ["START_STAGE"]
+    if args.start_stage:
+        agent_config["start_stage"] = args.start_stage
     if args.rules_only:
         agent_config["agent_mode"] = "rules"
     orchestrator = TuningOrchestrator(ROOT, base_parameters, agent_config)

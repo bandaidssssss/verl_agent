@@ -469,7 +469,9 @@ class AgentSet:
 
     def assess_health(self, context: Mapping[str, Any]) -> AgentRun:
         if self.mode == "rules":
-            rules = context.get("health_event", {}).get("rules", [])
+            health_event = context.get("health_event", {})
+            trigger = health_event.get("trigger", health_event) if isinstance(health_event, Mapping) else {}
+            rules = trigger.get("rules", []) if isinstance(trigger, Mapping) else []
             names = [str(row.get("name")) for row in rules if isinstance(row, Mapping)]
             return self._rules_run(
                 "train_health",
@@ -478,11 +480,11 @@ class AgentSet:
                     "verdict": "unhealthy",
                     "action": "stop",
                     "confidence": 1.0,
-                    "reason_codes": names or ["JF_HPO_RULE_TRIGGERED"],
-                    "evidence": ["JF-HPO deterministic early-stop condition was satisfied"],
+                    "reason_codes": names or ["HEALTH_RULE_TRIGGERED"],
+                    "evidence": ["A configured deterministic health trigger was satisfied"],
                     "counterevidence": [],
                     "observe_for_updates": 0,
-                    "reason": "rules mode accepts the configured JF-HPO trigger",
+                    "reason": "rules mode accepts the configured health trigger",
                 },
             )
 
@@ -504,4 +506,8 @@ class AgentSet:
         observe = result.get("observe_for_updates", 0)
         if not isinstance(observe, int) or observe < 0:
             raise AgentError("train_health observe_for_updates must be a non-negative integer")
+        if action == "observe" and observe < 1:
+            raise AgentError("train_health action=observe requires observe_for_updates > 0")
+        if action != "observe" and observe != 0:
+            raise AgentError("train_health observe_for_updates must be 0 unless action=observe")
         return run
