@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay one recorded proposal through memory_estimator_V2.
+"""Replay one recorded proposal through memory_estimator_V3.
 
 This script does not call an LLM and does not start training.  It reconstructs
 the candidate parameters from a recorded trial's ``proposal.changes``, exposes
@@ -40,11 +40,11 @@ from agent_tools.memory_estimator_V2 import PHASES, estimate_phase_memory
 # =============================================================================
 
 # 完整实验目录，里面应包含 trials.jsonl 或 trials/NNNN/trial_report.json。
-DEFAULT_RUN_DIR = ROOT / "output" / "0807_1110_2026"
+DEFAULT_RUN_DIR = ROOT / "output" / "0807_1735_2026"
 
 # 要重新评估哪一个已经执行过的 trial。脚本读取它的 proposal，并且只用
 # trial_id 小于它的历史数据做预测；该 trial 的实测显存只用于最后对比。
-DEFAULT_TARGET_TRIAL = 2
+DEFAULT_TARGET_TRIAL = 4
 
 
 # =============================================================================
@@ -738,7 +738,7 @@ def print_report(report: Mapping[str, Any]) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Replay a recorded proposal with memory_estimator_V2 and compare "
+            "Replay a recorded proposal with memory_estimator_V3 and compare "
             "the prediction against actual phase peaks"
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
