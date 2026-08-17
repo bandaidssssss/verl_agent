@@ -1,728 +1,443 @@
 #!/usr/bin/env python3
-"""
-提取实验目录中每个 trial 的 agent 行为（工具调用、参数变更、决策原因）并生成 Markdown 报告。
+"""Generate the historical-style Agent Markdown report from schema-v2 trials.
 
-用法:
-    python3 output/extract_agent_trace.py
-    python3 extract_agent_trace.py ssh_agent/output/0720_1656_2026 [output.md]
+The authoritative run layout is ``trials.jsonl`` plus per-trial artifacts under
+``trials/NNNN``.  The index is intentionally small, so this script loads only
+the artifacts needed for the human-readable report; it never reparses train.log.
 
-直接修改下方 ``DEFAULT_EXPERIMENT_DIR`` 即可更换无参数运行时的实验目录。
+Usage:
+    python3 output/extract_agent_trace.py output/0817_0924_2026
+    python3 output/extract_agent_trace.py output/0817_0924_2026 --output-name report.md
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Mapping
 
 
-DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0728_1551_2026"
+DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0817_1005_2026"
 DEFAULT_OUTPUT_NAME = "agent_report.md"
 PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
 
 
-def _compact_json(obj, max_len=120):
-    """紧凑的 JSON 字符串，超长截断。"""
-    s = json.dumps(obj, ensure_ascii=False, default=str)
-    if len(s) > max_len:
-        return s[:max_len] + "…"
-    return s
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"_read_error": str(exc)}
+    return value if isinstance(value, dict) else {"_read_error": "JSON root is not an object"}
 
 
-def extract_tool_calls(tool_calls: list[dict]) -> str:
-    """格式化工具调用列表为 Markdown 表格。"""
-    if not tool_calls:
-        return "_无工具调用_\n"
-
-    lines = [
-        "| 轮次 | 工具 | 参数 / 查询内容 | 状态 |",
-        "|---|---|---|---|",
-    ]
-    # Group by tool_round
-    by_round: dict[int, list[dict]] = {}
-    for tc in tool_calls:
-        by_round.setdefault(tc.get("tool_round", 0), []).append(tc)
-
-    for rnd in sorted(by_round):
-        for tc in by_round[rnd]:
-            name = tc.get("name", "?")
-            args = tc.get("arguments", {})
-            status = tc.get("status", "?")
-            # 简化参数展示
-            if name == "parameter_understanding":
-                items = args.get("items", [])
-                arg_summary = ", ".join(items[:6])
-                if len(items) > 6:
-                    arg_summary += f" …共 {len(items)} 个"
-            elif name == "memory_estimator":
-                changes = args.get("changes", {})
-                ref = args.get("reference_trial_id", "?")
-                param_names = ", ".join(changes.keys())
-                arg_summary = f"ref_trial={ref}, 预测参数: {param_names}"
-            elif name == "tuning_strategies":
-                items = args.get("items", [])
-                arg_summary = ", ".join(items)
-            elif name == "query_trial_history":
-                arg_summary = f"stage={args.get('stage')}, limit={args.get('limit')}"
-            elif name == "search_verl_docs":
-                arg_summary = f'查询: "{args.get("query", "")}"'
-            else:
-                arg_summary = _compact_json(args, 100)
-            lines.append(f"| {rnd} | `{name}` | {arg_summary} | {status} |")
-    return "\n".join(lines) + "\n"
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            rows.append({"_read_error": f"line {line_no}: {exc}"})
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
 
 
-def extract_proposal_changes(proposal: dict | None) -> str:
-    """格式化 proposal 中的参数变更为 Markdown 表格。"""
-    if not proposal:
-        return "_无 proposal_\n"
-
-    decision = proposal.get("decision", "?")
-    reason = proposal.get("reason", "")
-    confidence = proposal.get("confidence")
-    changes = proposal.get("changes", {})
-
-    lines = [
-        f"- **决策**: `{decision}`",
-        f"- **原因**: {reason}",
-    ]
-    if confidence is not None:
-        lines.append(f"- **置信度**: {confidence}")
-    lines.append("")
-
-    if changes and isinstance(changes, dict) and decision == "modify":
-        # 判断 changes 是否是 {key: {from, to, reason}} 结构
-        first_val = next(iter(changes.values()), None)
-        if isinstance(first_val, dict) and "from" in first_val:
-            lines.append("| 参数 | 旧值 | 新值 | 原因 |")
-            lines.append("|---|---|---|---|")
-            for key, ch in changes.items():
-                lines.append(
-                    f"| `{key}` | `{ch.get('from')}` | `{ch.get('to')}` "
-                    f"| {ch.get('reason', '')} |"
-                )
-        else:
-            # 简易格式 {key: value}
-            lines.append("| 参数 | 目标值 |")
-            lines.append("|---|---|")
-            for key, val in changes.items():
-                lines.append(f"| `{key}` | `{val}` |")
-        lines.append("")
-
-    return "\n".join(lines)
+def _artifact_path(run_dir: Path, index: Mapping[str, Any], name: str) -> Path:
+    artifacts = index.get("artifacts")
+    relative = artifacts.get(name) if isinstance(artifacts, Mapping) else None
+    if not isinstance(relative, str):
+        trial_id = index.get("trial_id")
+        relative = f"trials/{int(trial_id):04d}/{name}.json" if isinstance(trial_id, int) else name
+    candidate = (run_dir / relative).resolve()
+    try:
+        candidate.relative_to(run_dir.resolve())
+    except ValueError:
+        raise ValueError(f"artifact path escapes run directory: {relative}")
+    return candidate
 
 
-def _feasibility_result(review: dict) -> dict:
-    """兼容新旧 trace：新格式把最终判定放在 review.result 中。"""
-    for key in ("result", "review", "decision"):
-        value = review.get(key)
-        if isinstance(value, dict):
-            return value
-    return review
+def _fmt(value: Any, spec: str = ".1f") -> str:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return format(value, spec)
+    return "-"
 
 
-def _feasibility_tool_calls(review: dict) -> list[dict]:
-    """从 feasibility Agent 运行记录中提取工具调用。"""
-    tool_calls = review.get("tool_calls")
-    if isinstance(tool_calls, list):
-        return tool_calls
+def _markdown(value: Any) -> str:
+    return str(value).replace("|", r"\|").replace("\n", " ")
 
-    # 兼容曾经把 Agent 运行信息包在 conversation/trace 中的格式。
-    for key in ("conversation", "trace"):
-        nested = review.get(key)
-        if isinstance(nested, dict) and isinstance(nested.get("tool_calls"), list):
-            return nested["tool_calls"]
+
+def _compact_json(value: Any, max_len: int = 130) -> str:
+    text = json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+    return text if len(text) <= max_len else text[:max_len] + "…"
+
+
+def _tool_calls(record: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(record, Mapping):
+        return []
+    calls = record.get("tool_calls")
+    if isinstance(calls, list):
+        return [call for call in calls if isinstance(call, dict)]
     return []
 
 
-def extract_feasibility(feas: list[dict] | dict | None) -> str:
-    """格式化 feasibility Agent 的工具调用、判定、风险和显存预测。"""
-    if not feas:
-        return ""
-    if isinstance(feas, dict):
-        feas = [feas]
+def _result(record: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(record, Mapping):
+        return {}
+    for key in ("result", "review", "decision"):
+        value = record.get(key)
+        if isinstance(value, Mapping):
+            return dict(value)
+    return dict(record)
 
-    lines = ["#### Feasibility Agent 审查", ""]
-    for i, review in enumerate(feas):
-        if not isinstance(review, dict):
-            continue
 
-        result = _feasibility_result(review)
-        tool_calls = _feasibility_tool_calls(review)
-        verdict = result.get("verdict", "?")
-        reason = result.get("reason", "")
-        attempt = review.get("attempt", i + 1)
-
-        lines.append(f"**审查 #{i + 1}（attempt={attempt}）**")
-        lines.append("")
-        if tool_calls:
-            lines.append(f"**Feasibility 工具调用 ({len(tool_calls)} 次):**")
-            lines.append("")
-            lines.append(extract_tool_calls(tool_calls))
+def _tool_table(calls: list[dict[str, Any]]) -> str:
+    if not calls:
+        return "_无工具调用_\n"
+    lines = ["| 轮次 | 工具 | 参数 / 查询内容 | 状态 |", "|---|---|---|---|"]
+    for call in calls:
+        arguments = call.get("arguments")
+        arguments = arguments if isinstance(arguments, Mapping) else {}
+        name = str(call.get("name", "?"))
+        if name == "parameter_understanding":
+            summary = ", ".join(map(str, arguments.get("items", [])))
+        elif name == "memory_estimator":
+            changes = arguments.get("changes")
+            keys = ", ".join(changes) if isinstance(changes, Mapping) else ""
+            summary = f"ref_trial={arguments.get('reference_trial_id', '?')}; {keys}"
+        elif name in {"tuning_strategies", "query_trial_history", "read_trial_metrics"}:
+            summary = _compact_json(arguments)
+        elif name == "search_verl_docs":
+            summary = f"查询: {arguments.get('query', '')}"
         else:
-            lines.append("_Feasibility Agent 无工具调用_")
-            lines.append("")
-
-        lines.append(f"- **判定**: `{verdict}`")
-        lines.append(f"- **原因**: {reason or '-'}")
-
-        risks = result.get("risks", [])
-        if risks:
-            lines.append("- **风险**:")
-            for risk in risks:
-                lines.append(f"  - {risk}")
-
-        predicted = result.get("predicted_memory_pct")
-        if isinstance(predicted, dict) and predicted:
-            lines.append("")
-            lines.append("**预测显存占用 (%):**")
-            lines.append("")
-            lines.append("| rollout | actor_log_prob | ref_log_prob | training |")
-            lines.append("|---:|---:|---:|---:|")
-            lines.append(
-                "| "
-                + " | ".join(
-                    _fmt(predicted.get(phase), ".2f")
-                    for phase in (
-                        "rollout",
-                        "actor_log_prob",
-                        "ref_log_prob",
-                        "training",
-                    )
-                )
-                + " |"
-            )
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-def extract_diagnosis(diagnosis: dict | None) -> str:
-    """格式化 Diagnosis Agent 的工具调用和最终诊断。"""
-    if not isinstance(diagnosis, dict):
-        return ""
-
-    result = _feasibility_result(diagnosis)
-    tool_calls = _feasibility_tool_calls(diagnosis)
-    lines = ["#### Diagnosis Agent 诊断", ""]
-
-    if tool_calls:
-        lines.append(f"**Diagnosis 工具调用 ({len(tool_calls)} 次):**")
-        lines.append("")
-        lines.append(extract_tool_calls(tool_calls))
-    else:
-        lines.append("_Diagnosis Agent 无工具调用_")
-        lines.append("")
-
-    lines.append(f"- **失败类型**: `{result.get('failure_type', '?')}`")
-    lines.append(f"- **训练子阶段**: `{result.get('training_substage', '?')}`")
-    if result.get("confidence") is not None:
-        lines.append(f"- **置信度**: {result['confidence']}")
-    lines.append(f"- **原因**: {result.get('reason') or '-'}")
-
-    evidence = result.get("evidence", [])
-    if evidence:
-        lines.append("- **证据**:")
-        for item in evidence:
-            lines.append(f"  - {item}")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def extract_health_decisions(decisions: list[dict] | None) -> str:
-    """格式化 Trial 运行期间 Health Monitor 的决策。"""
-    if not decisions:
-        return ""
-
-    lines = ["### Trial 运行中的 Health Monitor 行为", ""]
-    for index, decision in enumerate(decisions):
-        if not isinstance(decision, dict):
-            continue
-
-        event_id = decision.get("event_id", f"event-{index + 1}")
-        lines.append(f"#### Health 决策 #{index + 1}: `{event_id}`")
-        lines.append("")
-        lines.append(f"- **判定**: `{decision.get('verdict', '?')}`")
-        lines.append(f"- **动作**: `{decision.get('action', '?')}`")
-        if decision.get("confidence") is not None:
-            lines.append(f"- **置信度**: {decision['confidence']}")
-        if decision.get("observe_for_updates") is not None:
-            lines.append(
-                f"- **继续观察步数**: {decision['observe_for_updates']}"
-            )
-        lines.append(f"- **原因**: {decision.get('reason') or '-'}")
-
-        reason_codes = decision.get("reason_codes", [])
-        if reason_codes:
-            lines.append(
-                "- **原因代码**: "
-                + ", ".join(f"`{code}`" for code in reason_codes)
-            )
-
-        evidence = decision.get("evidence", [])
-        if evidence:
-            lines.append("- **支持证据**:")
-            for item in evidence:
-                lines.append(f"  - {item}")
-
-        counterevidence = decision.get("counterevidence", [])
-        if counterevidence:
-            lines.append("- **反向证据**:")
-            for item in counterevidence:
-                lines.append(f"  - {item}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-def extract_rejections(rejections: list[dict] | None) -> str:
-    """格式化 rejections。"""
-    if not rejections:
-        return ""
-    lines = ["### 建议被拒绝记录", ""]
-    for i, r in enumerate(rejections):
-        source = r.get("source", "?")
-        violations = r.get("violations", [])
-        lines.append(f"- **#{i+1}** 来源: `{source}`")
-        for v in violations:
-            lines.append(f"  - ❌ {v}")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _trace_source_trial_id(trace: dict) -> int | None:
-    """找出一次 Agent trace 实际分析的是哪个已完成 Trial。"""
-    proposal = trace.get("proposal_conversation")
-    if isinstance(proposal, dict):
-        context = proposal.get("context")
-        if isinstance(context, dict):
-            last_trial = context.get("last_trial")
-            if isinstance(last_trial, dict) and isinstance(
-                last_trial.get("trial_id"), int
-            ):
-                return last_trial["trial_id"]
-
-    diagnosis = trace.get("diagnosis")
-    if isinstance(diagnosis, dict):
-        context = diagnosis.get("context")
-        if isinstance(context, dict):
-            diagnosed_trial = context.get("trial")
-            if isinstance(diagnosed_trial, dict) and isinstance(
-                diagnosed_trial.get("trial_id"), int
-            ):
-                return diagnosed_trial["trial_id"]
-    return None
-
-
-def _trace_tool_counts(trace: dict) -> tuple[int, int, int]:
-    """返回 Diagnosis、Proposal、Feasibility 的工具调用数。"""
-    diagnosis = trace.get("diagnosis")
-    diagnosis_count = (
-        len(_feasibility_tool_calls(diagnosis))
-        if isinstance(diagnosis, dict)
-        else 0
-    )
-
-    proposal = trace.get("proposal_conversation")
-    proposal_count = (
-        len(_feasibility_tool_calls(proposal))
-        if isinstance(proposal, dict)
-        else 0
-    )
-
-    feasibility = trace.get("feasibility_reviews") or []
-    if isinstance(feasibility, dict):
-        feasibility = [feasibility]
-    feasibility_count = sum(
-        len(_feasibility_tool_calls(review))
-        for review in feasibility
-        if isinstance(review, dict)
-    )
-    return diagnosis_count, proposal_count, feasibility_count
-
-
-def _fmt(val, spec=".1f"):
-    """安全格式化数值，处理 None。"""
-    if val is None:
-        return "-"
-    return format(val, spec)
-
-
-def extract_metrics(trial: dict) -> str:
-    """提取关键指标。"""
-    lines = ["### 关键指标", ""]
-
-    perf = trial.get("performance", {})
-    if perf:
-        tp = perf.get("throughput", {})
-        tps = perf.get("time_per_step_s", {})
-        tgs = perf.get("generation_tgs", {})
-        mfu = perf.get("actor_mfu", {})
-        bottleneck = perf.get("time_bottleneck", "")
-        lines.append("| 指标 | 均值 | P95 | 最大值 |")
-        lines.append("|---|---|---|---|")
-        if tp:
-            lines.append(f"| 吞吐量 (tok/s) | {_fmt(tp.get('mean'), '.1f')} | {_fmt(tp.get('p95'), '.1f')} | {_fmt(tp.get('max'), '.1f')} |")
-        if tps:
-            lines.append(f"| 每步耗时 (s) | {_fmt(tps.get('mean'), '.1f')} | {_fmt(tps.get('p95'), '.1f')} | {_fmt(tps.get('max'), '.1f')} |")
-        if tgs:
-            lines.append(f"| 生成 tgs | {_fmt(tgs.get('mean'), '.1f')} | {_fmt(tgs.get('p95'), '.1f')} | {_fmt(tgs.get('max'), '.1f')} |")
-        if mfu:
-            lines.append(f"| Actor MFU | {_fmt(mfu.get('mean'), '.4f')} | {_fmt(mfu.get('p95'), '.4f')} | {_fmt(mfu.get('max'), '.4f')} |")
-        if bottleneck:
-            lines.append(f"| **时间瓶颈** | {bottleneck} |||")
-        lines.append("")
-
-    stability = trial.get("stability", {})
-    if stability:
-        windows = stability.get("windows", [])
-        metrics = stability.get("metrics", {})
-        if isinstance(windows, list) and isinstance(metrics, dict):
-            lines.append(f"**稳定性时序（每 {stability.get('window_size', '?')} step 一个 window）:**")
-            lines.append("")
-            lines.append("| Step window | Reward | PPO KL | Clip Fraction | Entropy | LR | Response clip ratio |")
-            lines.append("|---|---:|---:|---:|---:|---:|---:|")
-            metric_order = (
-                "critic/rewards/mean",
-                "actor/ppo_kl",
-                "actor/pg_clipfrac",
-                "actor/entropy",
-                "actor/lr",
-                "response_length/clip_ratio",
-            )
-            formats = (".4f", ".8f", ".6f", ".4f", ".2e", ".4f")
-            for index, window in enumerate(windows):
-                if not isinstance(window, dict):
-                    continue
-                values = []
-                for metric in metric_order:
-                    series = metrics.get(metric)
-                    values.append(series[index] if isinstance(series, list) and index < len(series) else None)
-                label = f"{window.get('start_step', '?')}–{window.get('end_step', '?')} (n={window.get('sample_count', '?')})"
-                lines.append("| " + label + " | " + " | ".join(_fmt(value, spec) for value, spec in zip(values, formats)) + " |")
-            lines.append("")
-
-    phase_duration = (
-        perf.get("phase_duration_s", {}) if isinstance(perf, dict) else {}
-    )
-    phase_memory = trial.get("memory_by_phase_pct", {})
-    phase_gpu_utilization = trial.get("gpu_utilization_by_phase_pct", {})
-    resource = trial.get("resource", {})
-    phase_metrics = (phase_duration, phase_memory, phase_gpu_utilization)
-    if any(isinstance(metric, dict) and metric for metric in phase_metrics):
-        lines.append("**分阶段耗时、显存与 GPU 利用率:**")
-        lines.append("")
+            summary = _compact_json(arguments)
         lines.append(
-            "| 阶段 | 耗时均值 (s) | 显存均值 (%) | 显存峰值 (%) | "
-            "GPU 利用率均值 (%) | GPU 利用率 P95 (%) | "
-            "GPU 利用率峰值 (%) |"
+            f"| {call.get('tool_round', '?')} | `{name}` | {_markdown(summary)} | {_markdown(call.get('status', '?'))} |"
         )
-        lines.append("|---|---:|---:|---:|---:|---:|---:|")
-        for pname in PHASES:
-            duration = (
-                phase_duration.get(pname, {})
-                if isinstance(phase_duration, dict)
-                else {}
-            )
-            memory = (
-                phase_memory.get(pname, {})
-                if isinstance(phase_memory, dict)
-                else {}
-            )
-            utilization = (
-                phase_gpu_utilization.get(pname, {})
-                if isinstance(phase_gpu_utilization, dict)
-                else {}
-            )
-            duration = duration if isinstance(duration, dict) else {}
-            memory = memory if isinstance(memory, dict) else {}
-            utilization = utilization if isinstance(utilization, dict) else {}
-            if not any(
-                summary for summary in (duration, memory, utilization)
-            ):
-                continue
-            lines.append(
-                f"| {pname} | {_fmt(duration.get('mean'), '.1f')} | "
-                f"{_fmt(memory.get('mean'), '.1f')} | "
-                f"{_fmt(memory.get('max'), '.1f')} | "
-                f"{_fmt(utilization.get('mean'), '.1f')} | "
-                f"{_fmt(utilization.get('p95'), '.1f')} | "
-                f"{_fmt(utilization.get('max'), '.1f')} |"
-            )
-        lines.append("")
-
-    if isinstance(resource, dict) and resource:
-        relative_peak_phase = resource.get("memory_bottleneck", "-")
-        observed_peak = resource.get("max_observed_memory_pct")
-        lines.append(
-            f"- **相对最高显存阶段**: {relative_peak_phase} "
-            "（仅表示四阶段中峰值最高，不等于存在显存压力）"
-        )
-        lines.append(f"- **总体实测峰值**: {_fmt(observed_peak, '.1f')}%")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-def extract_param_diff(current: dict, previous: dict | None) -> str:
-    """对比两个 trial 的参数差异。"""
-    if not previous:
-        return ""
-    diffs = []
-    for key in sorted(set(list(current.keys()) + list(previous.keys()))):
-        cv = current.get(key)
-        pv = previous.get(key)
-        if cv != pv:
-            diffs.append(f"| `{key}` | `{pv}` | `{cv}` |")
-
-    if not diffs:
-        return "_参数无变化_\n"
-
-    lines = ["| 参数 | 旧值 | 新值 |", "|---|---|---|"]
-    lines.extend(diffs)
     return "\n".join(lines) + "\n"
 
 
-# ── 主逻辑 ──────────────────────────────────────────────
+def _proposal_section(proposal: Mapping[str, Any]) -> str:
+    if not proposal:
+        return "_无 Proposal 决策记录_\n"
+    lines = [
+        "#### Proposal Agent 决策",
+        "",
+        f"- **决策**: `{proposal.get('decision', '?')}`",
+        f"- **原因**: {proposal.get('reason') or '-'}",
+        f"- **参考 Trial**: {proposal.get('reference_trial_id', '-')}",
+    ]
+    candidates = proposal.get("candidates")
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                continue
+            lines.extend(["", f"**候选 `{candidate.get('candidate_id', '?')}`**"])
+            lines.append(f"- {candidate.get('reason') or '-'}")
+            _append_changes(lines, candidate.get("changes"))
+    else:
+        _append_changes(lines, proposal.get("changes"))
+    return "\n".join(lines) + "\n"
 
-def process_experiment(exp_dir: Path, output_path: Path) -> None:
-    trials_path = exp_dir / "trials.jsonl"
-    if not trials_path.exists():
-        print(f"错误: 找不到 {trials_path}")
-        sys.exit(1)
 
-    state_path = exp_dir / "state.json"
-    state_info = ""
-    if state_path.exists():
-        state = json.load(state_path.open(encoding="utf-8"))
-        state_info = (
-            f"- **最终阶段**: `{state.get('current_stage', '?')}`\n"
-            f"- **总 Trial 数**: {state.get('last_trial_id', '?')}\n"
-        )
-
-    # 读取所有 trial
-    trials = []
-    with trials_path.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                trials.append(json.loads(line))
-    # agent_trace 随“候选 Trial”保存，但其中的 Agent 行为发生在上一个
-    # Trial 完成之后。报告按被分析的源 Trial 归属，避免 Trial 5 这类
-    # 阶段基准 Trial 显示成“没有 Agent 行为”。
-    actions_by_source: dict[int, list[tuple[dict, dict]]] = {}
-    for index, target_trial in enumerate(trials):
-        trace = target_trial.get("agent_trace")
-        if not isinstance(trace, dict) or not trace:
-            continue
-        source_id = _trace_source_trial_id(trace)
-        if source_id is None and index > 0:
-            source_id = trials[index - 1].get("trial_id")
-        if isinstance(source_id, int):
-            actions_by_source.setdefault(source_id, []).append((target_trial, trace))
-
-    # 提取实验时间戳
-    exp_name = exp_dir.name
-    ts_match = None
-    for part in exp_name.split("_"):
-        if len(part) == 4 and part.isdigit():
-            ts_match = part
-            break
-
-    lines: list[str] = []
-    lines.append(f"# Agent 实验报告: `{exp_name}`")
-    lines.append("")
-    lines.append(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"**数据来源**: `{exp_dir}`")
-    lines.append(f"**总 Trial 数**: {len(trials)}")
-    lines.append("")
-    lines.append("## 实验概览")
-    lines.append("")
-    lines.append(state_info)
-    lines.append("")
-
-    # 试验总览表
-    lines.append("| Trial | 阶段 | 结果 | 吞吐量 | 末个完整窗口 Reward | 显存峰值% | Health 决策 | 完成后的 Agent 工具调用（D + P + F） |")
-    lines.append("|---|---|---|---:|---:|---:|:---:|:---:|")
-    for t in trials:
-        tid = t.get("trial_id", "?")
-        stage = t.get("stage", "?")
-        result = t.get("result", "?")
-        tp = t.get("performance", {}).get("throughput", {}).get("mean", "-")
-        if isinstance(tp, (int, float)):
-            tp = f"{tp:.0f}"
-        stability = t.get("stability", {})
-        windows = stability.get("windows", []) if isinstance(stability, dict) else []
-        metrics = stability.get("metrics", {}) if isinstance(stability, dict) else {}
-        rewards = metrics.get("critic/rewards/mean", []) if isinstance(metrics, dict) else []
-        window_size = stability.get("window_size") if isinstance(stability, dict) else None
-        tail_reward = "-"
-        for window, reward in reversed(list(zip(windows, rewards))):
-            if isinstance(window, dict) and window.get("sample_count") == window_size and isinstance(reward, (int, float)):
-                tail_reward = f"{reward:.4f}"
-                break
-        mem = t.get("resource", {}).get("max_observed_memory_pct", "-")
-        if isinstance(mem, (int, float)):
-            mem = f"{mem:.1f}%"
-        diagnosis_tools = 0
-        proposal_tools = 0
-        feasibility_tools = 0
-        for _, trace in actions_by_source.get(tid, []):
-            d_count, p_count, f_count = _trace_tool_counts(trace)
-            diagnosis_tools += d_count
-            proposal_tools += p_count
-            feasibility_tools += f_count
-        total_tools = diagnosis_tools + proposal_tools + feasibility_tools
-        tool_str = (
-            f"{diagnosis_tools} + {proposal_tools} + "
-            f"{feasibility_tools} = {total_tools}"
-            if total_tools
-            else "-"
-        )
-        health_count = len(t.get("health_decisions") or [])
-        health_str = str(health_count) if health_count else "-"
-
-        lines.append(
-            f"| {tid} | {stage} | {result} | {tp} | {tail_reward} "
-            f"| {mem} | {health_str} | {tool_str} |"
-        )
-    lines.append("")
-
-    # ── 逐 Trial 详细展开 ──
-    lines.append("---")
-    lines.append("")
-    lines.append("## 逐 Trial 详细分析")
-    lines.append("")
-
-    prev_params = None
-    for idx, t in enumerate(trials):
-        tid = t.get("trial_id", "?")
-        stage = t.get("stage", "?")
-        result = t.get("result", "?")
-        updates = t.get("updates_completed", "?")
-
-        lines.append(f"### Trial {tid}: {stage}")
-        lines.append("")
-        lines.append(f"- **结果**: `{result}` | **完成步数**: {updates}/{t.get('updates_target', '?')}")
-        error = t.get("error", {})
-        if error and error.get("type"):
-            lines.append(f"- **错误类型**: {error['type']}")
-        lines.append("")
-
-        # 参数对比
-        params = t.get("parameters", {})
-        if prev_params is not None and params != prev_params:
-            lines.append("#### 参数变更（相比上一 Trial）")
-            lines.append("")
-            lines.append(extract_param_diff(params, prev_params))
-            lines.append("")
-        elif idx == 0:
-            lines.append("#### 初始参数（基准）")
-            lines.append("")
-            lines.append(f"_完整参数见 `trials/{tid:04d}/parameters.json`_")
-            lines.append("")
-        prev_params = params
-
-        # 关键指标
-        lines.append(extract_metrics(t))
-
-        # Health Monitor 决策发生在当前 Trial 运行期间。
-        health_decisions = t.get("health_decisions") or []
-        if health_decisions:
-            lines.append(extract_health_decisions(health_decisions))
-
-        # 其他 Agent 行为按“该 Trial 完成之后”归属；trace 本身保存在目标 Trial。
-        actions = actions_by_source.get(tid, [])
-        if actions:
-            lines.append("### 本 Trial 完成后的 Agent 行为")
-            lines.append("")
-
-            for target_trial, trace in actions:
-                target_id = target_trial.get("trial_id", "?")
-                lines.append(f"_以下行为用于生成 Trial {target_id} 的候选配置。_")
-                lines.append("")
-
-                diagnosis = trace.get("diagnosis")
-                if diagnosis:
-                    lines.append(extract_diagnosis(diagnosis))
-
-                conv = trace.get("proposal_conversation") or {}
-                tool_calls = _feasibility_tool_calls(conv)
-                if conv:
-                    lines.append("#### Proposal Agent 决策")
-                    lines.append("")
-                    if tool_calls:
-                        lines.append(
-                            f"**Proposal 工具调用 ({len(tool_calls)} 次):**"
-                        )
-                        lines.append("")
-                        lines.append(extract_tool_calls(tool_calls))
-                        lines.append("")
-
-                    proposal = conv.get("result")
-                    if not isinstance(proposal, dict):
-                        proposal = target_trial.get("proposal", {})
-                    lines.append(extract_proposal_changes(proposal))
-                    lines.append("")
-
-                feas = trace.get("feasibility_reviews", [])
-                if feas:
-                    lines.append(extract_feasibility(feas))
-
-                rejs = trace.get("rejections", [])
-                if rejs:
-                    lines.append(extract_rejections(rejs))
+def _append_changes(lines: list[str], changes: Any) -> None:
+    if not isinstance(changes, Mapping) or not changes:
+        return
+    lines.extend(["", "| 参数 | 旧值 | 新值 | 原因 |", "|---|---|---|---|"])
+    for key, value in changes.items():
+        if isinstance(value, Mapping):
+            lines.append(
+                f"| `{key}` | `{_markdown(value.get('from', '-'))}` | `{_markdown(value.get('to', '-'))}` | {_markdown(value.get('reason', ''))} |"
+            )
         else:
-            lines.append("### 本 Trial 完成后的 Agent 行为")
-            lines.append("")
-            if idx == len(trials) - 1:
-                lines.append("_这是最后一个 Trial，记录中没有后续 Agent trace。_")
-            else:
-                lines.append("_该 Trial 完成后没有记录 Diagnosis、Proposal 或 Feasibility trace。_")
-            lines.append("")
+            lines.append(f"| `{key}` | - | `{_markdown(value)}` | |")
 
-        # 实验日志路径
-        log_path = t.get("log_path", "")
-        if log_path:
-            lines.append(f"📄 [训练日志]({log_path})")
-            lines.append("")
 
-        lines.append("---")
+def _diagnosis_section(diagnosis: Mapping[str, Any]) -> str:
+    result = _result(diagnosis)
+    lines = ["#### Diagnosis Agent 诊断", ""]
+    calls = _tool_calls(diagnosis)
+    if calls:
+        lines.extend([f"**Diagnosis 工具调用 ({len(calls)} 次):**", "", _tool_table(calls)])
+    lines.extend(
+        [
+            f"- **失败类型**: `{result.get('failure_type', result.get('type', '?'))}`",
+            f"- **训练子阶段**: `{result.get('training_substage', result.get('failure_phase', '?'))}`",
+            f"- **置信度**: {result.get('confidence', '-')}",
+            f"- **原因**: {result.get('reason') or '-'}",
+        ]
+    )
+    evidence = result.get("evidence")
+    if isinstance(evidence, list) and evidence:
+        lines.append("- **证据**:")
+        lines.extend(f"  - {_markdown(item)}" for item in evidence)
+    return "\n".join(lines) + "\n"
+
+
+def _feasibility_section(reviews: Any) -> str:
+    if isinstance(reviews, Mapping):
+        reviews = [reviews]
+    if not isinstance(reviews, list) or not reviews:
+        return ""
+    lines = ["#### Feasibility Agent 审查", ""]
+    for index, review in enumerate(reviews, start=1):
+        if not isinstance(review, Mapping):
+            continue
+        result = _result(review)
+        calls = _tool_calls(review)
+        lines.extend([f"**审查 #{index}（attempt={review.get('attempt', index)}）**", ""])
+        if calls:
+            lines.extend([f"**Feasibility 工具调用 ({len(calls)} 次):**", "", _tool_table(calls)])
+        lines.extend(
+            [
+                f"- **判定**: `{result.get('verdict', '?')}`",
+                f"- **选中候选**: `{result.get('selected_candidate_id', '-')}`",
+                f"- **原因**: {result.get('reason') or '-'}",
+            ]
+        )
+        risks = result.get("risks")
+        if isinstance(risks, list) and risks:
+            lines.append("- **风险**:")
+            lines.extend(f"  - {_markdown(risk)}" for risk in risks)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _health_section(events_path: Path, traces_path: Path) -> str:
+    events = _read_jsonl(events_path)
+    decisions = [event for event in events if event.get("record_type") in {"agent_decision", "agent_error"}]
+    if not decisions:
+        return ""
+    trace_count = len(_read_jsonl(traces_path))
+    lines = ["### Trial 运行中的 Health Monitor 行为", ""]
+    for index, decision in enumerate(decisions, start=1):
+        lines.extend(
+            [
+                f"#### Health 决策 #{index}: `{decision.get('event_id', '?')}`",
+                "",
+                f"- **判定**: `{decision.get('verdict', '?')}`",
+                f"- **动作**: `{decision.get('action', '?')}`",
+                f"- **snapshot step**: {decision.get('snapshot_step', '-')}",
+                f"- **置信度**: {decision.get('confidence', '-')}",
+                f"- **原因**: {decision.get('reason') or '-'}",
+            ]
+        )
+    if trace_count:
+        lines.extend(["", f"_完整 Health Agent trace：{trace_count} 条，见 `{traces_path.name}`。_"])
+    return "\n".join(lines) + "\n"
+
+
+def _metrics_section(metrics: Mapping[str, Any]) -> str:
+    throughput = metrics.get("throughput") if isinstance(metrics.get("throughput"), Mapping) else {}
+    summary = throughput.get("summary") if isinstance(throughput.get("summary"), Mapping) else {}
+    lines = ["### 关键指标", ""]
+    if summary:
+        lines.extend(["| 指标 | 均值 | P95 | 最大值 |", "|---|---:|---:|---:|"])
+        for title, key, spec in (
+            ("吞吐量 (tok/s)", "throughput", ".1f"),
+            ("每步耗时 (s)", "time_per_step_s", ".1f"),
+            ("生成 TGS", "generation_tgs", ".1f"),
+            ("Actor TGS", "actor_tgs", ".1f"),
+            ("Actor MFU", "actor_mfu", ".4f"),
+        ):
+            value = summary.get(key)
+            if isinstance(value, Mapping):
+                lines.append(f"| {title} | {_fmt(value.get('mean'), spec)} | {_fmt(value.get('p95'), spec)} | {_fmt(value.get('max'), spec)} |")
+        if summary.get("time_bottleneck"):
+            lines.append(f"| **时间瓶颈** | {_markdown(summary['time_bottleneck'])} | | |")
         lines.append("")
 
-    # 写入文件
-    with output_path.open("w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    resource = metrics.get("resource") if isinstance(metrics.get("resource"), Mapping) else {}
+    by_phase = resource.get("by_phase") if isinstance(resource.get("by_phase"), Mapping) else {}
+    utilization = resource.get("utilization_by_phase_pct") if isinstance(resource.get("utilization_by_phase_pct"), Mapping) else {}
+    durations = throughput.get("phase_duration_s") if isinstance(throughput.get("phase_duration_s"), Mapping) else {}
+    if any(isinstance(data, Mapping) for data in (by_phase, utilization, durations)):
+        lines.extend(
+            [
+                "**分阶段耗时、显存与 GPU 利用率:**",
+                "",
+                "| 阶段 | 耗时均值 (s) | 显存均值 (MiB) | 显存 P95 (MiB) | 显存峰值 (MiB) | GPU 利用率均值 (%) | GPU 利用率 P95 (%) |",
+                "|---|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for phase in PHASES:
+            phase_memory = by_phase.get(phase) if isinstance(by_phase.get(phase), Mapping) else {}
+            phase_duration = durations.get(phase) if isinstance(durations.get(phase), Mapping) else {}
+            phase_util = utilization.get(phase) if isinstance(utilization.get(phase), Mapping) else {}
+            if not (phase_memory or phase_duration or phase_util):
+                continue
+            lines.append(
+                f"| {phase} | {_fmt(phase_duration.get('mean'))} | {_fmt(phase_memory.get('mean_used_mib'))} | {_fmt(phase_memory.get('p95_used_mib'))} | {_fmt(phase_memory.get('max_used_mib'))} | {_fmt(phase_util.get('mean'))} | {_fmt(phase_util.get('p95'))} |"
+            )
+        lines.append("")
+    resource_summary = resource.get("summary") if isinstance(resource.get("summary"), Mapping) else {}
+    if resource_summary:
+        lines.extend(
+            [
+                f"- **最高显存阶段**: {resource_summary.get('memory_bottleneck_phase', '-')}",
+                f"- **总体显存峰值**: {_fmt(resource_summary.get('max_used_mib'))} MiB",
+                f"- **最小剩余显存**: {_fmt(resource_summary.get('min_free_mib'))} MiB",
+                f"- **Resource Gate**: `{'safe' if resource_summary.get('resource_safe') else 'unsafe'}`",
+                "",
+            ]
+        )
+    stability = metrics.get("stability") if isinstance(metrics.get("stability"), Mapping) else {}
+    windows = stability.get("windows") if isinstance(stability.get("windows"), list) else []
+    window_metrics = stability.get("window_metrics") if isinstance(stability.get("window_metrics"), Mapping) else {}
+    if windows:
+        lines.extend([f"**稳定性时序（每 {stability.get('window_size', '?')} step 一个 window）:**", "", "| Step window | Reward | PPO KL | Clip Fraction | Entropy | LR |", "|---|---:|---:|---:|---:|---:|"])
+        keys = ("critic/rewards/mean", "actor/ppo_kl", "actor/pg_clipfrac", "actor/entropy", "actor/lr")
+        specs = (".4f", ".8f", ".6f", ".4f", ".2e")
+        for index, window in enumerate(windows):
+            if not isinstance(window, Mapping):
+                continue
+            values = []
+            for key, spec in zip(keys, specs):
+                series = window_metrics.get(key)
+                value = series[index] if isinstance(series, list) and index < len(series) else None
+                values.append(_fmt(value, spec))
+            label = f"{window.get('start_step', '?')}–{window.get('end_step', '?')} (n={window.get('sample_count', '?')})"
+            lines.append("| " + label + " | " + " | ".join(values) + " |")
+        lines.append("")
+    return "\n".join(lines)
 
+
+def _parameter_diff(current: Mapping[str, Any], previous: Mapping[str, Any] | None) -> str:
+    if previous is None:
+        return "#### 初始参数（基准）\n\n_完整参数见本 Trial 的 `parameters.json`。_\n"
+    changes = [key for key in sorted(set(current) | set(previous)) if current.get(key) != previous.get(key)]
+    if not changes:
+        return "#### 参数变更\n\n_参数无变化。_\n"
+    lines = ["#### 参数变更（相比上一 Trial）", "", "| 参数 | 旧值 | 新值 |", "|---|---|---|"]
+    lines.extend(f"| `{key}` | `{_markdown(previous.get(key))}` | `{_markdown(current.get(key))}` |" for key in changes)
+    return "\n".join(lines) + "\n"
+
+
+def _trace_source_id(trace: Mapping[str, Any], fallback: int | None) -> int | None:
+    proposal = trace.get("proposal_conversation")
+    context = proposal.get("context") if isinstance(proposal, Mapping) else None
+    last_trial = context.get("last_trial") if isinstance(context, Mapping) else None
+    if isinstance(last_trial, Mapping) and isinstance(last_trial.get("trial_id"), int):
+        return last_trial["trial_id"]
+    return fallback
+
+
+def process_experiment(run_dir: Path, output_path: Path) -> None:
+    indexes = _read_jsonl(run_dir / "trials.jsonl")
+    if not indexes:
+        raise FileNotFoundError(f"no readable trial index at {run_dir / 'trials.jsonl'}")
+    trials: list[dict[str, Any]] = []
+    for index in indexes:
+        if not isinstance(index.get("trial_id"), int):
+            continue
+        trials.append(
+            {
+                "index": index,
+                "parameters": _read_json(_artifact_path(run_dir, index, "parameters")),
+                "metrics": _read_json(_artifact_path(run_dir, index, "metrics")),
+                "decision": _read_json(_artifact_path(run_dir, index, "decision")),
+                "trace": _read_json(_artifact_path(run_dir, index, "agent_trace")),
+            }
+        )
+    actions_by_source: dict[int, list[dict[str, Any]]] = {}
+    for position, trial in enumerate(trials):
+        trace = trial["trace"]
+        if not trace or trace.get("_read_error"):
+            continue
+        fallback = trials[position - 1]["index"]["trial_id"] if position else None
+        source = _trace_source_id(trace, fallback)
+        if isinstance(source, int):
+            actions_by_source.setdefault(source, []).append(trial)
+
+    state = _read_json(run_dir / "state.json")
+    lines = [
+        f"# Agent 实验报告: `{run_dir.name}`",
+        "",
+        f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"**数据来源**: `{run_dir}`",
+        f"**总 Trial 数**: {len(trials)}",
+        "",
+        "## 实验概览",
+        "",
+        f"- **最终阶段**: `{state.get('current_stage', '?')}`",
+        f"- **总 Trial 数**: {state.get('last_trial_id', len(trials))}",
+        "",
+        "| Trial | 阶段 | 结果 | 吞吐量 (tok/s) | 每步耗时 (s) | 末窗口 Reward | 峰值显存 (MiB) | Resource Gate | 后续 Agent trace |",
+        "|---|---|---|---:|---:|---:|---:|:---:|:---:|",
+    ]
+    for trial in trials:
+        index = trial["index"]
+        scores = index.get("scores") if isinstance(index.get("scores"), Mapping) else {}
+        resource = index.get("resource") if isinstance(index.get("resource"), Mapping) else {}
+        trace_count = len(actions_by_source.get(index["trial_id"], []))
+        lines.append(
+            f"| {index['trial_id']} | {index.get('stage', '?')} | {index.get('result', '?')} | {_fmt(scores.get('throughput_mean'))} | {_fmt(scores.get('time_per_step_mean_s'))} | {_fmt(scores.get('terminal_reward'), '.4f')} | {_fmt(resource.get('max_used_mib'))} | {'safe' if resource.get('resource_safe') else 'unsafe'} | {trace_count or '-'} |"
+        )
+    lines.extend(["", "---", "", "## 逐 Trial 详细分析", ""])
+
+    previous_parameters: Mapping[str, Any] | None = None
+    for position, trial in enumerate(trials):
+        index, parameters, metrics, decision = trial["index"], trial["parameters"], trial["metrics"], trial["decision"]
+        trial_dir = _artifact_path(run_dir, index, "report").parent
+        lines.extend(
+            [
+                f"### Trial {index['trial_id']}: {index.get('stage', '?')}",
+                "",
+                f"- **结果**: `{index.get('result', '?')}` | **完成步数**: {index.get('updates_completed', '?')}/{index.get('updates_target', '?')}",
+            ]
+        )
+        error = index.get("error") if isinstance(index.get("error"), Mapping) else {}
+        if error.get("type"):
+            lines.append(f"- **错误类型**: `{error['type']}`")
+        lines.append("")
+        lines.append(_parameter_diff(parameters, previous_parameters))
+        previous_parameters = parameters
+        lines.append(_metrics_section(metrics))
+        lines.append(_health_section(_artifact_path(run_dir, index, "health_events"), _artifact_path(run_dir, index, "health_agent_traces")))
+        actions = actions_by_source.get(index["trial_id"], [])
+        lines.extend(["### 本 Trial 完成后的 Agent 行为", ""])
+        if actions:
+            for target in actions:
+                target_id = target["index"]["trial_id"]
+                lines.extend([f"_以下行为用于生成 Trial {target_id} 的候选配置。_", ""])
+                trace = target["trace"]
+                diagnosis = trace.get("diagnosis") if isinstance(trace.get("diagnosis"), Mapping) else target["decision"].get("diagnosis")
+                if isinstance(diagnosis, Mapping):
+                    lines.append(_diagnosis_section(diagnosis))
+                proposal_trace = trace.get("proposal_conversation") if isinstance(trace.get("proposal_conversation"), Mapping) else {}
+                calls = _tool_calls(proposal_trace)
+                if calls:
+                    lines.extend([f"**Proposal 工具调用 ({len(calls)} 次):**", "", _tool_table(calls)])
+                proposal = _result(proposal_trace) or target["decision"].get("proposal", {})
+                lines.append(_proposal_section(proposal if isinstance(proposal, Mapping) else {}))
+                lines.append(_feasibility_section(trace.get("feasibility_reviews")))
+        elif position == len(trials) - 1:
+            lines.append("_这是最后一个 Trial，尚无后续 Agent trace。_")
+        else:
+            lines.append("_该 Trial 完成后没有记录 Diagnosis、Proposal 或 Feasibility trace。_")
+        lines.extend(["", f"📁 Trial artifacts: `{trial_dir.relative_to(run_dir)}`", "", "---", ""])
+
+    output_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"✅ 报告已生成: {output_path}")
     print(f"   共 {len(trials)} 个 trial")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="提取实验目录中的 Agent 行为并生成 Markdown 报告。"
-    )
-    parser.add_argument(
-        "experiment_dir",
-        nargs="?",
-        type=Path,
-        default=DEFAULT_EXPERIMENT_DIR,
-        help=f"实验目录（默认：{DEFAULT_EXPERIMENT_DIR}）",
-    )
-    parser.add_argument(
-        "--output-name",
-        default=DEFAULT_OUTPUT_NAME,
-        help="写入实验目录内的 Markdown 文件名",
-    )
+def main() -> None:
+    parser = argparse.ArgumentParser(description="从 schema-v2 trial artifacts 生成 Agent Markdown 报告。")
+    parser.add_argument("experiment_dir", nargs="?", type=Path, default=DEFAULT_EXPERIMENT_DIR)
+    parser.add_argument("--output-name", default=DEFAULT_OUTPUT_NAME, help="写入实验目录内的 Markdown 文件名")
     args = parser.parse_args()
     if Path(args.output_name).name != args.output_name:
         parser.error("--output-name 必须是文件名，不能是路径")
-
-    exp_dir = args.experiment_dir.expanduser().resolve()
-    output_path = exp_dir / args.output_name
-    process_experiment(exp_dir, output_path)
+    process_experiment(args.experiment_dir.expanduser().resolve(), args.experiment_dir.expanduser().resolve() / args.output_name)
 
 
 if __name__ == "__main__":

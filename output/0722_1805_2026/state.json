@@ -1,9 +1,0 @@
-{
-  "current_stage": "hardware_tuning",
-<<<<<<< HEAD
-  "last_trial_id": 1,
-=======
-  "last_trial_id": 2,
->>>>>>> 0e7805ca100e8cc77882942b9cedd4ad1b9f1a3b
-  "history_path": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/output/0722_1805_2026/trials.jsonl"
-}

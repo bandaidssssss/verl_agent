@@ -118,6 +118,7 @@ def _round(value: float | None, digits: int = 2) -> float | None:
 def _extract_log_context(
     trial: Mapping[str, Any], parameters: Mapping[str, Any]
 ) -> dict[str, Any]:
+    """从log.facts.json中提取模型和工作负载的上下文信息。Extract model and workload context from log.facts.json."""
     del parameters
     facts = trial.get("log_facts")
     if not isinstance(facts, Mapping) or facts.get("schema_version") != 1:
@@ -181,6 +182,7 @@ def _candidate_length_profile(
     reference_parameters: Mapping[str, Any],
     candidate_parameters: Mapping[str, Any],
 ) -> dict[str, Any]:
+    """根据config的prompt和response长度估算candidate 的 token 长度"""
     ref_bound = _configured_length_profile(reference_parameters)[
         "configured_upper_tokens"
     ]
@@ -599,12 +601,12 @@ def _phase_keys(phase: str) -> dict[str, str]:
             "etp": ACTOR_ETP_KEY,
             "vpp": ACTOR_VPP_KEY,
             "sp": ACTOR_SP_KEY,
-            "param_offload": REF_PARAM_OFFLOAD_KEY,
+            "param_offload": ACTOR_PARAM_OFFLOAD_KEY,
             "dynamic_batch": REF_LOG_PROB_DYNAMIC_KEY,
             "dynamic_fallback": TRAINING_DYNAMIC_KEY,
             "max_tokens": REF_LOG_PROB_MAX_TOKENS_KEY,
             "max_tokens_fallback": TRAINING_MAX_TOKENS_KEY,
-            "remove_padding": REF_REMOVE_PADDING_KEY,
+            "remove_padding": ACTOR_REMOVE_PADDING_KEY,
             "remove_padding_fallback": ACTOR_REMOVE_PADDING_KEY,
         }
     if phase == "actor_log_prob":
@@ -2503,11 +2505,7 @@ def estimate_phase_memory(
     candidate_length = _candidate_length_profile(
         reference_length, reference_parameters, candidate_parameters
     )
-    if MODEL_KEY in changed:
-        raise ValueError(
-            "model path changes require a completed candidate trial and cannot be "
-            "estimated from reference log facts"
-        )
+
     candidate_context = reference_context
 
     measurements = _phase_measurements(reference)
