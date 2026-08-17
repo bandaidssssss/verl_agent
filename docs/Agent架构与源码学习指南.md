@@ -114,8 +114,8 @@ LLM → function call → ToolRegistry → 结果加入对话 → LLM 最终 JSO
 
 ## 6. 显存估算版本边界
 
-- [agent_tools/memory_estimator.py](../agent_tools/memory_estimator.py)：**生产版**，Agent 工具当前实际调用它。
-- [agent_tools/memory_estimator_V2.py](../agent_tools/memory_estimator_V2.py)：**实验版**，由 [tests/test_memory.py](../tests/test_memory.py) 做历史回放，尚未接入 Agent。
+- [agent_tools/memory_estimator_V3.py](../agent_tools/memory_estimator_V3.py)：**生产版**，只消费参考 trial 的结构化 artifact 并输出分阶段相对变化区间。
+- [agent_tools/memory_estimator.py](../agent_tools/memory_estimator.py) 与 [agent_tools/memory_estimator_V2.py](../agent_tools/memory_estimator_V2.py)：仅保留为历史实现或离线研究，不接入 Agent。
 - `agent_tools/mem_estimator.py`：理论公式参考，不是生产入口。
 
 生产版分别估算：
@@ -124,7 +124,7 @@ LLM → function call → ToolRegistry → 结果加入对话 → LLM 最终 JSO
 rollout / actor_log_prob / ref_log_prob / training
 ```
 
-风险判断要看 `upper_bound_pct` 和 `risk`，不能只看 `projected_pct`。真实短跑的 Resource Gate 才是最终安全依据。
+Agent 比较每个阶段的 `relative_change_pct.upper`、方向、置信度和未校准参数。Estimator 不输出绝对 MiB 或安全结论；真实短跑的 Resource Gate 才是最终安全依据。
 
 ## 7. Trial 执行与监控
 
@@ -134,10 +134,10 @@ rollout / actor_log_prob / ref_log_prob / training
 2. 将 stdout 保存为 `train.log`；
 3. 跟踪 rollout、actor log-prob、ref log-prob、training 阶段；
 4. 调用 SMI 采集逐 GPU 显存和利用率；
-5. 检查 OOM、NCCL/分布式错误和显存硬上限；
+5. 检查 OOM、NCCL/分布式错误，以及“每卡总容量减绝对 reserve”得到的显存硬上限；
 6. 条件采集 vLLM 指标；
 7. stability 阶段运行在线健康监控；
-8. 训练结束后生成 `trial_report.json`。
+8. 每个 update 原子写入 running `metrics.json`，训练结束后一次解析原始 artifact 并写入 final `metrics.json`。
 
 平台：
 
@@ -222,6 +222,11 @@ config/base_parameters.json 第一轮 verl 参数
 ├── last_agent_error.json
 └── trials/NNNN/
     ├── parameters.json
+    ├── parameter_groups.json
+    ├── metrics.json
+    ├── log_facts.json
+    ├── decision.json
+    ├── agent_trace.json
     ├── command.json
     ├── train.log
     ├── gpu_samples.csv
@@ -231,7 +236,17 @@ config/base_parameters.json 第一轮 verl 参数
     └── trial_report.json
 ```
 
-恢复状态、查询历史和构造下一轮都以 `trials.jsonl` 为准；`state.json` 不是完整历史。
+`trials.jsonl` 是轻量权威索引，状态机和历史初筛只读取它；详细参数、指标与决策按索引中的相对 artifact 路径按需加载。`state.json` 不是完整历史。Agent 指标工具只读 `metrics.json`，不会反复扫描 `train.log`；旧格式实验不兼容。
+
+指标分类如下：
+
+- `metrics.json.throughput`：吞吐、step 时间、TGS、MFU、各阶段耗时与 vLLM 指标。
+- `metrics.json.stability`：reward、KL、entropy、loss、clip、grad norm、学习率和对齐窗口。
+- `metrics.json.resource`：每卡容量、各阶段绝对 MiB 峰值、最坏 GPU、monitor 覆盖和绝对 reserve 策略。
+
+`parameter_groups.json` 由 Validator 的同一份白名单生成。ref 的 TP/PP/SP 归入 `ignored`，因为 ref 实际继承 actor 拓扑；`entropy_coeff` 和 `rollout.n` 通过 `cross_effects` 明确记录跨稳定性、吞吐和显存影响。
+
+`log_facts.json` 由 `extract_trial_metrics.py` 所属的统一提取链生成，不属于 memory estimator。train-log parser 在同一遍读取中落盘模型 config、Megatron resolved runtime、去重后的 rank 参数量和稳定 step 的有效序列长度；后续 memory estimator 与 Proposal immutable context 只消费该结构化文件，不直接读取 `train.log`。
 
 ## 12. 常用命令
 
@@ -252,6 +267,10 @@ PLATFORM=C550 OUTPUT_PATH=/absolute/run MAX_TRIALS=5 bash run_circle.sh
 # Prompt 回放，不启动训练
 python replay_agent_prompts.py --run-dir output/某次实验 --after-trial 3 --render-only
 
+# 重新提取一个 trial 的分类指标
+python tools/extract_trial_metrics.py --trial-dir output/某次实验/trials/0001 \
+  --agent-config config/agent_config.json
+
 # 单元测试
 python -m unittest discover -s tests -p 'test_*.py'
 ```
@@ -261,17 +280,19 @@ python -m unittest discover -s tests -p 'test_*.py'
 1. Agent 只建议，Validator、orchestrator 和 runner 才有执行权。
 2. 每个候选有自己的 reference，`from` 必须与它严格一致。
 3. Feasibility 只能选择 candidate ID，不能改参数。
-4. 生产显存工具仍是 `memory_estimator.py`，V2 尚未接入。
+4. 生产显存工具是 `memory_estimator_V3.py`，只输出相对变化区间；绝对显存安全由 Resource Gate 判断。
 5. 实际预算来自 `agent_config.json`，当前为 10/80/135 updates。
 6. stability 早停是“规则触发 → Agent 复核 → runner 执行”。
 7. vLLM 监控必须显式设置 `disable_log_stats=false`。
-8. `trials.jsonl` 是整个系统最重要的数据文件。
+8. `trials.jsonl` 是权威轻量索引，完整事实位于每个 trial 的 artifact 文件中。
 
 排查一次决策时沿这条链即可：
 
 ```text
 trials.jsonl
-  → Agent context/trace
+  → parameters.json / parameter_groups.json
+  → metrics.json 的分类证据
+  → decision.json / agent_trace.json
   → canonical candidate
   → command.json
   → train.log + GPU/vLLM/health 数据

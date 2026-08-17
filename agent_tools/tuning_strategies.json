@@ -5,7 +5,7 @@
       "purpose": "Repair genuine rollout memory pressure without treating the phase with the largest relative peak as an automatic bottleneck.",
       "trigger_labels": ["OOM_ROLLOUT", "MEMORY_HEADROOM_EXCEEDED"],
       "required_evidence": [
-        "Use this strategy only when generate_sequences failed with an allocation or KV-cache OOM, the measured rollout peak reaches the active stage memory limit, or the memory estimator rollout upper_bound_pct crosses that limit with elevated risk.",
+        "Use this strategy only when generate_sequences failed with an allocation or KV-cache OOM, the measured rollout peak reaches the active absolute MiB limit, or the memory estimator rollout upper_bound_mib crosses that limit with elevated risk.",
         "For MEMORY_HEADROOM_EXCEEDED, require training_substage=rollout or direct rollout-phase evidence."
       ],
       "insufficient_evidence": [
@@ -30,7 +30,7 @@
       "purpose": "Repair genuine actor old-log-prob memory pressure in the actor_log_prob phase.",
       "trigger_labels": ["OOM_ACTOR_LOGPROB", "MEMORY_HEADROOM_EXCEEDED"],
       "required_evidence": [
-        "Use this strategy only when compute_log_prob failed with OOM, the measured actor_log_prob peak reaches the active stage memory limit, or the memory estimator actor_log_prob upper_bound_pct crosses that limit with elevated risk.",
+        "Use this strategy only when compute_log_prob failed with OOM, the measured actor_log_prob peak reaches the active absolute MiB limit, or the memory estimator actor_log_prob upper_bound_mib crosses that limit with elevated risk.",
         "For MEMORY_HEADROOM_EXCEEDED, require training_substage=actor_log_prob or direct actor_log_prob evidence."
       ],
       "insufficient_evidence": [
@@ -54,7 +54,7 @@
       "purpose": "Repair genuine reference log-prob memory pressure in the ref_log_prob phase.",
       "trigger_labels": ["OOM_REF_LOGPROB", "MEMORY_HEADROOM_EXCEEDED"],
       "required_evidence": [
-        "Use this strategy only when compute_ref_log_prob failed with OOM, the measured ref_log_prob peak reaches the active stage memory limit, or the memory estimator ref_log_prob upper_bound_pct crosses that limit with elevated risk.",
+        "Use this strategy only when compute_ref_log_prob failed with OOM, the measured ref_log_prob peak reaches the active absolute MiB limit, or the memory estimator ref_log_prob upper_bound_mib crosses that limit with elevated risk.",
         "For MEMORY_HEADROOM_EXCEEDED, require training_substage=ref_log_prob or direct ref_log_prob evidence."
       ],
       "insufficient_evidence": [
@@ -63,13 +63,11 @@
       ],
       "ordered_actions": [
         "When actor_rollout_ref.actor.use_dynamic_bsz is false, decrease actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu first and validate the installed backend's local batching constraints.",
-        "Enable actor_rollout_ref.ref.megatron.sequence_parallel only when actor_rollout_ref.ref.megatron.tensor_model_parallel_size is greater than one, long-sequence activation pressure is credible, and backend support is known.",
-        "Increase actor_rollout_ref.ref.megatron.tensor_model_parallel_size only when sharding headroom is needed and world-size divisibility remains valid.",
-        "Increase actor_rollout_ref.ref.megatron.pipeline_model_parallel_size only as a later feasibility control when lower-overhead controls cannot fit the reference model."
+        "If batching alone cannot repair the phase, change the actor Megatron topology only as a shared actor/ref control and review its actor_log_prob and training effects together."
       ],
       "do_not": [
         "Do not treat actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu as authoritative when dynamic batching controls the phase.",
-        "Do not change ref topology without revalidating its micro-batch legality and world-size divisibility.",
+        "Do not change ref TP, PP, VPP, CP, EP, ETP, sequence-parallel, remove-padding, or parameter-offload overrides; the corresponding actor setting is the runtime control for both actor and ref.",
         "Do not combine ref_log_prob repair with unrelated actor or rollout tuning."
       ]
     },
@@ -78,7 +76,7 @@
       "purpose": "Repair genuine actor training memory pressure in update_actor.",
       "trigger_labels": ["OOM_TRAINING", "MEMORY_HEADROOM_EXCEEDED"],
       "required_evidence": [
-        "Use this strategy only when update_actor failed with OOM, the measured training peak reaches the active stage memory limit, or the memory estimator training upper_bound_pct crosses that limit with elevated risk.",
+        "Use this strategy only when update_actor failed with OOM, the measured training peak reaches the active absolute MiB limit, or the memory estimator training upper_bound_mib crosses that limit with elevated risk.",
         "For MEMORY_HEADROOM_EXCEEDED, require training_substage=training or direct update_actor evidence."
       ],
       "insufficient_evidence": [
@@ -124,7 +122,7 @@
         ],
         "ref_log_prob": [
           "When dynamic batching is disabled, increase actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu one valid step only when ref_log_prob memory has headroom.",
-          "Decrease actor_rollout_ref.ref.megatron.tensor_model_parallel_size or actor_rollout_ref.ref.megatron.pipeline_model_parallel_size, or disable actor_rollout_ref.ref.megatron.sequence_parallel, only when communication overhead is evidenced and ref_log_prob memory remains safe."
+          "Reference TP/PP/SP follows the actor topology. Change actor topology only when its effects on ref_log_prob, actor_log_prob, and training are all evidenced and memory-safe."
         ],
         "training": [
           "When dynamic batching is disabled, increase actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu one valid divisibility step only when training memory has headroom.",
@@ -152,9 +150,9 @@
       "ordered_actions": [
         "For rollout, test a smaller actor_rollout_ref.rollout.tensor_model_parallel_size only when rollout memory remains safe.",
         "For actor_log_prob or training, test smaller actor_rollout_ref.actor.megatron.tensor_model_parallel_size or actor_rollout_ref.actor.megatron.pipeline_model_parallel_size only when both actor phases remain safe.",
-        "For ref_log_prob, test smaller actor_rollout_ref.ref.megatron.tensor_model_parallel_size or actor_rollout_ref.ref.megatron.pipeline_model_parallel_size only when ref memory remains safe.",
-        "Disable the phase's actor_rollout_ref.actor.megatron.sequence_parallel or actor_rollout_ref.ref.megatron.sequence_parallel only when its collective cost is evidenced and activation memory has headroom.",
-        "After actor topology changes, revalidate data-parallel size and PPO mini/micro batching; after ref topology changes, revalidate ref micro-batch legality."
+        "For ref_log_prob, use the shared actor Megatron topology and test a smaller actor TP/PP only when actor_log_prob, training, and ref memory all remain safe.",
+        "Disable actor_rollout_ref.actor.megatron.sequence_parallel only when its shared actor/ref collective cost is evidenced and activation memory has headroom.",
+        "After actor topology changes, revalidate data-parallel size, PPO mini/micro batching, and ref micro-batch legality."
       ],
       "do_not": [
         "Do not change actor, rollout, and ref layouts together in one trial.",

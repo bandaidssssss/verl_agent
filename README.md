@@ -66,7 +66,7 @@ vLLM replica 的 `/metrics` 地址，默认每 5 秒采集一次。采集结果�
 PLATFORM=C550 bash run_circle.sh --dry-run --rules-only
 ```
 
-运行一个 trial。第一轮是 20-update 硬件基线，不需要调用 LLM：
+运行一个 trial。第一轮使用 `hardware_trial_updates`（当前为 10）的硬件基线，不需要调用 LLM：
 
 ```bash
 PLATFORM=C550 MAX_TRIALS=1 bash run_circle.sh
@@ -100,7 +100,7 @@ Proposal 返回由 `min_proposal_candidates` / `max_proposal_candidates` 限制�
 
 主要输出：
 
-- `output/trials.jsonl`：所有 trial 的参数、指标、建议、Feasibility 和完整 Agent trace。
+- `output/trials.jsonl`：轻量、可恢复的 trial 索引，只含状态机和历史初筛字段；每条记录最后写入。
 - `output/state.json`：当前调优阶段。
 - `output/last_agent_rejection.json`：多轮建议仍未通过时的完整拒绝轨迹。
 - `output/trials/NNNN/train.log`：原始 verl 日志。
@@ -108,7 +108,11 @@ Proposal 返回由 `min_proposal_candidates` / `max_proposal_candidates` 限制�
 - `output/trials/NNNN/vllm_metrics.csv`：仅在 vLLM stats 明确启用时生成的紧凑 rollout 调度、KV-cache 和 preemption 采样。
 - `output/trials/NNNN/health_events.jsonl`：健康规则触发、Agent 决策及停止动作。
 - `output/trials/NNNN/health_agent_traces.jsonl`：Train Health Agent 的完整对话、工具和 token trace。
-- `output/trials/NNNN/trial_report.json`：单轮结构化报告与 Agent 工具调用轨迹。
+- `output/trials/NNNN/metrics.json`：一次解析得到的 throughput、stability、resource 分类指标；运行中原子更新，结束后标为 `final`。
+- `output/trials/NNNN/log_facts.json`：统一提取器在同一次日志扫描中提取的模型配置、Megatron resolved runtime、去重后的 rank 参数量和有效序列长度；不属于 memory estimator 输出。
+- `output/trials/NNNN/parameters.json` / `parameter_groups.json`：实际完整参数，以及 fixed/throughput/stability/ignored 分类。
+- `output/trials/NNNN/decision.json` / `agent_trace.json`：决策摘要与完整 Agent trace 分开保存。
+- `output/trials/NNNN/trial_report.json`：不含逐 step 数组和 trace 的单轮结果摘要。
 
 ## 最终指标
 
@@ -133,6 +137,10 @@ bash analyzer/run_analyze.sh proposal context.json suggestion.json trace.json
 
 # 单独分析已有训练日志
 bash monitor/run_monitor.sh train.log gpu_samples.csv report.json
+
+# 从单个 trial 的原始 artifact 重新生成分类指标
+python tools/extract_trial_metrics.py --trial-dir output/trials/0001 \
+  --agent-config config/agent_config.json
 
 # 单独运行一个受监控的 trial
 PLATFORM=C550 bash train/run_verl.sh \

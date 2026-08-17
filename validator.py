@@ -23,10 +23,8 @@ HARDWARE_PARAMETERS = {
     # Actor old-log-prob.
     "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
 
-    # Reference log-prob batching and topology.
-    "actor_rollout_ref.ref.megatron.tensor_model_parallel_size",
-    "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size",
-    "actor_rollout_ref.ref.megatron.sequence_parallel",
+    # Reference log-prob owns batching only. Its colocated Megatron model
+    # follows the actor model-parallel topology in verl 0.7.
     "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
 }
 
@@ -38,6 +36,25 @@ STABILITY_PARAMETERS = {
     "actor_rollout_ref.actor.kl_loss_type",
     "actor_rollout_ref.actor.entropy_coeff",
     "actor_rollout_ref.rollout.n",
+}
+
+IGNORED_PARAMETERS = {
+    "actor_rollout_ref.ref.megatron.tensor_model_parallel_size",
+    "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size",
+    "actor_rollout_ref.ref.megatron.sequence_parallel",
+}
+
+CROSS_EFFECTS = {
+    "actor_rollout_ref.actor.entropy_coeff": [
+        "stability",
+        "training_memory",
+        "training_throughput",
+    ],
+    "actor_rollout_ref.rollout.n": [
+        "stability",
+        "rollout_throughput",
+        "token_workload",
+    ],
 }
 
 RANGES = {
@@ -76,10 +93,54 @@ def editable_parameters(stage: str) -> list[str]:
     return []
 
 
+def parameter_groups(parameters: Mapping[str, Any], stage: str) -> dict[str, Any]:
+    """Classify one executable parameter snapshot from the validator policy."""
+    editable = set(editable_parameters(stage))
+    throughput = {
+        key: parameters.get(key)
+        for key in sorted(HARDWARE_PARAMETERS)
+        if key in parameters
+    }
+    stability = {
+        key: parameters.get(key)
+        for key in sorted(STABILITY_PARAMETERS)
+        if key in parameters
+    }
+    ignored = {
+        key: parameters.get(key)
+        for key in sorted(IGNORED_PARAMETERS)
+        if key in parameters
+    }
+    fixed = {
+        key: value
+        for key, value in sorted(parameters.items())
+        if key not in editable and key not in IGNORED_PARAMETERS
+    }
+    return {
+        "schema_version": 1,
+        "trial_stage": stage,
+        "editable_in_trial_stage": sorted(editable),
+        "throughput_tuning": throughput,
+        "stability_tuning": stability,
+        "fixed": fixed,
+        "ignored": ignored,
+        "cross_effects": CROSS_EFFECTS,
+    }
+
+
 def hardware_token_budget(parameters: Mapping[str, Any]) -> int:
     return int(parameters["data.train_batch_size"]) * int(parameters["actor_rollout_ref.rollout.n"]) * (
         int(parameters["data.max_prompt_length"]) + int(parameters["data.max_response_length"])
     )
+
+
+def effective_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the runtime-effective configuration used for duplicate checks."""
+    return {
+        key: value
+        for key, value in parameters.items()
+        if key not in IGNORED_PARAMETERS
+    }
 
 
 def validate_candidate(
@@ -89,6 +150,7 @@ def validate_candidate(
     agent_config: Mapping[str, Any],
     base_parameters: Mapping[str, Any],
     history: Sequence[Mapping[str, Any]],
+    locked_parameters: Mapping[str, Any] | None = None,
 ) -> ValidationResult:
     violations: list[str] = []
     editable = set(editable_parameters(stage))
@@ -109,6 +171,17 @@ def validate_candidate(
                 violations.append(f"{key} must be int")
             elif isinstance(original, float) and not isinstance(value, (int, float)):
                 violations.append(f"{key} must be numeric")
+
+    if locked_parameters is not None:
+        editable_or_ignored = editable | IGNORED_PARAMETERS
+        all_keys = set(parameters) | set(locked_parameters)
+        for key in sorted(all_keys - editable_or_ignored):
+            configured = key in parameters
+            locked = key in locked_parameters
+            if configured != locked or parameters.get(key) != locked_parameters.get(key):
+                violations.append(
+                    f"{key} is fixed in stage {stage} and must match the current stage baseline"
+                )
 
     for key, bounds in RANGES.items():
         if key not in parameters:
@@ -145,7 +218,6 @@ def validate_candidate(
     parallel_groups = [
         ("actor", "actor_rollout_ref.actor.megatron.tensor_model_parallel_size", "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size"),
         ("rollout", "actor_rollout_ref.rollout.tensor_model_parallel_size", None),
-        ("ref", "actor_rollout_ref.ref.megatron.tensor_model_parallel_size", "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size"),
     ]
     for name, tp_key, pp_key in parallel_groups:
         tp = int(parameters.get(tp_key, 1))
@@ -160,10 +232,14 @@ def validate_candidate(
         if baseline and abs(candidate - baseline) / baseline > tolerance:
             violations.append(f"hardware token budget must remain {baseline}, got {candidate}")
 
-    canonical = json.dumps(parameters, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(
+        effective_parameters(parameters), sort_keys=True, separators=(",", ":")
+    )
     for trial in history:
         previous = trial.get("parameters")
-        if previous and json.dumps(previous, sort_keys=True, separators=(",", ":")) == canonical:
+        if previous and json.dumps(
+            effective_parameters(previous), sort_keys=True, separators=(",", ":")
+        ) == canonical:
             violations.append(f"configuration duplicates trial {trial.get('trial_id', '?')}")
             break
 

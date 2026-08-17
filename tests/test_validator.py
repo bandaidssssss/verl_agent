@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from config_utils import load_json
-from validator import validate_candidate
+from validator import IGNORED_PARAMETERS, parameter_groups, validate_candidate
 
 
 class ValidatorTest(unittest.TestCase):
@@ -52,6 +52,48 @@ class ValidatorTest(unittest.TestCase):
             [],
         )
         self.assertFalse(result.valid)
+
+    def test_parameter_groups_share_validator_policy(self) -> None:
+        groups = parameter_groups(self.base, "stability_tuning")
+        self.assertIn("actor_rollout_ref.actor.optim.lr", groups["stability_tuning"])
+        self.assertIn(
+            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
+            groups["throughput_tuning"],
+        )
+        self.assertIn(
+            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
+            groups["fixed"],
+        )
+        self.assertNotIn("actor_rollout_ref.actor.optim.lr", groups["fixed"])
+        self.assertEqual(set(groups["ignored"]), IGNORED_PARAMETERS & set(self.base))
+        self.assertIn(
+            "training_memory",
+            groups["cross_effects"]["actor_rollout_ref.actor.entropy_coeff"],
+        )
+
+    def test_ref_topology_is_not_editable(self) -> None:
+        key = "actor_rollout_ref.ref.megatron.tensor_model_parallel_size"
+        candidate = {**self.base, key: 4}
+        result = validate_candidate(
+            candidate, {key: 4}, "hardware_tuning", self.config, self.base, []
+        )
+        self.assertFalse(result.valid)
+
+    def test_ignored_ref_topology_does_not_make_a_configuration_unique(self) -> None:
+        previous = dict(self.base)
+        candidate = dict(previous)
+        key = "actor_rollout_ref.ref.megatron.tensor_model_parallel_size"
+        candidate[key] = int(previous[key]) * 2
+        result = validate_candidate(
+            candidate,
+            {},
+            "confirm",
+            self.config,
+            self.base,
+            [{"trial_id": 3, "parameters": previous}],
+        )
+        self.assertFalse(result.valid)
+        self.assertTrue(any("duplicates trial 3" in row for row in result.violations))
 
 
 if __name__ == "__main__":

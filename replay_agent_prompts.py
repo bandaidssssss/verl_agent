@@ -694,6 +694,8 @@ def main() -> int:
                 "max_proposal_candidates",
                 "max_parameter_changes",
                 "preserve_hardware_token_budget",
+                "resource_memory_reserve_mib",
+                "throughput_memory_reserve_mib",
                 "resource_memory_limit_pct",
                 "throughput_memory_limit_pct",
             ):

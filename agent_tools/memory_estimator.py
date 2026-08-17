@@ -128,21 +128,12 @@ def _log_prob_projection(
         if actor_phase
         else "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu"
     )
-    tp_key = (
-        "actor_rollout_ref.actor.megatron.tensor_model_parallel_size"
-        if actor_phase
-        else "actor_rollout_ref.ref.megatron.tensor_model_parallel_size"
-    )
-    pp_key = (
-        "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size"
-        if actor_phase
-        else "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size"
-    )
-    sequence_parallel_key = (
-        "actor_rollout_ref.actor.megatron.sequence_parallel"
-        if actor_phase
-        else "actor_rollout_ref.ref.megatron.sequence_parallel"
-    )
+    # The colocated reference worker reuses the actor Megatron topology.  The
+    # ref TP/PP/SP Hydra values may still be present for provenance, but they
+    # are not runtime tuning knobs and must not influence this projection.
+    tp_key = "actor_rollout_ref.actor.megatron.tensor_model_parallel_size"
+    pp_key = "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size"
+    sequence_parallel_key = "actor_rollout_ref.actor.megatron.sequence_parallel"
 
     micro_ratio = _positive_ratio(
         _number(candidate, micro_key, 1),
@@ -251,7 +242,7 @@ def _log_prob_projection(
         },
         "uncalibrated_changes": uncalibrated,
         "uncertainty_pct": uncertainty,
-        "confidence": "low" if changed else "medium",
+        "confidence": "low" if uncalibrated else "medium",
     }
 
 
@@ -274,6 +265,7 @@ def _training_projection(
         "actor_rollout_ref.actor.megatron."
         "override_transformer_config.recompute_granularity"
     )
+    entropy_key = "actor_rollout_ref.actor.entropy_coeff"
 
     micro_ratio = _positive_ratio(
         _number(candidate, micro_key, 1),
@@ -335,6 +327,10 @@ def _training_projection(
             _recompute_activation_factor(candidate)
             / _recompute_activation_factor(reference)
         )
+        * (
+            (1.0 if float(candidate.get(entropy_key, 0.0) or 0.0) != 0.0 else 0.85)
+            / (1.0 if float(reference.get(entropy_key, 0.0) or 0.0) != 0.0 else 0.85)
+        )
     )
 
     fixed_share = 0.30
@@ -356,6 +352,7 @@ def _training_projection(
         distributed_optimizer_key,
         optimizer_offload_key,
         recompute_key,
+        entropy_key,
         "actor_rollout_ref.actor.megatron.use_remove_padding",
         "actor_rollout_ref.actor.use_dynamic_bsz",
         "data.max_prompt_length",
@@ -401,6 +398,13 @@ def _training_projection(
             "parallel_state_ratio": round(state_ratio, 6),
             "optimizer_ratio": round(optimizer_ratio, 6),
             "activation_ratio": round(activation_ratio, 6),
+            "calculate_entropy": float(candidate.get(entropy_key, 0.0) or 0.0)
+            != 0.0,
+            "entropy_workspace_ratio": round(
+                (1.0 if float(candidate.get(entropy_key, 0.0) or 0.0) != 0.0 else 0.85)
+                / (1.0 if float(reference.get(entropy_key, 0.0) or 0.0) != 0.0 else 0.85),
+                6,
+            ),
         },
         "uncalibrated_changes": uncalibrated,
         "uncertainty_pct": uncertainty,
@@ -434,6 +438,24 @@ def _phase_peaks(trial: Mapping[str, Any]) -> dict[str, float]:
     return result
 
 
+def _phase_peaks_mib(trial: Mapping[str, Any]) -> dict[str, float]:
+    result: dict[str, float] = {}
+    memory = trial.get("memory_by_phase_mib")
+    if not isinstance(memory, Mapping):
+        structured = trial.get("structured_metrics")
+        resource = structured.get("resource") if isinstance(structured, Mapping) else None
+        memory = resource.get("by_phase") if isinstance(resource, Mapping) else None
+    if not isinstance(memory, Mapping):
+        return result
+    for phase in PHASES:
+        value = memory.get(phase)
+        if isinstance(value, Mapping):
+            value = value.get("max_used_mib", value.get("max"))
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            result[phase] = float(value)
+    return result
+
+
 def _same_parameters(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
     return json.dumps(left, sort_keys=True, default=str) == json.dumps(right, sort_keys=True, default=str)
 
@@ -454,13 +476,16 @@ def estimate_phase_memory(
     trials: Sequence[Mapping[str, Any]] = (),
     memory_limit_pct: float = 92.0,
     reference_trial_id: int | None = None,
+    memory_limit_mib: float | None = None,
 ) -> dict[str, Any]:
     reference = _reference_trial(current_parameters, trials, reference_trial_id)
     reference_parameters: Mapping[str, Any] = current_parameters
     peaks: dict[str, float] = {}
+    peaks_mib: dict[str, float] = {}
     if reference:
         reference_parameters = reference.get("parameters", current_parameters)
         peaks = _phase_peaks(reference)
+        peaks_mib = _phase_peaks_mib(reference)
 
     phases: dict[str, Any] = {}
     for phase in PHASES:
@@ -472,6 +497,16 @@ def estimate_phase_memory(
         uncertainty = float(projection["uncertainty_pct"])
         projected = peaks.get(phase)
         projected = projected * ratio if projected is not None else None
+        projected_mib = peaks_mib.get(phase)
+        projected_mib = projected_mib * ratio if projected_mib is not None else None
+        capacity_mib = (
+            peaks_mib.get(phase) * 100.0 / peaks.get(phase)
+            if phase in peaks_mib and phase in peaks and peaks[phase] > 0
+            else None
+        )
+        uncertainty_mib = (
+            uncertainty * capacity_mib / 100.0 if capacity_mib is not None else None
+        )
         if projected is None:
             risk = "unknown_without_observed_anchor"
             headroom = None
@@ -481,11 +516,18 @@ def estimate_phase_memory(
             headroom = memory_limit_pct - projected
             upper_bound = projected + uncertainty
             upper_headroom = memory_limit_pct - upper_bound
-            risk = (
-                "high"
-                if upper_bound >= memory_limit_pct
-                else ("watch" if upper_headroom < 5.0 else "low")
-            )
+            if memory_limit_mib is not None and projected_mib is not None:
+                upper_mib_for_risk = projected_mib + float(uncertainty_mib or 0.0)
+                absolute_headroom = memory_limit_mib - upper_mib_for_risk
+                risk = "high" if absolute_headroom <= 0 else (
+                    "watch" if absolute_headroom < 2048 else "low"
+                )
+            else:
+                risk = (
+                    "high"
+                    if upper_bound >= memory_limit_pct
+                    else ("watch" if upper_headroom < 5.0 else "low")
+                )
         phases[phase] = {
             "reference_pct": round(peaks[phase], 2) if phase in peaks else None,
             "pressure_ratio": round(ratio, 3),
@@ -494,6 +536,26 @@ def estimate_phase_memory(
             "uncertainty_pct": round(uncertainty, 2),
             "upper_bound_pct": (
                 round(upper_bound, 2) if upper_bound is not None else None
+            ),
+            "reference_mib": round(peaks_mib[phase], 2) if phase in peaks_mib else None,
+            "projected_mib": round(projected_mib, 2) if projected_mib is not None else None,
+            "uncertainty_mib": round(uncertainty_mib, 2) if uncertainty_mib is not None else None,
+            "upper_bound_mib": (
+                round(projected_mib + uncertainty_mib, 2)
+                if projected_mib is not None and uncertainty_mib is not None
+                else None
+            ),
+            "headroom_to_limit_mib": (
+                round(memory_limit_mib - projected_mib, 2)
+                if memory_limit_mib is not None and projected_mib is not None
+                else None
+            ),
+            "upper_headroom_to_limit_mib": (
+                round(memory_limit_mib - projected_mib - uncertainty_mib, 2)
+                if memory_limit_mib is not None
+                and projected_mib is not None
+                and uncertainty_mib is not None
+                else None
             ),
             "headroom_to_limit_pct": round(headroom, 2) if headroom is not None else None,
             "upper_headroom_to_limit_pct": (
@@ -523,14 +585,15 @@ def estimate_phase_memory(
         ),
         "confidence": confidence,
         "memory_limit_pct": memory_limit_pct,
+        "memory_limit_mib": memory_limit_mib,
         "reference_trial_id": reference.get("trial_id") if reference else None,
         "phases": phases,
         "limitations": [
             "The estimator anchors a component-aware relative projection to one measured reference trial; it is not a tensor-allocation simulator.",
-            "Risk is evaluated against upper_bound_pct, while projected_pct is the point estimate.",
+            "When absolute device capacity is available, risk is evaluated against upper_bound_mib and the effective absolute limit; percentage fields are derived display values.",
             "Scheduler caps and offload transitions without matched history are reported in uncalibrated_changes and widen uncertainty instead of scaling the full peak.",
             "Configured maximum sequence lengths are only workload bounds; actual token distributions may be lower.",
-            "Absolute percentages require a prior trial with phase-tagged GPU memory observations.",
+            "Absolute MiB projections require a prior trial with phase-tagged GPU memory observations.",
             "Live SMI snapshots cannot replace rollout/actor/ref/training phase samples.",
             "A real short resource-gate trial remains the final memory authority.",
         ],

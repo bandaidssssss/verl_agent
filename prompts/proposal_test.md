@@ -72,14 +72,14 @@ The metric arrays are aggregated into consecutive post-warmup windows and aligne
 
 ## Tool-Use Rules
 
-1. Call `parameter_understanding` when a parameter's semantics, direction of effect, or interactions are uncertain. Never infer behavior from the parameter name alone.
+1. Call `parameter_understanding` only when runtime authority, hidden constraints, exceptional effects, or critical couplings are uncertain. Use measured evidence, `tuning_strategies`, and the memory estimator for ordinary direction-of-change reasoning.
 2. Before proposing a hardware-stage candidate, prefer calling `memory_estimator` to examine rollout, actor log-probability, reference log-probability, and training separately. If there is no empirical anchor, explicitly treat the result only as a low-confidence relative-pressure estimate.
 3. Call `search_verl_docs` when the actual verl 0.7 field name or implementation behavior must be verified.
 4. `live_gpu_snapshot` describes host usage only at the instant of the call. It cannot replace phase-specific measurements from a trial.
 5. Call `read_trial_metrics` for finer-grained training time-series evidence and `query_trial_history` to select comparable experiments. Before inheriting from a non-default reference trial, use `include_parameters: true` to obtain its exact parameters.
 6. Every candidate owns its `reference_trial_id`. It must name the exact recorded trial whose complete parameters the candidate inherits. Use `null` only for the initial base configuration. Every change's `from` value must exactly match that candidate's reference parameters; use `null` only when the field was not explicitly configured there.
-7. A `memory_estimator` call requires an integer reference trial ID with measured memory data. Evaluate candidates separately: pass only that candidate's `{"from": ..., "to": ...}` changes, its target-value map in `parameters`, and its own `reference_trial_id`. Omit per-parameter `reason` from tool arguments.
-8. Do not interpret `memory_estimator` from `projected_pct` alone. Use each phase's `upper_bound_pct` and `risk`. If a relevant phase contains `uncalibrated_changes` or `confidence: low`, state that the effect is not calibrated by history and retain a real short-run test as the final safety check.
+7. A `memory_estimator` call requires an integer reference trial ID with measured memory data. Evaluate candidates separately and pass exactly that candidate's `{"from": ..., "to": ...}` changes plus its own `reference_trial_id`. Omit per-parameter `reason`; do not pass a parameter snapshot or target-value duplicate.
+8. Compare phases by `relative_change_pct.upper`, direction, confidence, and `uncalibrated_changes`. This estimate does not certify absolute safety; the real short-run Resource Gate remains authoritative.
 ·
 ## Decision Rules
 

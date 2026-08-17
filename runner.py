@@ -13,9 +13,15 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from config_utils import append_jsonl, hydra_overrides, write_json
+from config_utils import append_jsonl, hydra_overrides, write_json, write_json_atomic
 from health_monitor import OnlineHealthMonitor, parse_online_step
-from metrics import analyze_trial
+from metrics import (
+    build_running_metrics,
+    legacy_metrics_from_structured,
+    parse_step_line,
+)
+from tools.extract_trial_metrics import extract_trial_metrics
+from validator import parameter_groups
 from vllm_metrics import (
     DISABLE_LOG_STATS_PARAMETER,
     ROLLOUT_ENGINE_PARAMETER,
@@ -74,6 +80,7 @@ class GPUSampler(threading.Thread):
         self.interval = interval
         self.stop_event = threading.Event()
         self.max_memory_pct = 0.0
+        self.max_memory_used_mib = 0.0
         self._state_lock = threading.Lock()
         self.latest_rows: list[dict[str, float | str]] = []
         self.samples_written = 0
@@ -168,6 +175,7 @@ class GPUSampler(threading.Thread):
                             memory_pct = 100.0 * used / total
                             with self._state_lock:
                                 self.max_memory_pct = max(self.max_memory_pct, memory_pct)
+                                self.max_memory_used_mib = max(self.max_memory_used_mib, used)
                                 self.latest_rows.append(
                                     {
                                         "gpu_index": str(fields[0]),
@@ -206,8 +214,17 @@ class GPUSampler(threading.Thread):
                 "sample_errors": self.sample_errors,
                 "last_sample_timestamp": self.last_sample_timestamp,
                 "max_memory_pct": self.max_memory_pct,
+                "max_memory_used_mib": self.max_memory_used_mib,
                 "gpus": [dict(row) for row in self.latest_rows],
             }
+
+    def reserve_exceeded(self, reserve_mib: float) -> bool:
+        with self._state_lock:
+            return any(
+                float(row["memory_total_mb"]) - float(row["memory_used_mb"])
+                < reserve_mib
+                for row in self.latest_rows
+            )
 
 
 HealthDecider = Callable[[Mapping[str, Any]], Mapping[str, Any]]
@@ -354,8 +371,8 @@ def _terminate(process: subprocess.Popen[str]) -> None:
 
 
 def _resource_gate_enabled(stage: str) -> bool:
-    """Stability trials may use the full device unless a real fatal error occurs."""
-    return stage != "stability_tuning"
+    """Every training stage must preserve the configured absolute reserve."""
+    return stage in {"hardware_tuning", "hardware_repair", "stability_tuning", "confirm"}
 
 
 def run_trial(
@@ -375,8 +392,10 @@ def run_trial(
     vllm_metrics_path = trial_dir / "vllm_metrics.csv"
     health_events_path = trial_dir / "health_events.jsonl"
     health_traces_path = trial_dir / "health_agent_traces.jsonl"
+    metrics_path = trial_dir / "metrics.json"
     platform = os.getenv("PLATFORM", str(agent_config.get("platform", "V5000")))
     write_json(trial_dir / "parameters.json", dict(parameters))
+    write_json(trial_dir / "parameter_groups.json", parameter_groups(parameters, stage))
 
     command, cwd = build_command(parameters, agent_config, trial_id, updates, stage)
     write_json(trial_dir / "command.json", {"cwd": str(cwd), "argv": command})
@@ -466,7 +485,13 @@ def run_trial(
     stop_confidence = float(agent_config.get("health_agent_stop_confidence", 0.8))
     shadow_mode = bool(agent_config.get("health_agent_shadow_mode", False))
     gate_updates = int(agent_config.get("resource_gate_updates", 5))
-    hard_limit = float(agent_config.get("resource_memory_limit_pct", 95.0))
+    resource_reserve_mib = float(agent_config.get("resource_memory_reserve_mib", 3277))
+    throughput_reserve_mib = float(agent_config.get("throughput_memory_reserve_mib", 6554))
+    if resource_reserve_mib < 0 or throughput_reserve_mib < resource_reserve_mib:
+        raise ValueError(
+            "throughput_memory_reserve_mib must be >= resource_memory_reserve_mib >= 0"
+        )
+    online_records: dict[int, dict[str, float]] = {}
 
     def submit_health_review(event: Mapping[str, Any], step: int) -> tuple[bool, str | None]:
         nonlocal health_agent_calls
@@ -483,6 +508,7 @@ def run_trial(
                 "trial_id": trial_id,
                 "stage": stage,
                 "log_path": str(log_path),
+                "metrics_path": str(metrics_path),
                 "snapshot_step": int(step),
             },
             "recent_trials": [],
@@ -594,6 +620,23 @@ def run_trial(
 
                 parsed_step = parse_online_step(line)
                 current_step = parsed_step[0] if parsed_step is not None else None
+                parsed_metrics = parse_step_line(line)
+                if parsed_metrics is not None:
+                    metric_step, metric_values = parsed_metrics
+                    online_records[metric_step] = metric_values
+                    write_json_atomic(
+                        metrics_path,
+                        build_running_metrics(
+                            online_records,
+                            snapshot_step=metric_step,
+                            resource_snapshot=sampler.snapshot(),
+                            expected_gpu_count=int(
+                                parameters.get("trainer.n_gpus_per_node", 1)
+                            ),
+                            resource_reserve_mib=resource_reserve_mib,
+                            throughput_reserve_mib=throughput_reserve_mib,
+                        ),
+                    )
                 if current_step is not None and pending_health_stop is not None:
                     stop_reason = "health_agent_early_stop"
                     append_jsonl(
@@ -610,7 +653,7 @@ def run_trial(
                     _resource_gate_enabled(stage)
                     and current_step is not None
                     and current_step >= gate_updates
-                    and sampler.max_memory_pct >= hard_limit
+                    and sampler.reserve_exceeded(resource_reserve_mib)
                 ):
                     stop_reason = "resource_gate_memory_limit"
                     _terminate(process)
@@ -695,14 +738,19 @@ def run_trial(
             vllm_sampler.join(timeout=5)
         _terminate(process)
 
-    metrics = analyze_trial(
-        log_path,
-        samples_path,
-        warmup_updates=int(agent_config.get("warmup_updates", 5)),
-        reward_window=int(agent_config.get("reward_window", 5)),
-        stability_window_size=int(agent_config.get("stability_window_size", 5)),
-        reward_thresholds=agent_config.get("reward_thresholds", [0.0, 0.1, 0.2, 0.3]),
+    vllm_summary = summarize_vllm_metrics(
+        vllm_metrics_path if collect_vllm_metrics else None
     )
+    structured_metrics = extract_trial_metrics(
+        trial_dir,
+        agent_config,
+        parameters=parameters,
+        expected_gpu_count=int(parameters.get("trainer.n_gpus_per_node", 1)),
+        vllm_summary=vllm_summary,
+        monitor=sampler.snapshot(),
+        write_metrics=False,
+    )
+    metrics = legacy_metrics_from_structured(structured_metrics)
     metrics.update(
         {
             "trial_id": trial_id,
@@ -733,9 +781,7 @@ def run_trial(
                         ),
                     }
                 ),
-                "metrics": summarize_vllm_metrics(
-                    vllm_metrics_path if collect_vllm_metrics else None
-                ),
+                "metrics": vllm_summary,
             },
             "health_events_path": str(health_events_path) if health_events_path.exists() else None,
             "health_agent_traces_path": str(health_traces_path) if health_traces_path.exists() else None,
@@ -750,12 +796,34 @@ def run_trial(
             "type": "INCOMPLETE_TRAINING",
             "evidence": [f"completed {metrics['updates_completed']} of {updates} updates"],
         }
-    observed_memory = metrics.get("resource", {}).get("max_observed_memory_pct")
-    throughput_limit = float(agent_config.get("throughput_memory_limit_pct", 92.0))
-    if stage.startswith("hardware") and observed_memory is not None and observed_memory > throughput_limit:
+    resource_summary = structured_metrics.get("resource", {}).get("summary", {})
+    resource_monitor = structured_metrics.get("resource", {}).get("monitor", {})
+    if resource_summary.get("resource_limit_exceeded") is True:
+        if metrics["error"].get("type") in {None, "INCOMPLETE_TRAINING"}:
+            metrics["error"] = {
+                "type": "MEMORY_HEADROOM_EXCEEDED",
+                "evidence": [
+                    "observed device memory left less than "
+                    f"resource_memory_reserve_mib={resource_reserve_mib:.0f}"
+                ],
+            }
+        metrics["result"] = "fail"
+    if resource_monitor.get("coverage_complete") is not True:
+        if not metrics["error"].get("type"):
+            metrics["error"] = {
+                "type": "RESOURCE_MONITOR_INCOMPLETE",
+                "evidence": [
+                    "resource safety cannot be certified because GPU monitor coverage is incomplete"
+                ],
+            }
+        metrics["result"] = "fail"
+    if stage.startswith("hardware") and resource_summary.get("throughput_limit_exceeded") is True:
         metrics["error"] = {
             "type": "MEMORY_HEADROOM_EXCEEDED",
-            "evidence": [f"observed phase memory {observed_memory:.2f}% exceeds {throughput_limit:.2f}%"],
+            "evidence": [
+                "observed device memory left less than "
+                f"throughput_memory_reserve_mib={throughput_reserve_mib:.0f}"
+            ],
         }
         metrics["result"] = "fail"
     if health_early_stopped:
@@ -767,5 +835,10 @@ def run_trial(
         }
     elif return_code != 0 or stop_reason or metrics["updates_completed"] < updates:
         metrics["result"] = "fail"
+    structured_metrics["result"] = metrics["result"]
+    structured_metrics["error"] = dict(metrics.get("error", {}))
+    structured_metrics["stop_reason"] = stop_reason
+    structured_metrics["updates_target"] = updates
+    write_json_atomic(metrics_path, structured_metrics)
     write_json(trial_dir / "trial_report.json", metrics)
     return metrics

@@ -38,12 +38,14 @@ def trial_history_table(trials: Sequence[Mapping[str, Any]]) -> str:
     if not trials:
         return "No trial history is available."
     header = (
-        "|Trial|Stage|Result|Changes|Throughput|Step(s)|Memory bottleneck|Peak memory %|Failure type|\n"
+        "|Trial|Stage|Result|Changes|Throughput|Step(s)|Memory bottleneck|Peak used MiB|Failure type|\n"
         "|---:|---|---|---|---:|---:|---|---:|---|"
     )
     rows = [header]
     for trial in trials:
-        changes = trial.get("proposal", {}).get("changes") if isinstance(trial.get("proposal"), Mapping) else None
+        changes = trial.get("changes")
+        if changes is None and isinstance(trial.get("proposal"), Mapping):
+            changes = trial.get("proposal", {}).get("changes")
         rendered_changes = []
         for key, value in (changes or {}).items():
             if isinstance(value, Mapping) and "from" in value and "to" in value:
@@ -59,10 +61,10 @@ def trial_history_table(trials: Sequence[Mapping[str, Any]]) -> str:
                     _cell(trial.get("stage")),
                     _cell(trial.get("result")),
                     _cell(change_text),
-                    _cell(_metric(trial, "performance", "throughput")),
-                    _cell(_metric(trial, "performance", "time_per_step_s")),
-                    _cell(_metric(trial, "resource", "memory_bottleneck")),
-                    _cell(_metric(trial, "resource", "max_observed_memory_pct"), 1),
+                    _cell(_metric(trial, "scores", "throughput_mean") or _metric(trial, "performance", "throughput")),
+                    _cell(_metric(trial, "scores", "time_per_step_mean_s") or _metric(trial, "performance", "time_per_step_s")),
+                    _cell(_metric(trial, "resource", "memory_bottleneck_phase") or _metric(trial, "resource", "memory_bottleneck")),
+                    _cell(_metric(trial, "resource", "max_used_mib"), 1),
                     _cell(_metric(trial, "error", "type")),
                     "",
                 ]
@@ -89,6 +91,9 @@ def render_prompt(
         "CURRENT_STAGE": f"`{context.get('current_stage', 'unknown')}`",
         "MODE": f"`{context.get('mode', 'unknown')}`",
         "CURRENT_PARAMETERS": json_block(context.get("current_parameters")),
+        "FIXED_PARAMETERS": json_block(context.get("fixed_parameters")),
+        "EDITABLE_PARAMETER_VALUES": json_block(context.get("editable_parameter_values")),
+        "IMMUTABLE_CONTEXT": json_block(context.get("immutable_context")),
         "REFERENCE_TRIAL": json_block(context.get("reference_trial")),
         "REFERENCE_OPTIONS": json_block(context.get("reference_options")),
         "REFERENCE_STABILITY_SERIES": json_block(context.get("reference_stability_series")),

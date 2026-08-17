@@ -19,8 +19,8 @@ from runner import (
 
 
 class BuildCommandTest(unittest.TestCase):
-    def test_stability_does_not_apply_the_preemptive_memory_gate(self) -> None:
-        self.assertFalse(_resource_gate_enabled("stability_tuning"))
+    def test_resource_gate_applies_to_every_training_stage(self) -> None:
+        self.assertTrue(_resource_gate_enabled("stability_tuning"))
         self.assertTrue(_resource_gate_enabled("hardware_tuning"))
         self.assertTrue(_resource_gate_enabled("confirm"))
 

@@ -8,10 +8,23 @@ from statistics import mean
 from typing import Any, Mapping
 
 from agents import AgentResponseError, AgentSet
-from config_utils import append_jsonl, apply_changes, read_jsonl, write_json
+from config_utils import append_jsonl, apply_changes, load_json, read_jsonl, write_json
 from prompting import rejection_feedback
 from runner import run_trial
-from validator import editable_parameters, validate_candidate
+from trial_storage import (
+    build_trial_index,
+    compact_trial_report,
+    read_trials,
+    read_trial_indexes,
+    trial_artifacts,
+)
+from validator import (
+    IGNORED_PARAMETERS,
+    editable_parameters,
+    effective_parameters,
+    parameter_groups,
+    validate_candidate,
+)
 
 
 def _metric_mean(trial: Mapping[str, Any], *path: str) -> float | None:
@@ -22,7 +35,18 @@ def _metric_mean(trial: Mapping[str, Any], *path: str) -> float | None:
         value = value.get(key)
     if isinstance(value, Mapping):
         value = value.get("mean")
-    return float(value) if isinstance(value, (int, float)) else None
+    if isinstance(value, (int, float)):
+        return float(value)
+    scores = trial.get("scores")
+    if isinstance(scores, Mapping):
+        fallback = {
+            ("performance", "throughput"): "throughput_mean",
+            ("performance", "time_per_step_s"): "time_per_step_mean_s",
+        }.get(tuple(path))
+        candidate = scores.get(fallback) if fallback else None
+        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+            return float(candidate)
+    return None
 
 
 def _hardware_trials(trials: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -146,6 +170,10 @@ def _entropy_collapsed_suddenly(
 
 
 def stability_healthy(trial: Mapping[str, Any], config: Mapping[str, Any]) -> bool:
+    scores = trial.get("scores")
+    indexed = scores.get("stability_healthy") if isinstance(scores, Mapping) else None
+    if isinstance(indexed, bool):
+        return indexed
     if trial.get("result") != "success":
         return False
     reward_points = _complete_stability_points(trial, "critic/rewards/mean")
@@ -231,7 +259,7 @@ def _compact_trial(trial: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _complete_stability_points(trial: Mapping[str, Any], metric: str) -> list[tuple[int, float]]:
-    """Read complete report windows for a metric, retaining old reports as fallback."""
+    """Read complete structured-metrics windows for one stability metric."""
     stability = trial.get("stability")
     if not isinstance(stability, Mapping):
         return []
@@ -252,20 +280,18 @@ def _complete_stability_points(trial: Mapping[str, Any], metric: str) -> list[tu
                 points.append((end_step, float(value)))
         return points
 
-    # Existing histories retain the legacy summary.  It is only a migration
-    # fallback; newly written reports always use complete metric windows.
-    legacy_key = {
-        "critic/rewards/mean": "reward",
-        "actor/ppo_kl": "actor_ppo_kl",
-    }.get(metric)
-    legacy_value = _metric_mean(trial, "stability", legacy_key) if legacy_key else None
-    return [(0, legacy_value)] if legacy_value is not None else []
+    return []
 
 
 def _terminal_stability_value(
     trial: Mapping[str, Any], metric: str
 ) -> float | None:
     """Read the trailing metric mean used to compare completed stability trials."""
+    scores = trial.get("scores")
+    if metric == "critic/rewards/mean" and isinstance(scores, Mapping):
+        indexed = scores.get("terminal_reward")
+        if isinstance(indexed, (int, float)) and not isinstance(indexed, bool):
+            return float(indexed)
     stability = trial.get("stability")
     if not isinstance(stability, Mapping):
         return None
@@ -274,15 +300,6 @@ def _terminal_stability_value(
         value = terminal_metrics.get(metric)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return float(value)
-
-    # Migration fallback for histories written before terminal_metrics existed:
-    # use the final reported window mean, including a shorter terminal window.
-    metrics = stability.get("metrics")
-    values = metrics.get(metric) if isinstance(metrics, Mapping) else None
-    if isinstance(values, list):
-        for value in reversed(values):
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return float(value)
 
     points = _complete_stability_points(trial, metric)
     return points[-1][1] if points else None
@@ -329,6 +346,64 @@ def _reference_descriptor(trial: Mapping[str, Any] | None, selection_reason: str
         }
     )
     return compact
+
+
+def _immutable_model_context(
+    parameters: Mapping[str, Any],
+    log_facts: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    model_path = parameters.get("actor_rollout_ref.model.path")
+    result: dict[str, Any] = {"model_path": model_path}
+    persisted_config = (
+        log_facts.get("model_config")
+        if isinstance(log_facts, Mapping)
+        else None
+    )
+    model_config: Mapping[str, Any] = (
+        persisted_config if isinstance(persisted_config, Mapping) else {}
+    )
+    fields = (
+        "model_type",
+        "hidden_size",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "intermediate_size",
+        "vocab_size",
+        "torch_dtype",
+        "max_position_embeddings",
+    )
+    if model_config:
+        result["model_config"] = {
+            key: model_config[key] for key in fields if key in model_config
+        }
+    if isinstance(log_facts, Mapping):
+        megatron = log_facts.get("megatron")
+        megatron = megatron if isinstance(megatron, Mapping) else {}
+        profile = megatron.get("parameter_summary")
+        if isinstance(profile, Mapping):
+            result["logged_parameter_profile"] = {
+                key: profile.get(key)
+                for key in (
+                    "most_loaded_shard_parameters",
+                    "total_parameters",
+                    "total_parameters_source",
+                    "complete_tp_pp_coverage",
+                    "reference_topology",
+                )
+            }
+        resolved = megatron.get("resolved_config")
+        if isinstance(resolved, Mapping):
+            result["resolved_runtime"] = dict(resolved)
+        workload = log_facts.get("workload")
+        length = (
+            workload.get("sequence_length")
+            if isinstance(workload, Mapping)
+            else None
+        )
+        if isinstance(length, Mapping):
+            result["observed_sequence_length"] = dict(length)
+    return result
 
 
 def _stream_orchestrator_event(
@@ -534,7 +609,10 @@ class TuningOrchestrator:
         )
 
     def trials(self) -> list[dict[str, Any]]:
-        return read_jsonl(self.history_path)
+        return read_trials(self.history_path)
+
+    def trial_indexes(self) -> list[dict[str, Any]]:
+        return read_trial_indexes(self.history_path)
 
     def _starting_point(
         self, stage: str, trials: list[dict[str, Any]]
@@ -641,10 +719,90 @@ class TuningOrchestrator:
         max_candidates = max(
             min_candidates, int(self.config.get("max_proposal_candidates", 3))
         )
+        reference_trial_row = next(
+            (
+                trial
+                for trial in trials
+                if trial.get("trial_id") == reference.get("trial_id")
+            ),
+            None,
+        )
+        reference_structured = (
+            reference_trial_row.get("structured_metrics")
+            if isinstance(reference_trial_row, Mapping)
+            else None
+        )
+        reference_resource = (
+            reference_structured.get("resource")
+            if isinstance(reference_structured, Mapping)
+            else None
+        )
+        observed_devices = (
+            reference_resource.get("devices")
+            if isinstance(reference_resource, Mapping)
+            else []
+        )
+        reference_log_facts = (
+            reference_trial_row.get("log_facts")
+            if isinstance(reference_trial_row, Mapping)
+            else None
+        )
         context = {
             "current_stage": stage,
             "mode": "failure_repair" if diagnosis else stage,
             "current_parameters": dict(current),
+            "fixed_parameters": {
+                key: value
+                for key, value in current.items()
+                if key not in set(editable_parameters(stage)) | IGNORED_PARAMETERS
+            },
+            "editable_parameter_values": {
+                key: {
+                    "value": current.get(key),
+                    "explicitly_configured": key in current,
+                }
+                for key in editable_parameters(stage)
+            },
+            "immutable_context": {
+                "model": {
+                    **_immutable_model_context(
+                        current,
+                        reference_log_facts
+                        if isinstance(reference_log_facts, Mapping)
+                        else None,
+                    ),
+                },
+                "hardware": {
+                    "platform": self.config.get("platform"),
+                    "nnodes": current.get("trainer.nnodes"),
+                    "gpus_per_node": current.get("trainer.n_gpus_per_node"),
+                    "world_size": int(current.get("trainer.nnodes", 1))
+                    * int(current.get("trainer.n_gpus_per_node", 1)),
+                    "observed_device_memory_mib": {
+                        str(row.get("gpu_index")): row.get("total_memory_mib")
+                        for row in observed_devices
+                        if isinstance(row, Mapping)
+                    },
+                    "resource_memory_reserve_mib": self.config.get(
+                        "resource_memory_reserve_mib"
+                    ),
+                    "throughput_memory_reserve_mib": self.config.get(
+                        "throughput_memory_reserve_mib"
+                    ),
+                },
+                "workload": {
+                    "algorithm": current.get("algorithm.adv_estimator"),
+                    "train_batch_size": current.get("data.train_batch_size"),
+                    "max_prompt_length": current.get("data.max_prompt_length"),
+                    "max_response_length": current.get("data.max_response_length"),
+                },
+                "runtime_relationships": {
+                    "ref_model_parallel_topology": "inherits_actor",
+                    "entropy_calculation": (
+                        "training calculate_entropy iff entropy_coeff != 0"
+                    ),
+                },
+            },
             "reference_trial": copy.deepcopy(dict(reference)),
             "reference_options": [
                 _reference_descriptor(trial, "recorded candidate reference option")
@@ -652,14 +810,7 @@ class TuningOrchestrator:
                 if isinstance(trial.get("parameters"), Mapping)
             ],
             "reference_stability_series": _trial_stability_series(
-                next(
-                    (
-                        trial
-                        for trial in trials
-                        if trial.get("trial_id") == reference.get("trial_id")
-                    ),
-                    None,
-                )
+                reference_trial_row
             ),
             "editable_parameters": editable_parameters(stage),
             "constraints": {
@@ -667,15 +818,16 @@ class TuningOrchestrator:
                 "max_proposal_candidates": max_candidates,
                 "max_parameter_changes": self.config.get("max_parameter_changes", 3),
                 "preserve_hardware_token_budget": self.config.get("preserve_hardware_token_budget", True),
-                "resource_memory_limit_pct": self.config.get("resource_memory_limit_pct", 95.0),
-                "throughput_memory_limit_pct": self.config.get("throughput_memory_limit_pct", 92.0),
+                "resource_memory_reserve_mib": self.config.get("resource_memory_reserve_mib", 3277),
+                "throughput_memory_reserve_mib": self.config.get("throughput_memory_reserve_mib", 6554),
             },
             "diagnosis": diagnosis,
-            "recent_trials": [_compact_trial(trial) for trial in trials[-history_limit:]],
+            "recent_trials": read_trial_indexes(self.history_path)[-history_limit:],
         }
         proposal_conversation = None
         trace: dict[str, Any] = {
             "diagnosis": diagnosis_trace,
+            "diagnosis_summary": copy.deepcopy(diagnosis),
             "proposal_conversation": None,
             "feasibility_reviews": [],
             "candidate_validations": [],
@@ -855,12 +1007,13 @@ class TuningOrchestrator:
                         self.config,
                         self.base_parameters,
                         trials,
+                        locked_parameters=current,
                     )
                     if not deterministic.valid:
                         violations.extend(deterministic.violations)
                     else:
                         canonical = json.dumps(
-                            executable_parameters,
+                            effective_parameters(executable_parameters),
                             sort_keys=True,
                             separators=(",", ":"),
                             default=str,
@@ -967,13 +1120,15 @@ class TuningOrchestrator:
                     ],
                     "last_trial": _compact_trial(trials[-1]) if trials else None,
                     "recent_trials": [
-                        _compact_trial(trial)
-                        for trial in trials[-history_limit:]
+                        copy.deepcopy(trial)
+                        for trial in read_trial_indexes(self.history_path)[-history_limit:]
                     ],
                     "diagnosis": diagnosis,
                     "memory_limits": {
-                        "resource": self.config.get("resource_memory_limit_pct", 95.0),
-                        "throughput": self.config.get("throughput_memory_limit_pct", 92.0),
+                        "unit": "MiB",
+                        "resource_memory_reserve_mib": self.config.get("resource_memory_reserve_mib", 3277),
+                        "throughput_memory_reserve_mib": self.config.get("throughput_memory_reserve_mib", 6554),
+                        "effective_limit_formula": "device_total_memory_mib - reserve_mib",
                     },
                 }
             )
@@ -1052,18 +1207,19 @@ class TuningOrchestrator:
         produced = []
         self.output_dir.mkdir(parents=True, exist_ok=True)
         for _ in range(max_trials):
-            trials = self.trials()
-            stage = determine_stage(trials, self.config)
+            trial_indexes = self.trial_indexes()
+            stage = determine_stage(trial_indexes, self.config)
             if stage in {"done", "stopped_unstable"}:
                 write_json(
                     self.state_path,
                     {
                         "current_stage": stage,
-                        "last_trial_id": len(trials),
+                        "last_trial_id": len(trial_indexes),
                         "history_path": str(self.history_path),
                     },
                 )
                 break
+            trials = self.trials()
             trial_id = len(trials) + 1
             parameters, reference = self._starting_point(stage, trials)
             proposal: dict[str, Any] = {
@@ -1167,8 +1323,8 @@ class TuningOrchestrator:
 
             def decide_train_health(context: Mapping[str, Any]) -> dict[str, Any]:
                 enriched = dict(context)
-                enriched["recent_trials"] = [
-                    _compact_trial(trial) for trial in trials[-history_limit:]
+                enriched["recent_trials"] = read_trial_indexes(self.history_path)[
+                    -history_limit:
                 ]
                 run = self.agents.assess_health(enriched)
                 return {"decision": run.result, "trace": run.as_trace()}
@@ -1187,15 +1343,44 @@ class TuningOrchestrator:
             if agent_trace is not None:
                 report["agent_trace"] = agent_trace
             if not dry_run:
-                write_json(self.output_dir / "trials" / f"{trial_id:04d}" / "trial_report.json", report)
-                append_jsonl(self.history_path, report)
+                trial_dir = self.output_dir / "trials" / f"{trial_id:04d}"
+                artifacts = trial_artifacts(trial_id)
+                write_json(
+                    trial_dir / "decision.json",
+                    {
+                        "proposal": proposal,
+                        "feasibility": review,
+                        "diagnosis": (
+                            agent_trace.get("diagnosis_summary")
+                            if isinstance(agent_trace, Mapping)
+                            else None
+                        ),
+                    },
+                )
+                write_json(trial_dir / "agent_trace.json", agent_trace or {})
+                write_json(
+                    trial_dir / "parameter_groups.json",
+                    parameter_groups(report.get("parameters", {}), stage),
+                )
+                index = build_trial_index(
+                    report,
+                    stability_healthy=(
+                        stability_healthy(report, self.config)
+                        if stage == "stability_tuning"
+                        else None
+                    ),
+                )
+                compact_report = compact_trial_report(report, index)
+                compact_report["artifacts"] = artifacts
+                write_json(trial_dir / "trial_report.json", compact_report)
+                append_jsonl(self.history_path, index)
                 if stage == "confirm":
-                    write_json(self.output_dir / "final_result.json", report)
+                    write_json(self.output_dir / "final_result.json", compact_report)
             produced.append(report)
             write_json(
                 self.state_path,
                 {
-                    "current_stage": stage if dry_run else determine_stage(self.trials(), self.config),
+                    "current_stage": stage if dry_run else determine_stage(self.trial_indexes(), self.config),
                     "last_trial_id": trial_id,
                     "history_path": str(self.history_path),
                 },

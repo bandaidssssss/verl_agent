@@ -25,9 +25,42 @@ from agent_tools.memory_estimator_V3 import (
     _parameter_footprint,
     _runtime_args,
 )
+from tools.extract_log_facts import LogFactsAccumulator
 
 
 class MemoryEstimatorV3Tests(unittest.TestCase):
+    def test_v3_consumes_log_facts_without_log_parsing(self) -> None:
+        context = _extract_log_context(
+            {
+                "schema_version": 2,
+                "log_path": "/path/that/must/not/be/read/train.log",
+                "log_facts": {
+                    "schema_version": 1,
+                    "source": {
+                        "train_log": "train.log",
+                        "parser_version": 1,
+                        "warnings": [],
+                    },
+                    "model_config": {"hidden_size": 64},
+                    "megatron": {
+                        "resolved_config": {"bf16": True},
+                        "rank_parameter_counts": [],
+                        "parameter_summary": {"total_parameters": 100},
+                    },
+                    "workload": {
+                        "sequence_length": {
+                            "point_tokens": 32,
+                            "upper_tokens": 64,
+                        }
+                    },
+                },
+            },
+            self._parameters(),
+        )
+        self.assertEqual(context["model_config"]["hidden_size"], 64)
+        self.assertEqual(context["resolved"]["bf16"], True)
+        self.assertEqual(context["parameter_profile"]["total_parameters"], 100)
+
     def _architecture(self, **updates):
         architecture = {
             "hidden_size": 64.0,
@@ -106,17 +139,45 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            context = _extract_log_context(
-                {"log_path": str(log_path)},
+            accumulator = LogFactsAccumulator(
                 {"data.max_prompt_length": 4, "data.max_response_length": 8},
+                log_path,
             )
+            for line in log_path.read_text(encoding="utf-8").splitlines(True):
+                accumulator.consume(line)
+            facts = accumulator.finalize({})
 
-        profile = context["parameter_profile"]
+        profile = facts["megatron"]["parameter_summary"]
         self.assertEqual(profile["matched_log_lines"], 3)
-        self.assertEqual(profile["observed_rank_count"], 2)
+        self.assertEqual(profile["observed_tp_pp_shard_count"], 2)
         self.assertTrue(profile["complete_tp_pp_coverage"])
         self.assertEqual(profile["most_loaded_shard_parameters"], 300)
         self.assertEqual(profile["total_parameters"], 600)
+
+    def test_rank_parameter_conflict_is_explicit(self) -> None:
+        accumulator = LogFactsAccumulator(
+            {"data.max_prompt_length": 4, "data.max_response_length": 8},
+            "train.log",
+        )
+        for line in (
+            "TransformerConfig(tensor_model_parallel_size=1, "
+            "pipeline_model_parallel_size=1)\n",
+            "number of parameters on (tensor, pipeline) model parallel rank "
+            "(0, 0): 300\n",
+            "number of parameters on (tensor, pipeline) model parallel rank "
+            "(0, 0): 301\n",
+        ):
+            accumulator.consume(line)
+        facts = accumulator.finalize({})
+        summary = facts["megatron"]["parameter_summary"]
+        warnings = facts["source"]["warnings"]
+        self.assertFalse(summary["complete_tp_pp_coverage"])
+        self.assertIsNone(summary["total_parameters"])
+        self.assertTrue(any("conflicting" in warning for warning in warnings))
+        self.assertEqual(
+            facts["megatron"]["rank_parameter_counts"][0]["conflicting_values"],
+            [300, 301],
+        )
 
     def test_logged_fixed_parameters_are_reused_then_resharded(self) -> None:
         architecture = {

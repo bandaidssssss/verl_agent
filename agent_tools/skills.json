@@ -6,7 +6,7 @@
       "name": "parameter_understanding",
       "handler": "parameter_understanding",
       "roles": ["proposal", "feasibility", "diagnosis"],
-      "description": "Query curated verl parameter semantics, memory/throughput effects, interactions, and hard constraints. Query every parameter you intend to change when its effect is uncertain.",
+      "description": "Query compact non-obvious runtime facts: authority, hidden constraints, exceptional effects, and critical couplings. Use it only when those facts are uncertain; use measurements and tuning strategies for ordinary direction-of-change reasoning.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -60,7 +60,7 @@
       "name": "memory_estimator",
       "handler": "memory_estimator",
       "roles": ["proposal", "feasibility"],
-      "description": "Estimate rollout, actor-log-prob, ref-log-prob, and training memory from an explicit measured reference trial. The estimator uses a vLLM-budget model for rollout and fixed/model/optimizer/activation components for compute phases. Read projected_pct together with upper_bound_pct, risk, confidence, and uncalibrated_changes; risk is based on the uncertainty upper bound. Pass each change as {\"from\": reference value, \"to\": target value}, repeat the target values in parameters, and provide reference_trial_id.",
+      "description": "Estimate relative memory change ranges for rollout, actor-log-prob, ref-log-prob, and training from an explicit measured reference trial. Pass only canonical from/to changes and reference_trial_id. The real resource gate remains the authority for absolute memory safety.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -82,18 +82,12 @@
               "additionalProperties": false
             }
           },
-          "parameters": {
-            "type": "object",
-            "minProperties": 1,
-            "description": "Target-value mapping for the same changed parameters, for example {\"parameter.name\": 0.7}",
-            "additionalProperties": true
-          },
           "reference_trial_id": {
             "type": "integer",
             "description": "Required trial whose parameters and measured phase peaks are the proportional-estimation baseline"
           }
         },
-        "required": ["changes", "parameters", "reference_trial_id"],
+        "required": ["changes", "reference_trial_id"],
         "additionalProperties": false
       }
     },
@@ -174,7 +168,7 @@
       "name": "read_trial_metrics",
       "handler": "read_trial_metrics",
       "roles": ["proposal", "diagnosis"],
-      "description": "Read ordered, bounded per-step training metrics from a recorded trial log. Returns aligned metric windows; use it to inspect reward, KL, entropy, clip fraction, learning rate, and generation-health trends without reading arbitrary log text.",
+      "description": "Read ordered, bounded per-step stability metrics exclusively from a trial's structured metrics.json. Returns aligned windows for reward, KL, entropy, clip fraction, learning rate, and generation-health trends.",
       "parameters": {
         "type": "object",
         "properties": {

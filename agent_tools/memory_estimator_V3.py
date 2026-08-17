@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
-import re
 import statistics
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -13,7 +11,6 @@ from typing import Any, Mapping, Sequence
 PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
 
 MIB = 1024 * 1024
-GIB_IN_MIB = 1024.0
 
 MODEL_KEY = "actor_rollout_ref.model.path"
 PROMPT_LENGTH_KEY = "data.max_prompt_length"
@@ -92,90 +89,6 @@ LAST_PIPELINE_LAYERS_KEY = (
 )
 
 WORLD_SIZE_KEYS = ("trainer.n_gpus_per_node", "trainer.nnodes")
-NUMBER = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
-PAIR_RE = re.compile(rf"([^\s:]+):({NUMBER})")
-STEP_RE = re.compile(r"step:(\d+)")
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-PARAMETER_COUNT_RE = re.compile(
-    r"number of parameters on \(tensor, pipeline\) model parallel rank "
-    r"\((?P<tp_rank>\d+),\s*(?P<pp_rank>\d+)\):\s*(?P<count>\d+)"
-)
-
-MODEL_CONFIG_FIELDS = (
-    "model_type",
-    "head_dim",
-    "hidden_act",
-    "hidden_size",
-    "intermediate_size",
-    "num_attention_heads",
-    "num_hidden_layers",
-    "num_key_value_heads",
-    "tie_word_embeddings",
-    "torch_dtype",
-    "vocab_size",
-    "padded_vocab_size",
-    "num_experts",
-    "num_local_experts",
-    "n_routed_experts",
-    "moe_intermediate_size",
-    "expert_intermediate_size",
-    "shared_expert_intermediate_size",
-    "moe_shared_expert_intermediate_size",
-    "n_shared_experts",
-    "moe_layer_freq",
-    "decoder_sparse_step",
-    "first_k_dense_replace",
-    "mtp_num_layers",
-    "num_nextn_predict_layers",
-    "multi_latent_attention",
-    "q_lora_rank",
-    "kv_lora_rank",
-    "qk_head_dim",
-    "qk_nope_head_dim",
-    "qk_pos_emb_head_dim",
-    "qk_rope_head_dim",
-    "v_head_dim",
-)
-
-RESOLVED_CONFIG_FIELDS = (
-    "tensor_model_parallel_size",
-    "pipeline_model_parallel_size",
-    "context_parallel_size",
-    "expert_model_parallel_size",
-    "expert_tensor_parallel_size",
-    "virtual_pipeline_model_parallel_size",
-    "sequence_parallel",
-    "use_remove_padding",
-    "use_distributed_optimizer",
-    "recompute_granularity",
-    "recompute_method",
-    "recompute_num_layers",
-    "recompute_modules",
-    "attention_backend",
-    "num_layers_in_first_pipeline_stage",
-    "num_layers_in_last_pipeline_stage",
-    "fp16",
-    "bf16",
-    "params_dtype",
-    "num_layers",
-    "mtp_num_layers",
-    "hidden_size",
-    "num_attention_heads",
-    "num_query_groups",
-    "ffn_hidden_size",
-    "kv_channels",
-    "gated_linear_unit",
-    "num_moe_experts",
-    "multi_latent_attention",
-    "moe_shared_expert_intermediate_size",
-    "moe_layer_freq",
-    "moe_ffn_hidden_size",
-    "q_lora_rank",
-    "kv_lora_rank",
-    "qk_head_dim",
-    "qk_pos_emb_head_dim",
-    "v_head_dim",
-)
 
 
 def _is_number(value: Any) -> bool:
@@ -198,246 +111,55 @@ def _changed_keys(
     return {key for key in keys if reference.get(key) != candidate.get(key)}
 
 
-def _percentile(values: Sequence[float], percentile: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, math.ceil(percentile * len(ordered)) - 1))
-    return float(ordered[index])
-
-
 def _round(value: float | None, digits: int = 2) -> float | None:
     return round(value, digits) if value is not None and math.isfinite(value) else None
-
-
-def _parse_scalar(raw: str) -> Any:
-    value = raw.strip().rstrip(",")
-    lowered = value.lower()
-    if lowered == "none" or lowered == "null":
-        return None
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
-    if (value.startswith("'") and value.endswith("'")) or (
-        value.startswith('"') and value.endswith('"')
-    ):
-        return value[1:-1]
-    if re.fullmatch(r"[-+]?\d+", value):
-        return int(value)
-    if re.fullmatch(NUMBER, value):
-        return float(value)
-    return value
-
-
-def _resolve_recorded_path(value: Any) -> Path | None:
-    if not isinstance(value, str) or not value:
-        return None
-    direct = Path(value).expanduser()
-    if direct.is_file():
-        return direct.resolve()
-
-    # Trial histories are often copied from a remote cluster.  Preserve the
-    # path below the repository's output/ directory so replay works locally.
-    normalized = value.replace("\\", "/")
-    marker = "/output/"
-    if marker in normalized:
-        suffix = normalized.split(marker, 1)[1]
-        local = Path.cwd() / "output" / Path(suffix)
-        if local.is_file():
-            return local.resolve()
-    return None
-
-
-def _trial_log_path(trial: Mapping[str, Any]) -> Path | None:
-    return _resolve_recorded_path(trial.get("log_path"))
-
-
-def _gpu_samples_path(trial: Mapping[str, Any], log_path: Path | None) -> Path | None:
-    recorded = _resolve_recorded_path(trial.get("gpu_samples_path"))
-    if recorded is not None:
-        return recorded
-    if log_path is not None:
-        sibling = log_path.parent / "gpu_samples.csv"
-        if sibling.is_file():
-            return sibling.resolve()
-    return None
-
-
-def _read_model_config(
-    parameters: Mapping[str, Any],
-) -> tuple[dict[str, Any], str | None]:
-    model_path = parameters.get(MODEL_KEY)
-    if not isinstance(model_path, str) or not model_path:
-        return {}, None
-    path = Path(model_path).expanduser()
-    config_path = path / "config.json" if path.is_dir() else None
-    if config_path is None or not config_path.is_file():
-        return {}, None
-    try:
-        value = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}, None
-    if not isinstance(value, Mapping):
-        return {}, None
-    return dict(value), str(config_path)
-
-
-def _logged_parameter_profile(
-    clean_text: str,
-    resolved: Mapping[str, Any],
-    log_path: Path,
-) -> dict[str, Any]:
-    """Recover the measured model shards printed by Megatron during startup.
-
-    Ray may collapse identical messages from data-parallel replicas.  The rank
-    tuple in this message is the tensor/pipeline rank, so one value per unique
-    tuple is sufficient to reconstruct a TP/PP partition.  Actor and reference
-    use the same model and, in the colocated Megatron worker, the same model-
-    parallel topology; repeated initializations therefore do not need to be
-    counted twice.
-    """
-
-    rank_parameters: dict[tuple[int, int], int] = {}
-    matched_lines = 0
-    for match in PARAMETER_COUNT_RE.finditer(clean_text):
-        matched_lines += 1
-        rank = (int(match.group("tp_rank")), int(match.group("pp_rank")))
-        count = int(match.group("count"))
-        # A repeated actor/ref or DP message should be identical.  Keeping the
-        # maximum is conservative if a backend prints slightly different
-        # wrapper counts for the two model instances.
-        rank_parameters[rank] = max(rank_parameters.get(rank, 0), count)
-
-    if not rank_parameters:
-        return {}
-
-    tp = int(resolved.get("tensor_model_parallel_size", 1) or 1)
-    pp = int(resolved.get("pipeline_model_parallel_size", 1) or 1)
-    ep = int(resolved.get("expert_model_parallel_size", 1) or 1)
-    etp = int(resolved.get("expert_tensor_parallel_size", tp) or tp)
-    expected_rank_count = max(1, tp * pp)
-    in_topology = {
-        rank: count
-        for rank, count in rank_parameters.items()
-        if rank[0] < tp and rank[1] < pp
-    }
-    if not in_topology:
-        in_topology = rank_parameters
-
-    complete_tp_pp_coverage = len(in_topology) == expected_rank_count
-    most_loaded = max(in_topology.values())
-
-    # With EP=1, summing every unique TP/PP shard reconstructs the fixed global
-    # parameter count directly.  An EP rank is not present in the printed rank
-    # tuple, so for MoE/EP logs that total is ambiguous; retain the observed
-    # shard and let _parameter_footprint use an anchored analytical ratio.
-    total_parameters: int | None = None
-    total_source: str | None = None
-    if complete_tp_pp_coverage and ep == 1:
-        total_parameters = sum(in_topology.values())
-        total_source = "sum_unique_logged_tp_pp_shards"
-    elif ep == 1:
-        total_parameters = most_loaded * expected_rank_count
-        total_source = "max_logged_shard_scaled_by_reference_tp_pp"
-
-    return {
-        "source": f"{log_path}:number_of_parameters",
-        "matched_log_lines": matched_lines,
-        "rank_parameters": [
-            {
-                "tensor_rank": tp_rank,
-                "pipeline_rank": pp_rank,
-                "parameters": count,
-            }
-            for (tp_rank, pp_rank), count in sorted(in_topology.items())
-        ],
-        "observed_rank_count": len(in_topology),
-        "expected_rank_count": expected_rank_count,
-        "complete_tp_pp_coverage": complete_tp_pp_coverage,
-        "most_loaded_shard_parameters": most_loaded,
-        "total_parameters": total_parameters,
-        "total_parameters_source": total_source,
-        "reference_topology": {
-            "tensor_model_parallel_size": tp,
-            "pipeline_model_parallel_size": pp,
-            "expert_model_parallel_size": ep,
-            "expert_tensor_parallel_size": etp,
-        },
-    }
 
 
 def _extract_log_context(
     trial: Mapping[str, Any], parameters: Mapping[str, Any]
 ) -> dict[str, Any]:
-    log_path = _trial_log_path(trial)
-    model_config, model_config_path = _read_model_config(parameters)
-    if log_path is None:
-        return {
-            "log_path": None,
-            "model_config": model_config,
-            "model_config_source": model_config_path,
-            "resolved": {},
-            "parameter_profile": {},
-            "length": _configured_length_profile(parameters),
-        }
-
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        text = ""
-    clean_text = ANSI_RE.sub("", text)
-
-    # When the model path is unavailable during offline replay, recover the
-    # simple scalar fields from the config JSON printed by transformers.
-    log_model_config: dict[str, Any] = {}
-    for field in MODEL_CONFIG_FIELDS:
-        pattern = re.compile(
-            rf'["\']{re.escape(field)}["\']\s*:\s*'
-            rf'(?P<value>true|false|null|None|"[^"]*"|\'[^\']*\'|{NUMBER})',
-            re.IGNORECASE,
+    del parameters
+    facts = trial.get("log_facts")
+    if not isinstance(facts, Mapping) or facts.get("schema_version") != 1:
+        raise ValueError(
+            "reference trial requires schema-version-1 log_facts.json; "
+            "memory estimator never parses train.log"
         )
-        match = pattern.search(clean_text)
-        if match:
-            log_model_config[field] = _parse_scalar(match.group("value"))
-    if not model_config:
-        model_config = log_model_config
-        model_config_path = (
-            f"{log_path}:printed_model_config" if log_model_config else None
-        )
-
-    resolved: dict[str, Any] = {}
-    transformer_line = next(
-        (line for line in clean_text.splitlines() if "TransformerConfig(" in line),
-        "",
-    )
-    for field in RESOLVED_CONFIG_FIELDS:
-        match = re.search(
-            rf"(?<![A-Za-z0-9_]){re.escape(field)}=(?P<value>[^,\)]+)",
-            transformer_line,
-        )
-        if match:
-            resolved[field] = _parse_scalar(match.group("value"))
-
-    parameter_profile = _logged_parameter_profile(clean_text, resolved, log_path)
-
-    records: list[tuple[int, dict[str, float]]] = []
-    for line in clean_text.splitlines():
-        step_match = STEP_RE.search(line)
-        if not step_match:
-            continue
-        pairs = {key: float(value) for key, value in PAIR_RE.findall(line)}
-        if pairs:
-            records.append((int(step_match.group(1)), pairs))
-
-    length = _length_profile_from_records(records, parameters)
+    source = facts.get("source")
+    megatron = facts.get("megatron")
+    workload = facts.get("workload")
+    if not isinstance(megatron, Mapping) or not isinstance(workload, Mapping):
+        raise ValueError("log_facts.json is missing megatron or workload facts")
+    summary = megatron.get("parameter_summary")
+    ranks = megatron.get("rank_parameter_counts")
+    parameter_profile = dict(summary) if isinstance(summary, Mapping) else {}
+    if isinstance(ranks, list):
+        parameter_profile["rank_parameters"] = [
+            dict(row) for row in ranks if isinstance(row, Mapping)
+        ]
+    length = workload.get("sequence_length")
+    if not isinstance(length, Mapping):
+        raise ValueError("log_facts.json is missing workload.sequence_length")
     return {
-        "log_path": str(log_path),
-        "model_config": model_config,
-        "model_config_source": model_config_path,
-        "resolved": resolved,
+        "log_path": (
+            source.get("train_log") if isinstance(source, Mapping) else None
+        ),
+        "model_config": (
+            dict(facts["model_config"])
+            if isinstance(facts.get("model_config"), Mapping)
+            else {}
+        ),
+        "model_config_source": "log_facts.json:model_config",
+        "resolved": (
+            dict(megatron["resolved_config"])
+            if isinstance(megatron.get("resolved_config"), Mapping)
+            else {}
+        ),
         "parameter_profile": parameter_profile,
-        "length": length,
+        "length": dict(length),
+        "warnings": (
+            list(source.get("warnings", [])) if isinstance(source, Mapping) else []
+        ),
     }
 
 
@@ -451,55 +173,6 @@ def _configured_length_profile(parameters: Mapping[str, Any]) -> dict[str, Any]:
         "configured_upper_tokens": total,
         "source": "configured_maximum",
         "sampled_steps": 0,
-    }
-
-
-def _length_profile_from_records(
-    records: Sequence[tuple[int, Mapping[str, float]]],
-    parameters: Mapping[str, Any],
-) -> dict[str, Any]:
-    configured = _configured_length_profile(parameters)
-    if not records:
-        return configured
-    stable = [row for step, row in records if step > 5]
-    if not stable:
-        stable = [row for _, row in records]
-
-    population = _number(parameters, TRAIN_BATCH_KEY, 0.0) * _number(
-        parameters, ROLLOUT_N_KEY, 1.0
-    )
-    means: list[float] = []
-    observed_upper: list[float] = []
-    for row in stable:
-        total_tokens = row.get("perf/total_num_tokens")
-        if total_tokens is not None and population > 0:
-            means.append(total_tokens / population)
-        elif (
-            row.get("prompt_length/mean") is not None
-            and row.get("response_length/mean") is not None
-        ):
-            means.append(row["prompt_length/mean"] + row["response_length/mean"])
-        if (
-            row.get("prompt_length/max") is not None
-            and row.get("response_length/max") is not None
-        ):
-            observed_upper.append(row["prompt_length/max"] + row["response_length/max"])
-
-    point = _percentile(means, 0.95)
-    if point is None:
-        return configured
-    configured_upper = float(configured["configured_upper_tokens"])
-    upper_observed = _percentile(observed_upper, 0.95)
-    upper = configured_upper
-    if upper_observed is not None:
-        upper = min(configured_upper, max(point, upper_observed))
-    return {
-        "point_tokens": max(1.0, min(point, configured_upper)),
-        "upper_tokens": max(1.0, upper),
-        "configured_upper_tokens": configured_upper,
-        "source": "reference_train_log_stable_step_p95_mean_tokens",
-        "sampled_steps": len(means),
-        "mean_tokens_across_sampled_steps": (statistics.mean(means) if means else None),
     }
 
 
@@ -535,117 +208,54 @@ def _candidate_length_profile(
 
 def _phase_percentage_peaks(trial: Mapping[str, Any]) -> dict[str, float]:
     result: dict[str, float] = {}
-    memory = trial.get("memory_by_phase_pct")
-    if not isinstance(memory, Mapping):
+    structured = trial.get("structured_metrics")
+    resource = structured.get("resource") if isinstance(structured, Mapping) else None
+    by_phase = resource.get("by_phase") if isinstance(resource, Mapping) else None
+    if not isinstance(by_phase, Mapping):
         return result
     for phase in PHASES:
-        value = memory.get(phase)
-        if isinstance(value, Mapping):
-            value = value.get("max")
-        if _is_number(value):
-            result[phase] = float(value)
+        value = by_phase.get(phase)
+        used = value.get("max_used_mib") if isinstance(value, Mapping) else None
+        total = (
+            value.get("max_used_gpu_total_mib")
+            if isinstance(value, Mapping)
+            else None
+        )
+        if _is_number(used) and _is_number(total) and float(total) > 0:
+            result[phase] = 100.0 * float(used) / float(total)
     return result
 
 
-def _phase_measurements(
-    trial: Mapping[str, Any], log_path: Path | None
-) -> dict[str, dict[str, Any]]:
-    """Read phase peaks from trial.jsonl and capacity from gpu_samples.csv.
+def _phase_measurements(trial: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Consume phase peaks only from the persisted structured metrics artifact."""
 
-    C550's phase boundary messages in train.log are not a reliable physical
-    memory source.  ``memory_by_phase_pct`` is the authoritative phase summary;
-    the CSV is used for GPU capacity and as a fallback only when that summary
-    is absent.
-    """
-
-    pct_peaks = _phase_percentage_peaks(trial)
-    samples_path = _gpu_samples_path(trial, log_path)
-    used_by_phase: dict[str, list[float]] = {phase: [] for phase in PHASES}
-    totals: list[float] = []
-
-    if samples_path is not None:
-        try:
-            with samples_path.open("r", encoding="utf-8", errors="replace") as handle:
-                for row in csv.DictReader(handle):
-                    phase = row.get("phase")
-                    if phase not in used_by_phase:
-                        continue
-                    try:
-                        used = float(row["memory_used_mb"])
-                        total = float(row["memory_total_mb"])
-                    except (KeyError, TypeError, ValueError):
-                        continue
-                    if used >= 0 and total > 0:
-                        used_by_phase[phase].append(used)
-                        totals.append(total)
-        except OSError:
-            pass
-
-    capacity_mb = statistics.median(totals) if totals else None
+    structured = trial.get("structured_metrics")
+    resource = structured.get("resource") if isinstance(structured, Mapping) else None
+    by_phase = resource.get("by_phase") if isinstance(resource, Mapping) else None
+    if not isinstance(by_phase, Mapping):
+        by_phase = {}
     result: dict[str, dict[str, Any]] = {}
     for phase in PHASES:
-        pct = pct_peaks.get(phase)
-        raw_csv_peak_mb = max(used_by_phase[phase]) if used_by_phase[phase] else None
-        if pct is not None and capacity_mb is not None:
-            used_mb = capacity_mb * pct / 100.0
-            phase_source = "trial.memory_by_phase_pct.max * gpu_samples.capacity"
-        else:
-            used_mb = raw_csv_peak_mb
-            phase_source = (
-                f"{samples_path}:raw_phase_peak_fallback"
-                if raw_csv_peak_mb is not None and samples_path is not None
-                else (
-                    "trial.memory_by_phase_pct.max_without_capacity"
-                    if pct is not None
-                    else None
-                )
-            )
-        if pct is None and used_mb is not None and capacity_mb is not None:
-            pct = 100.0 * used_mb / capacity_mb
+        row = by_phase.get(phase)
+        row = row if isinstance(row, Mapping) else {}
+        used_mb = row.get("max_used_mib")
+        capacity_mb = row.get("max_used_gpu_total_mib")
+        pct = (
+            100.0 * float(used_mb) / float(capacity_mb)
+            if _is_number(used_mb)
+            and _is_number(capacity_mb)
+            and float(capacity_mb) > 0
+            else None
+        )
         result[phase] = {
-            "memory_mb": used_mb,
+            "memory_mb": float(used_mb) if _is_number(used_mb) else None,
             "memory_pct": pct,
-            "gpu_capacity_mb": capacity_mb,
-            "source": phase_source,
+            "gpu_capacity_mb": (
+                float(capacity_mb) if _is_number(capacity_mb) else None
+            ),
+            "source": row.get("source"),
         }
     return result
-
-
-def _same_parameters(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
-    return json.dumps(left, sort_keys=True, default=str) == json.dumps(
-        right, sort_keys=True, default=str
-    )
-
-
-def _reference_trial(
-    current: Mapping[str, Any],
-    trials: Sequence[Mapping[str, Any]],
-    reference_trial_id: int | None,
-) -> Mapping[str, Any] | None:
-    observed = [
-        trial
-        for trial in trials
-        if isinstance(trial, Mapping)
-        and isinstance(trial.get("parameters"), Mapping)
-        and _phase_percentage_peaks(trial)
-    ]
-    if reference_trial_id is not None:
-        return next(
-            (
-                trial
-                for trial in observed
-                if trial.get("trial_id") == reference_trial_id
-            ),
-            None,
-        )
-    # Do not silently fall back to an arbitrary same-model trial.  The only
-    # safe implicit anchor is an exact parameter match.
-    exact = [
-        trial
-        for trial in observed
-        if _same_parameters(trial.get("parameters", {}), current)
-    ]
-    return exact[-1] if exact else None
 
 
 def _pick(
@@ -673,7 +283,7 @@ def _required_positive_number(value: Any, name: str) -> float:
     if not _is_number(value) or float(value) <= 0:
         raise ValueError(
             f"cannot estimate compute memory: missing positive model field {name!r} "
-            "from parameters, reference train.log, and model config.json"
+            "from parameters or reference log_facts.json"
         )
     return float(value)
 
@@ -2087,8 +1697,6 @@ def _component_dependencies(phase: str) -> dict[str, set[str]]:
     uncalibrated = {
         keys["dynamic_batch"],
         keys["remove_padding"],
-        "actor_rollout_ref.rollout.free_cache_engine",
-        ROLLOUT_UTILIZATION_KEY,
         LORA_RANK_KEY,
         LORA_ADAPTER_PATH_KEY,
         LORA_TARGET_MODULES_KEY,
@@ -2147,6 +1755,16 @@ def _known_compute_memory_keys() -> set[str]:
     known: set[str] = set()
     for phase in ("actor_log_prob", "ref_log_prob", "training"):
         known |= _component_dependencies(phase)["all"]
+    known |= {
+        ROLLOUT_UTILIZATION_KEY,
+        "actor_rollout_ref.rollout.max_num_batched_tokens",
+        "actor_rollout_ref.rollout.max_num_seqs",
+        "actor_rollout_ref.rollout.tensor_model_parallel_size",
+        "actor_rollout_ref.rollout.enable_prefix_caching",
+        "actor_rollout_ref.rollout.enable_chunked_prefill",
+        "actor_rollout_ref.rollout.free_cache_engine",
+        "actor_rollout_ref.rollout.enforce_eager",
+    }
     return known
 
 
@@ -2242,8 +1860,8 @@ def _activation_calibration(
         if relevant & dependencies["uncalibrated"]:
             continue
 
-        trial_context = _extract_log_context(trial, parameters)
-        trial_length = trial_context["length"]
+        trial_facts = _extract_log_context(trial, parameters)
+        trial_length = trial_facts["length"]
         if trial_length.get("source") == "configured_maximum" and not any(
             reference_parameters.get(key) != parameters.get(key)
             for key in (PROMPT_LENGTH_KEY, RESPONSE_LENGTH_KEY)
@@ -2253,7 +1871,7 @@ def _activation_calibration(
             # rather than incorrectly switching this one observation to the
             # configured maximum.
             trial_length = dict(reference_length)
-        trial_runtime = _runtime_args(phase, parameters, trial_context, trial_length)
+        trial_runtime = _runtime_args(phase, parameters, trial_facts, trial_length)
         trial_activation, _ = _activation_bytes(
             reference_architecture, trial_runtime, upper_sequence=False
         )
@@ -2261,7 +1879,7 @@ def _activation_calibration(
         if abs(theoretical_delta_mb) < 1e-6:
             continue
 
-        measurement = _phase_measurements(trial, _trial_log_path(trial))[phase]
+        measurement = _phase_measurements(trial)[phase]
         actual_mb = measurement.get("memory_mb")
         if actual_mb is None and measurement.get("memory_pct") is not None:
             capacity = measurement.get("gpu_capacity_mb") or reference_capacity_mb
@@ -2342,20 +1960,16 @@ def _compute_projection(
         }
 
     if not relevant_changes and not unknown_memory_changes:
-        variability_mb = (
-            max(512.0, 0.05 * float(capacity_mb)) if capacity_mb is not None else 2048.0
-        )
         return {
             "reference_mb": reference_mb,
             "projected_mb": reference_mb,
             "delta_mb": 0.0 if reference_mb is not None else None,
-            "uncertainty_mb": variability_mb if reference_mb is not None else None,
-            "confidence": "medium",
-            "model": "unchanged_reference_phase_with_run_variability",
+            "uncertainty_mb": 0.0 if reference_mb is not None else None,
+            "confidence": "high",
+            "model": "unaffected_phase",
             "drivers": {
                 "affected_components": [],
                 "changed_parameters": [],
-                "variability_floor_mb": variability_mb,
             },
             "uncalibrated_changes": [],
         }
@@ -2747,160 +2361,129 @@ def _rollout_projection(
     }
 
 
+def _relative_drivers(projection: Mapping[str, Any]) -> dict[str, Any]:
+    source = projection.get("drivers")
+    source = source if isinstance(source, Mapping) else {}
+    result: dict[str, Any] = {
+        "estimation_model": projection.get("model"),
+        "affected_components": list(source.get("affected_components", [])),
+        "changed_parameters": list(source.get("changed_parameters", [])),
+    }
+    utilization = source.get("gpu_memory_utilization")
+    if isinstance(utilization, Mapping):
+        result["gpu_memory_utilization"] = dict(utilization)
+    if source.get("calibration") is not None:
+        result["calibration"] = source.get("calibration")
+    candidate_runtime = source.get("candidate_runtime")
+    if isinstance(candidate_runtime, Mapping):
+        result["candidate_runtime"] = {
+            key: candidate_runtime.get(key)
+            for key in (
+                "calculate_entropy",
+                "micro_batch_size",
+                "dynamic_batch",
+                "tensor_model_parallel_size",
+                "pipeline_model_parallel_size",
+                "context_parallel_size",
+                "sequence_parallel",
+            )
+            if key in candidate_runtime
+        }
+    structural = source.get("structural_uncertainties")
+    if isinstance(structural, list) and structural:
+        result["structural_uncertainties"] = list(structural)
+    return result
+
+
 def _format_phase_result(
     measurement: Mapping[str, Any],
     projection: Mapping[str, Any],
-    memory_limit_pct: float,
+    reference_context: Mapping[str, Any],
 ) -> dict[str, Any]:
-    capacity_mb = measurement.get("gpu_capacity_mb")
     reference_mb = projection.get("reference_mb")
-    projected_mb = projection.get("projected_mb")
     delta_mb = projection.get("delta_mb")
     uncertainty_mb = projection.get("uncertainty_mb")
-    reference_pct = measurement.get("memory_pct")
-    if capacity_mb is not None:
-        capacity_mb = float(capacity_mb)
-        if reference_mb is not None:
-            reference_pct = 100.0 * float(reference_mb) / capacity_mb
-        projected_pct = (
-            100.0 * float(projected_mb) / capacity_mb
-            if projected_mb is not None
-            else None
-        )
-        delta_pct = (
-            100.0 * float(delta_mb) / capacity_mb if delta_mb is not None else None
-        )
-        uncertainty_pct = (
-            100.0 * float(uncertainty_mb) / capacity_mb
-            if uncertainty_mb is not None
-            else None
-        )
+    unaffected = projection.get("model") in {
+        "unchanged_reference_phase",
+        "unaffected_phase",
+    }
+    if unaffected:
+        estimate = lower = upper = 0.0
+        confidence_level = "high"
+        reasons = ["candidate changes do not affect this phase"]
+    elif reference_mb in (None, 0) or delta_mb is None or uncertainty_mb is None:
+        return {
+            "available": False,
+            "relative_change_pct": None,
+            "direction": "unknown",
+            "confidence": {
+                "level": "low",
+                "reasons": ["reference phase peak is unavailable in metrics.json"],
+            },
+            "drivers": _relative_drivers(projection),
+            "uncalibrated_changes": projection.get("uncalibrated_changes", []),
+        }
     else:
-        projected_pct = reference_pct if delta_mb == 0 else None
-        delta_pct = 0.0 if delta_mb == 0 else None
-        uncertainty_pct = None
-
-    upper_mb = (
-        float(projected_mb) + float(uncertainty_mb)
-        if projected_mb is not None and uncertainty_mb is not None
-        else projected_mb
-    )
-    upper_pct = (
-        100.0 * float(upper_mb) / float(capacity_mb)
-        if upper_mb is not None and capacity_mb is not None
-        else projected_pct
-    )
-    headroom = (
-        memory_limit_pct - float(projected_pct) if projected_pct is not None else None
-    )
-    upper_headroom = (
-        memory_limit_pct - float(upper_pct) if upper_pct is not None else None
-    )
-    if upper_pct is None:
-        risk = "unknown_without_absolute_anchor"
-    elif upper_pct >= memory_limit_pct:
-        risk = "high"
-    elif upper_headroom is not None and upper_headroom < 5:
-        risk = "watch"
+        estimate = max(
+            -100.0, 100.0 * float(delta_mb) / float(reference_mb)
+        )
+        uncertainty = 100.0 * abs(float(uncertainty_mb)) / float(reference_mb)
+        lower = max(-100.0, estimate - uncertainty)
+        upper = max(lower, estimate + uncertainty)
+        confidence_level = str(projection.get("confidence", "low"))
+        reasons = []
+        uncalibrated = projection.get("uncalibrated_changes", [])
+        if uncalibrated:
+            reasons.append("one or more changed parameters lack matched calibration")
+        profile = reference_context.get("parameter_profile")
+        if (
+            isinstance(profile, Mapping)
+            and profile.get("complete_tp_pp_coverage") is not True
+            and "model" in projection.get("drivers", {}).get("affected_components", [])
+        ):
+            reasons.append("Megatron TP/PP parameter coverage is incomplete")
+            confidence_level = "low"
+        if reference_context.get("warnings"):
+            reasons.append("log_facts.json contains parser warnings")
+            if confidence_level == "high":
+                confidence_level = "medium"
+        if not reasons:
+            reasons.append(
+                "matched empirical calibration is available"
+                if confidence_level == "high"
+                else "estimate uses an analytical delta anchored to one measured trial"
+            )
+    if estimate > 1e-9:
+        direction = "increase"
+    elif estimate < -1e-9:
+        direction = "decrease"
     else:
-        risk = "low"
-    ratio = (
-        float(projected_mb) / float(reference_mb)
-        if projected_mb is not None and reference_mb not in (None, 0)
-        else None
-    )
+        direction = "unchanged"
     return {
-        "reference_memory_mb": _round(float(reference_mb))
-        if reference_mb is not None
-        else None,
-        "reference_memory_gib": _round(float(reference_mb) / GIB_IN_MIB)
-        if reference_mb is not None
-        else None,
-        "delta_memory_mb": _round(float(delta_mb)) if delta_mb is not None else None,
-        "delta_memory_gib": _round(float(delta_mb) / GIB_IN_MIB)
-        if delta_mb is not None
-        else None,
-        "projected_memory_mb": _round(float(projected_mb))
-        if projected_mb is not None
-        else None,
-        "projected_memory_gib": _round(float(projected_mb) / GIB_IN_MIB)
-        if projected_mb is not None
-        else None,
-        "upper_bound_memory_mb": _round(float(upper_mb))
-        if upper_mb is not None
-        else None,
-        "upper_bound_memory_gib": _round(float(upper_mb) / GIB_IN_MIB)
-        if upper_mb is not None
-        else None,
-        "gpu_capacity_mb": _round(float(capacity_mb))
-        if capacity_mb is not None
-        else None,
-        "gpu_capacity_gib": _round(float(capacity_mb) / GIB_IN_MIB)
-        if capacity_mb is not None
-        else None,
-        # Compatibility fields retained for the registry/prompts and replay tool.
-        "reference_pct": _round(float(reference_pct))
-        if reference_pct is not None
-        else None,
-        "pressure_ratio": _round(ratio, 3),
-        "raw_pressure_ratio": _round(ratio, 6),
-        "delta_pct": _round(delta_pct),
-        "projected_pct": _round(projected_pct),
-        "uncertainty_pct": _round(uncertainty_pct),
-        "upper_bound_pct": _round(upper_pct),
-        "headroom_to_limit_pct": _round(headroom),
-        "upper_headroom_to_limit_pct": _round(upper_headroom),
-        "risk": risk,
-        "confidence": projection["confidence"],
-        "model": projection["model"],
-        "component_shares": None,
-        "drivers": projection["drivers"],
-        "uncalibrated_changes": projection["uncalibrated_changes"],
-        "reference_measurement_source": measurement.get("source"),
+        "available": True,
+        "relative_change_pct": {
+            "lower": _round(lower, 4),
+            "estimate": _round(estimate, 4),
+            "upper": _round(upper, 4),
+        },
+        "direction": direction,
+        "confidence": {"level": confidence_level, "reasons": reasons},
+        "drivers": _relative_drivers(projection),
+        "uncalibrated_changes": projection.get("uncalibrated_changes", []),
     }
 
 
 def estimate_phase_memory(
-    current_parameters: Mapping[str, Any],
+    reference: Mapping[str, Any],
     candidate_parameters: Mapping[str, Any],
     trials: Sequence[Mapping[str, Any]] = (),
-    memory_limit_pct: float = 92.0,
-    reference_trial_id: int | None = None,
 ) -> dict[str, Any]:
-    """Estimate candidate phase peaks from a measured reference plus deltas.
+    """Estimate per-phase relative change from one structured reference trial.
 
-    ``candidate_parameters`` is already the canonical, fully assembled
-    candidate produced by ``agent_tools.registry``.  This function never
-    overlays or rebuilds it; it only compares it with the selected reference
-    trial and recomputes components affected by the changed keys.
+    The caller loads artifacts and assembles ``candidate_parameters``. This
+    function consumes only persisted parameters, metrics, and log facts; it
+    never opens train.log or applies an absolute resource policy.
     """
-
-    reference = _reference_trial(current_parameters, trials, reference_trial_id)
-    if reference is None:
-        return {
-            "method": "no_observed_anchor",
-            "version": 3,
-            "confidence": "low",
-            "memory_limit_pct": memory_limit_pct,
-            "reference_trial_id": None,
-            "changed_parameters": {},
-            "phases": {
-                phase: {
-                    "reference_pct": None,
-                    "projected_pct": None,
-                    "projected_memory_gib": None,
-                    "upper_bound_pct": None,
-                    "risk": "unknown_without_observed_anchor",
-                    "confidence": "low",
-                    "model": "no_observed_anchor",
-                    "component_shares": None,
-                    "drivers": {},
-                    "uncalibrated_changes": [],
-                }
-                for phase in PHASES
-            },
-            "limitations": ["An explicit phase-measured reference trial is required."],
-        }
 
     reference_parameters = reference.get("parameters")
     if not isinstance(reference_parameters, Mapping):
@@ -2921,19 +2504,13 @@ def estimate_phase_memory(
         reference_length, reference_parameters, candidate_parameters
     )
     if MODEL_KEY in changed:
-        candidate_model_config, candidate_model_source = _read_model_config(
-            candidate_parameters
+        raise ValueError(
+            "model path changes require a completed candidate trial and cannot be "
+            "estimated from reference log facts"
         )
-        candidate_context = {
-            "model_config": candidate_model_config,
-            "model_config_source": candidate_model_source,
-            "resolved": reference_context.get("resolved", {}),
-        }
-    else:
-        candidate_context = reference_context
+    candidate_context = reference_context
 
-    log_path = _trial_log_path(reference)
-    measurements = _phase_measurements(reference, log_path)
+    measurements = _phase_measurements(reference)
     phases: dict[str, Any] = {}
     for phase in PHASES:
         measurement = measurements[phase]
@@ -2956,30 +2533,49 @@ def estimate_phase_memory(
                 candidate_length,
                 trials,
             )
-        phases[phase] = _format_phase_result(measurement, projection, memory_limit_pct)
+        phases[phase] = _format_phase_result(
+            measurement, projection, reference_context
+        )
 
-    confidence_values = [phase["confidence"] for phase in phases.values()]
+    affected_phases = []
+    for phase_result in phases.values():
+        interval = phase_result.get("relative_change_pct")
+        affected = phase_result.get("available") is not True or (
+            isinstance(interval, Mapping)
+            and any(
+                abs(float(interval.get(bound, 0.0))) > 1e-12
+                for bound in ("lower", "estimate", "upper")
+            )
+        )
+        if affected:
+            affected_phases.append(phase_result)
+    confidence_values = [
+        phase["confidence"]["level"] for phase in affected_phases
+    ]
     confidence = (
         "low"
         if "low" in confidence_values
         else (
-            "high" if all(value == "high" for value in confidence_values) else "medium"
+            "high"
+            if not confidence_values or all(value == "high" for value in confidence_values)
+            else "medium"
         )
     )
     return {
-        "method": "measured_reference_plus_changed_component_deltas",
+        "method": "measured_reference_relative_component_delta",
         "version": 3,
-        "confidence": confidence,
-        "memory_limit_pct": memory_limit_pct,
+        "confidence": {
+            "level": confidence,
+            "reasons": sorted(
+                {
+                    reason
+                    for phase in affected_phases
+                    for reason in phase.get("confidence", {}).get("reasons", [])
+                }
+            ),
+        },
         "reference_trial_id": reference.get("trial_id"),
         "changed_parameters": changed_parameters,
-        "sequence_length": {
-            "reference": reference_length,
-            "candidate": candidate_length,
-        },
-        "reference_log_path": reference_context.get("log_path"),
-        "resolved_parameter_sources": reference_context.get("resolved", {}),
-        "logged_parameter_profile": reference_context.get("parameter_profile", {}),
         "phases": phases,
         "limitations": [
             (
@@ -3031,21 +2627,20 @@ def estimate_phase_memory(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description=(
-            "Estimate verl phase memory from a measured reference and changed "
-            "analytical components"
-        )
+        description="Estimate relative verl phase-memory change from trial artifacts"
     )
-    parser.add_argument("--current", required=True, help="Reference parameter JSON")
+    parser.add_argument(
+        "--reference-trial",
+        required=True,
+        help="Hydrated reference trial JSON containing parameters, metrics, and log facts",
+    )
     parser.add_argument(
         "--candidate", required=True, help="Fully assembled candidate parameter JSON"
     )
     parser.add_argument("--trials", help="Optional JSON array or JSONL trial history")
-    parser.add_argument("--memory-limit-pct", type=float, default=92.0)
-    parser.add_argument("--reference-trial-id", type=int)
     args = parser.parse_args()
 
-    current = json.loads(Path(args.current).read_text(encoding="utf-8"))
+    reference = json.loads(Path(args.reference_trial).read_text(encoding="utf-8"))
     candidate = json.loads(Path(args.candidate).read_text(encoding="utf-8"))
     trials: list[dict[str, Any]] = []
     if args.trials:
@@ -3058,11 +2653,9 @@ def main() -> int:
     print(
         json.dumps(
             estimate_phase_memory(
-                current,
+                reference,
                 candidate,
                 trials,
-                args.memory_limit_pct,
-                args.reference_trial_id,
             ),
             indent=2,
             ensure_ascii=False,

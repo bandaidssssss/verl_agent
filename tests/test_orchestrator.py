@@ -108,7 +108,7 @@ class OrchestratorStageTest(unittest.TestCase):
         }
         self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 7)
 
-    def test_best_stability_legacy_fallback_uses_last_reported_window(self) -> None:
+    def test_best_stability_ignores_incomplete_terminal_window(self) -> None:
         earlier = stability_trial(7, 0.2)
         later = stability_trial(8, 0.4)
         later["stability"]["windows"].append(
@@ -116,7 +116,7 @@ class OrchestratorStageTest(unittest.TestCase):
         )
         later["stability"]["metrics"]["critic/rewards/mean"].append(0.1)
         later["stability"]["metrics"]["actor/ppo_kl"].append(0.02)
-        self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 7)
+        self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 8)
 
     def test_single_low_reward_is_not_treated_as_a_fixed_failure_floor(self) -> None:
         low_reward = stability_trial(7, -1.0, kl=0.01)
@@ -357,6 +357,7 @@ class ProposalSeriesContextTest(unittest.TestCase):
                 }
             ]
             orchestrator.trials = lambda: trials
+            orchestrator.trial_indexes = lambda: trials
 
             class FakeAgents:
                 def propose(self, context=None, conversation=None):

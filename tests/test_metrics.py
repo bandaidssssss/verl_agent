@@ -3,11 +3,160 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from metrics import analyze_trial, compute_threshold_stats, parse_step_records
+from metrics import (
+    analyze_trial,
+    build_running_metrics,
+    build_structured_metrics,
+    compute_threshold_stats,
+    parse_step_records,
+)
+from tools.extract_trial_metrics import extract_trial_metrics
 
 
 class MetricsTest(unittest.TestCase):
+    def test_unified_extractor_reads_train_log_once_and_writes_log_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trial_dir = Path(directory)
+            log = trial_dir / "train.log"
+            log.write_text(
+                "model config: {'model_type': 'llama', 'hidden_size': 64, "
+                "'num_hidden_layers': 8, 'num_attention_heads': 8}\n"
+                "TransformerConfig(tensor_model_parallel_size=1, "
+                "pipeline_model_parallel_size=1, bf16=True)\n"
+                "number of parameters on (tensor, pipeline) model parallel rank "
+                "(0, 0): 300\n"
+                "step:1 - perf/throughput:10 - perf/total_num_tokens:128\n",
+                encoding="utf-8",
+            )
+            parameters = {
+                "data.train_batch_size": 1,
+                "data.max_prompt_length": 64,
+                "data.max_response_length": 64,
+                "actor_rollout_ref.rollout.n": 1,
+            }
+            original_open = Path.open
+            train_log_opens = 0
+
+            def tracked_open(path: Path, *args, **kwargs):
+                nonlocal train_log_opens
+                if path.resolve() == log.resolve():
+                    train_log_opens += 1
+                return original_open(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "open", tracked_open):
+                metrics = extract_trial_metrics(
+                    trial_dir, {}, parameters=parameters
+                )
+            facts = __import__("json").loads(
+                (trial_dir / "log_facts.json").read_text(encoding="utf-8")
+            )
+        self.assertEqual(train_log_opens, 1)
+        self.assertEqual(metrics["source"]["log_facts"], "log_facts.json")
+        self.assertEqual(facts["model_config"]["hidden_size"], 64)
+        self.assertEqual(
+            facts["megatron"]["parameter_summary"]["total_parameters"], 300
+        )
+
+    def test_running_snapshot_never_exceeds_snapshot_step(self) -> None:
+        metrics = build_running_metrics(
+            {
+                1: {"critic/rewards/mean": 0.1},
+                2: {"critic/rewards/mean": 0.2},
+                3: {"critic/rewards/mean": 0.3},
+            },
+            snapshot_step=2,
+        )
+        self.assertEqual(metrics["latest_step"], 2)
+        self.assertEqual(
+            [row["step"] for row in metrics["stability"]["steps"]], [1, 2]
+        )
+
+    def test_single_log_pass_extracts_log_facts(self) -> None:
+        text = "\n".join(
+            (
+                "TF config: TransformerConfig(tensor_model_parallel_size=2, "
+                "pipeline_model_parallel_size=1, sequence_parallel=True)",
+                "number of parameters on (tensor, pipeline) model parallel rank (0, 0): 300",
+                "number of parameters on (tensor, pipeline) model parallel rank (1, 0): 300",
+                "step:6 - perf/total_num_tokens:640 - critic/rewards/mean:0.1",
+            )
+        )
+        parameters = {
+            "data.train_batch_size": 10,
+            "data.max_prompt_length": 64,
+            "data.max_response_length": 128,
+            "actor_rollout_ref.rollout.n": 2,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "train.log"
+            log.write_text(text, encoding="utf-8")
+            metrics = build_structured_metrics(log, None, parameters=parameters)
+        facts = metrics["log_facts"]
+        self.assertEqual(facts["source"]["train_log"], "train.log")
+        self.assertEqual(
+            facts["megatron"]["resolved_config"]["tensor_model_parallel_size"], 2
+        )
+        self.assertEqual(
+            facts["megatron"]["parameter_summary"]["total_parameters"], 600
+        )
+        self.assertEqual(
+            facts["workload"]["sequence_length"]["point_tokens"], 32.0
+        )
+
+    def test_structured_metrics_classify_steps_and_absolute_memory(self) -> None:
+        text = (
+            "step:1 - critic/rewards/mean:0.2 - actor/entropy:0.3 - "
+            "perf/throughput:12 - perf/time_per_step:4 - timing_s/gen:2"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / "train.log"
+            samples = root / "gpu_samples.csv"
+            log.write_text(text, encoding="utf-8")
+            samples.write_text(
+                "timestamp,phase,gpu_index,memory_used_mb,memory_total_mb,utilization_pct\n"
+                "1,rollout,0,50000,65536,80\n",
+                encoding="utf-8",
+            )
+            metrics = build_structured_metrics(
+                log,
+                samples,
+                warmup_updates=0,
+                expected_gpu_count=1,
+                resource_reserve_mib=3277,
+                throughput_reserve_mib=6554,
+            )
+        self.assertEqual(metrics["throughput"]["steps"][0]["metrics"]["perf/throughput"], 12)
+        self.assertEqual(metrics["stability"]["steps"][0]["metrics"]["actor/entropy"], 0.3)
+        self.assertEqual(metrics["resource"]["by_phase"]["rollout"]["max_used_mib"], 50000)
+        self.assertEqual(
+            metrics["resource"]["policy"]["effective_resource_limit_mib_by_gpu"]["0"],
+            65536 - 3277,
+        )
+
+    def test_incomplete_monitor_coverage_is_never_marked_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / "train.log"
+            log.write_text("step:1 - perf/throughput:2 - critic/rewards/mean:0.1\n")
+            samples = root / "gpu_samples.csv"
+            samples.write_text(
+                "timestamp,phase,gpu_index,memory_used_mb,memory_total_mb,utilization_pct\n"
+                "1,rollout,0,800,1000,90\n"
+            )
+            metrics = build_structured_metrics(
+                log,
+                samples,
+                expected_gpu_count=2,
+                resource_reserve_mib=100,
+                throughput_reserve_mib=200,
+            )
+        self.assertFalse(metrics["resource"]["monitor"]["coverage_complete"])
+        self.assertIsNone(metrics["resource"]["summary"]["resource_safe"])
+        self.assertIsNone(metrics["resource"]["summary"]["throughput_safe"])
+
     def test_parses_steps_and_phase_memory(self) -> None:
         text = """
 Before generate_sequences, memory allocated (GB): 2.0, memory reserved (GB): 3.0, device memory used/total (GB): 32.0/64.0
