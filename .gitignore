@@ -3,6 +3,7 @@ env.sh
 id_ed25519
 id_ed25519.pub
 output/
+old_output/
 experiment_data/
 profile/
 # Python caches

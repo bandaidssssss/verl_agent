@@ -40,11 +40,11 @@ from agent_tools.memory_estimator_V2 import PHASES, estimate_phase_memory
 # =============================================================================
 
 # 完整实验目录，里面应包含 trials.jsonl 或 trials/NNNN/trial_report.json。
-DEFAULT_RUN_DIR = ROOT / "output" / "0807_1735_2026"
+DEFAULT_RUN_DIR = ROOT / "output" / "0817_0924_2026"
 
 # 要重新评估哪一个已经执行过的 trial。脚本读取它的 proposal，并且只用
 # trial_id 小于它的历史数据做预测；该 trial 的实测显存只用于最后对比。
-DEFAULT_TARGET_TRIAL = 4
+DEFAULT_TARGET_TRIAL = 0
 
 
 # =============================================================================

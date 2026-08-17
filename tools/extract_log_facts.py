@@ -6,7 +6,6 @@ import statistics
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-
 NUMBER = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 PARAMETER_COUNT_RE = re.compile(
@@ -369,10 +368,8 @@ def build_log_facts(
     warnings.extend(rank_warnings)
     path = Path(log_path)
     return {
-        "schema_version": 1,
         "source": {
             "train_log": path.name,
-            "parser_version": 1,
             "warnings": warnings,
         },
         "model_config": model_config,

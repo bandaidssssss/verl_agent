@@ -4,6 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+
 from agent_tools.memory_estimator_V3 import (
     ACTOR_LOG_PROB_DYNAMIC_KEY,
     ACTOR_LOG_PROB_MAX_TOKENS_KEY,

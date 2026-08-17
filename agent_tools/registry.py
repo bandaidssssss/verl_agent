@@ -95,7 +95,7 @@ def _last_stability_reward(trial: Mapping[str, Any]) -> float | None:
 def _normalize_memory_changes(
     changes: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    """Validate the only supported memory-estimator change representation."""
+    """检查是不是仅仅包含支持的参数。Validate the only supported memory-estimator change representation."""
     targets: dict[str, Any] = {}
     metadata: dict[str, dict[str, Any]] = {}
     for raw_key, value in changes.items():

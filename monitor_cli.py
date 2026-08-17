@@ -14,6 +14,12 @@ from config_utils import write_json
 from metrics import analyze_trial
 
 
+
+# warmup-updates 前面几步不统计throughput，reward之类的，前几步可能不稳定
+# stability-window-size        STABILITY_QUERY_METRICS按照多大的窗口进行取mean
+
+#reward-window 这个是江老师推荐几个窗口均值，判断达到 reward-thresholds 的cumulative_time_s，step，和cumulative_tokens
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Analyze a verl train log and optional GPU samples")
     parser.add_argument("--log", required=True)

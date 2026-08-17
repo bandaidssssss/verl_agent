@@ -263,7 +263,8 @@ def build_metric_windows(
     start_step: int | None = None,
     end_step: int | None = None,
 ) -> dict[str, Any]:
-    """Return aligned, step-sorted metric windows without derived judgments.
+    """返回指定窗口大小以及step开始以及结尾的metric mean。
+    Return aligned, step-sorted metric windows without derived judgments.
 
     A window contains consecutive observed updates rather than an assumed
     numeric step range.  This keeps the output correct when a log has missing
