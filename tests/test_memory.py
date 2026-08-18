@@ -32,7 +32,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent_tools.memory_estimator_V2 import PHASES, estimate_phase_memory
+from agent_tools.memory_estimator_V3 import PHASES, estimate_phase_memory
+from trial_storage import hydrate_trial
 
 
 # =============================================================================
@@ -40,11 +41,11 @@ from agent_tools.memory_estimator_V2 import PHASES, estimate_phase_memory
 # =============================================================================
 
 # 完整实验目录，里面应包含 trials.jsonl 或 trials/NNNN/trial_report.json。
-DEFAULT_RUN_DIR = ROOT / "output" / "0817_0924_2026"
+DEFAULT_RUN_DIR = ROOT / "output" / "0817_1005_2026"
 
 # 要重新评估哪一个已经执行过的 trial。脚本读取它的 proposal，并且只用
 # trial_id 小于它的历史数据做预测；该 trial 的实测显存只用于最后对比。
-DEFAULT_TARGET_TRIAL = 0
+DEFAULT_TARGET_TRIAL = 7
 
 
 # =============================================================================
@@ -110,7 +111,23 @@ def _load_trials(run_dir: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(
             f"no trials found in {history_path} or {run_dir / 'trials'}"
         )
-    return [by_id[trial_id] for trial_id in sorted(by_id)]
+    trials = [by_id[trial_id] for trial_id in sorted(by_id)]
+
+    # Schema v2 keeps trials.jsonl deliberately small.  The proposal,
+    # parameters, structured metrics, and log facts used by V3 live in the
+    # per-trial artifacts, so hydrate those indexes before replaying them.
+    history_path = run_dir / "trials.jsonl"
+    if history_path.is_file():
+        hydrated: list[dict[str, Any]] = []
+        for trial in trials:
+            if trial.get("schema_version") == 2 and isinstance(
+                trial.get("artifacts"), Mapping
+            ):
+                hydrated.append(hydrate_trial(trial, history_path))
+            else:
+                hydrated.append(trial)
+        return hydrated
+    return trials
 
 
 def _target_report(
@@ -118,19 +135,16 @@ def _target_report(
     trials: Sequence[Mapping[str, Any]],
     target_trial_id: int,
 ) -> dict[str, Any]:
-    # The per-trial report usually contains a richer Agent trace, so prefer it
-    # over the compact trials.jsonl row when it exists.
-    report_path = (
-        run_dir
-        / "trials"
-        / f"{target_trial_id:04d}"
-        / "trial_report.json"
-    )
-    if report_path.is_file():
-        return _load_json(report_path)
+    # Current-schema trial reports are compact summaries.  ``_load_trials``
+    # has already hydrated their decision and measurement artifacts.
     for row in trials:
         if row.get("trial_id") == target_trial_id:
             return dict(row)
+
+    # Retain a useful fallback for a legacy run discovered from artifacts.
+    report_path = run_dir / "trials" / f"{target_trial_id:04d}" / "trial_report.json"
+    if report_path.is_file():
+        return _load_json(report_path)
     raise ValueError(f"target trial {target_trial_id} was not found in {run_dir}")
 
 
@@ -362,6 +376,72 @@ def _parameter_comparison(
     }
 
 
+def _absolute_v3_estimate(
+    estimate: Mapping[str, Any],
+    reference_measurements: Mapping[str, Mapping[str, Any]],
+    memory_limit_pct: float,
+) -> dict[str, Any]:
+    """Add absolute values used by this replay report to V3's relative output."""
+    result = dict(estimate)
+    phases: dict[str, Any] = {}
+    for phase in PHASES:
+        relative_phase = estimate.get("phases", {}).get(phase, {})
+        relative_phase = (
+            relative_phase if isinstance(relative_phase, Mapping) else {}
+        )
+        measurement = reference_measurements[phase]
+        interval = relative_phase.get("relative_change_pct")
+        interval = interval if isinstance(interval, Mapping) else {}
+        reference_gib = measurement.get("memory_gib")
+        reference_pct = measurement.get("memory_pct")
+
+        def projected(bound: str, reference_value: Any) -> float | None:
+            change = interval.get(bound)
+            if not isinstance(reference_value, (int, float)) or not isinstance(
+                change, (int, float)
+            ):
+                return None
+            return float(reference_value) * (1.0 + float(change) / 100.0)
+
+        projected_gib = projected("estimate", reference_gib)
+        upper_gib = projected("upper", reference_gib)
+        projected_pct = projected("estimate", reference_pct)
+        upper_pct = projected("upper", reference_pct)
+        confidence = relative_phase.get("confidence")
+        confidence_level = (
+            confidence.get("level") if isinstance(confidence, Mapping) else None
+        )
+        phases[phase] = {
+            **relative_phase,
+            "reference_memory_gib": reference_gib,
+            "delta_memory_gib": (
+                projected_gib - float(reference_gib)
+                if projected_gib is not None and isinstance(reference_gib, (int, float))
+                else None
+            ),
+            "projected_memory_gib": projected_gib,
+            "upper_bound_memory_gib": upper_gib,
+            "gpu_capacity_gib": measurement.get("gpu_capacity_gib"),
+            "reference_pct": reference_pct,
+            "delta_pct": (
+                projected_pct - float(reference_pct)
+                if projected_pct is not None and isinstance(reference_pct, (int, float))
+                else None
+            ),
+            "projected_pct": projected_pct,
+            "upper_bound_pct": upper_pct,
+            "risk": (
+                "high"
+                if isinstance(upper_pct, (int, float)) and upper_pct >= memory_limit_pct
+                else "low"
+            ),
+            "confidence": confidence_level,
+            "model": relative_phase.get("drivers", {}).get("estimation_model"),
+        }
+    result["phases"] = phases
+    return result
+
+
 def replay_memory_estimate(
     run_dir: Path,
     target_trial_id: int,
@@ -399,13 +479,15 @@ def replay_memory_estimate(
         reference_parameters, proposal
     )
     limit, limit_source = _memory_limit_from_report(target, memory_limit_pct)
-    estimate = estimate_phase_memory(
-        reference_parameters,
+    relative_estimate = estimate_phase_memory(
+        reference,
         candidate,
         history,
-        limit,
-        reference_trial_id,
     )
+    reference_measurements = _actual_phase_measurements(
+        run_dir, reference_trial_id, reference
+    )
+    estimate = _absolute_v3_estimate(relative_estimate, reference_measurements, limit)
     if estimate.get("reference_trial_id") != reference_trial_id:
         raise ValueError(
             f"reference trial {reference_trial_id} has no phase memory observations"

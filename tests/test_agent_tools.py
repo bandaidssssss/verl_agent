@@ -267,6 +267,40 @@ class AgentToolsTest(unittest.TestCase):
         self.assertEqual(rollout["confidence"]["level"], "low")
         self.assertEqual(result["confidence"]["level"], "low")
 
+    def test_dynamic_batch_and_remove_padding_use_modeled_activation_deltas(self) -> None:
+        dynamic_key = "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz"
+        padding_key = "actor_rollout_ref.actor.megatron.use_remove_padding"
+        reference = {**self.base, padding_key: True}
+        reference.pop(dynamic_key, None)
+        self.write_memory_trial(reference)
+        result = self.registry().execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": {
+                    dynamic_key: {"from": None, "to": True},
+                    padding_key: {"from": True, "to": False},
+                },
+                "reference_trial_id": 1,
+            },
+            self.registry().runtime({}),
+        )
+
+        for phase_name in ("actor_log_prob", "ref_log_prob", "training"):
+            phase = result["phases"][phase_name]
+            self.assertNotIn(dynamic_key, phase["uncalibrated_changes"])
+            self.assertNotIn(padding_key, phase["uncalibrated_changes"])
+        actor_log_prob = result["phases"]["actor_log_prob"]
+        self.assertGreater(
+            actor_log_prob["relative_change_pct"]["estimate"], 0.0
+        )
+        self.assertIn(
+            "activation", actor_log_prob["drivers"]["affected_components"]
+        )
+        self.assertTrue(
+            actor_log_prob["drivers"]["candidate_runtime"]["dynamic_batch"]
+        )
+
     def test_entropy_zero_disables_training_workspace_only(self) -> None:
         key = "actor_rollout_ref.actor.entropy_coeff"
         reference = {**self.base, key: 0.01}

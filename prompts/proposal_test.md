@@ -99,14 +99,15 @@ The metric arrays are aggregated into consecutive post-warmup windows and aligne
 - If a previous proposal batch was rejected, directly address its per-candidate rejection evidence and do not repeat rejected candidates unchanged.
 - For every changed parameter, provide its exact reference value in `from`, the target value in `to`, and a parameter-specific reason.
 - Never add or modify a field outside the editable whitelist for the current stage.
-- If the evidence cannot support the required number of distinct, hard-constraint-valid, useful candidates, choose `keep`; choose `stop` only when further trials cannot produce a responsible next experiment. Do not treat uncertainty or non-low risk as equivalent to a hard-constraint violation.
+- The only valid decisions are `modify` and `stop`; never return `keep`.
+- Choose `stop` when the current stage has no further responsible experiment. The orchestrator will advance to the next stage; `stop` does not terminate the full tuning workflow. Do not treat uncertainty or non-low risk as equivalent to a hard-constraint violation.
 
 After all tool calls, output exactly one JSON object and no Markdown or additional explanation:
 
 ```json
 {
-  "decision": "modify|keep|stop",
-  "reason": "A concise batch-level explanation, or the reason to keep/stop",
+  "decision": "modify|stop",
+  "reason": "A concise batch-level explanation, or why the current stage should stop",
   "candidates": [
     {
       "candidate_id": "candidate_a",
@@ -129,4 +130,4 @@ After all tool calls, output exactly one JSON object and no Markdown or addition
 }
 ```
 
-For `keep` or `stop`, return an empty `candidates` array.
+For `stop`, return an empty `candidates` array.

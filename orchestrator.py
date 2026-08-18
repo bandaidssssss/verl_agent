@@ -406,6 +406,62 @@ def _immutable_model_context(
     return result
 
 
+def _baseline_proposal(
+    reference: Mapping[str, Any],
+    reason: str,
+    transition_trigger: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Describe an orchestrator-owned no-change trial without impersonating Agent output."""
+    proposal: dict[str, Any] = {
+        "decision": "baseline",
+        "source": "orchestrator",
+        "reason": reason,
+        "reference_trial_id": reference.get("trial_id"),
+        "reference_trial": copy.deepcopy(dict(reference)),
+        "changes": {},
+        "expected_effect": {},
+    }
+    if isinstance(transition_trigger, Mapping):
+        proposal["transition_trigger"] = {
+            "decision": transition_trigger.get("decision"),
+            "reason": transition_trigger.get("reason"),
+        }
+    return proposal
+
+
+def _next_stage_baseline(
+    stage: str, trials: list[dict[str, Any]]
+) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    if stage.startswith("hardware"):
+        selected = best_hardware_trial(trials)
+        next_stage = "stability_tuning"
+        reason = "best successful hardware trial used as stability baseline"
+    elif stage == "stability_tuning":
+        selected = best_stability_trial(trials)
+        next_stage = "confirm"
+        reason = (
+            "best successful stability trial by terminal reward mean "
+            "selected for confirmation"
+        )
+    else:
+        return None
+    if selected is None or not isinstance(selected.get("parameters"), Mapping):
+        return None
+    return (
+        next_stage,
+        dict(selected["parameters"]),
+        _reference_descriptor(selected, reason),
+    )
+
+
+def _runs_automatic_baseline(stage: str, trials: list[dict[str, Any]]) -> bool:
+    return (
+        not trials
+        or stage == "confirm"
+        or (stage == "stability_tuning" and not _stability_trials(trials))
+    )
+
+
 def _stream_orchestrator_event(
     config: Mapping[str, Any], event: str, payload: Mapping[str, Any]
 ) -> None:
@@ -427,7 +483,7 @@ def _normalize_proposal_changes(
     """Validate the Agent's provenance and derive executable target values."""
     violations: list[str] = []
     if proposal.get("decision") != "modify":
-        violations.append("decision must be modify, keep, or stop; change objects require decision=modify")
+        violations.append("change objects require decision=modify")
     expected_reference_id = reference.get("trial_id")
     if proposal.get("reference_trial_id") != expected_reference_id:
         violations.append(
@@ -842,60 +898,25 @@ class TuningOrchestrator:
             proposal = proposal_run.result
             trace["proposal_conversation"] = proposal_run.as_trace()
             decision = proposal.get("decision")
-            if decision in {"keep", "stop"}:
-                if proposal.get("candidates") not in (None, []):
-                    validation = {
-                        "valid": False,
-                        "violations": [
-                            f"{decision} decisions must return an empty candidates array"
-                        ],
-                    }
-                    rejections.append(
-                        {
-                            "attempt": attempt,
-                            "source": "deterministic_validator",
-                            "proposal": proposal,
-                            **validation,
-                        }
-                    )
-                    proposal_conversation.add_user_message(
-                        rejection_feedback(
-                            attempt,
-                            proposal,
-                            {},
-                            "deterministic_validator",
-                            validation,
-                        )
-                    )
-                    trace["proposal_conversation"] = proposal_conversation.as_trace()
-                    continue
-                proposal.setdefault("reference_trial_id", reference.get("trial_id"))
-                proposal["reference_trial"] = copy.deepcopy(dict(reference))
-                proposal.setdefault("candidates", [])
-                proposal.setdefault("changes", {})
-                proposal.setdefault("expected_effect", {})
-                return (
-                    dict(current),
-                    proposal,
-                    {"verdict": "valid", "reason": "no parameter change"},
-                    trace,
-                )
-
             raw_candidates = proposal.get("candidates")
             batch_violations: list[str] = []
-            if decision != "modify":
+            candidate_rows: list[Any] = []
+            if decision not in {"modify", "stop"}:
                 batch_violations.append(
-                    "decision must be modify, keep, or stop; candidates require decision=modify"
+                    "decision must be modify or stop; keep is not a valid Proposal decision"
                 )
             batch_reason = proposal.get("reason")
             if not isinstance(batch_reason, str) or not batch_reason.strip():
                 batch_violations.append(
                     "reason must be a non-empty batch-level explanation"
                 )
-            if not isinstance(raw_candidates, list):
+            if decision == "stop" and raw_candidates not in (None, []):
+                batch_violations.append(
+                    "stop decisions must return an empty candidates array"
+                )
+            elif decision == "modify" and not isinstance(raw_candidates, list):
                 batch_violations.append("candidates must be an array")
-                candidate_rows: list[Any] = []
-            else:
+            elif decision == "modify":
                 candidate_rows = raw_candidates
                 if not min_candidates <= len(candidate_rows) <= max_candidates:
                     batch_violations.append(
@@ -928,6 +949,18 @@ class TuningOrchestrator:
                 )
                 trace["proposal_conversation"] = proposal_conversation.as_trace()
                 continue
+            if decision == "stop":
+                proposal.setdefault("reference_trial_id", reference.get("trial_id"))
+                proposal["reference_trial"] = copy.deepcopy(dict(reference))
+                proposal.setdefault("candidates", [])
+                proposal.setdefault("changes", {})
+                proposal.setdefault("expected_effect", {})
+                return (
+                    dict(current),
+                    proposal,
+                    {"verdict": "valid", "reason": "current stage stopped by Agent"},
+                    trace,
+                )
 
             validated: dict[str, dict[str, Any]] = {}
             candidate_results: list[dict[str, Any]] = []
@@ -1222,19 +1255,11 @@ class TuningOrchestrator:
             trials = self.trials()
             trial_id = len(trials) + 1
             parameters, reference = self._starting_point(stage, trials)
-            proposal: dict[str, Any] = {
-                "decision": "keep",
-                "reason": "stage baseline",
-                "reference_trial_id": reference.get("trial_id"),
-                "reference_trial": copy.deepcopy(reference),
-                "changes": {},
-                "expected_effect": {},
-            }
+            proposal = _baseline_proposal(reference, "automatic stage baseline")
             review: dict[str, Any] = {"verdict": "valid", "reason": "stage baseline"}
             agent_trace: dict[str, Any] | None = None
 
-            first_trial = not trials
-            if not first_trial and stage != "confirm":
+            if not _runs_automatic_baseline(stage, trials):
                 try:
                     parameters, proposal, review, agent_trace = self._propose_candidate(
                         stage, parameters, trials, reference
@@ -1276,48 +1301,31 @@ class TuningOrchestrator:
                         },
                     )
                     break
-                if proposal.get("decision") in {"keep", "stop"}:
-                    # The first stability trial now receives a proposal context
-                    # based on the selected hardware trial.  A justified
-                    # ``keep`` still needs to run that no-change stability
-                    # baseline; it is not a terminal "no candidate" state.
-                    if stage == "stability_tuning" and not _stability_trials(trials):
-                        pass
-                    elif stage.startswith("hardware") and best_hardware_trial(trials):
-                        stage = "stability_tuning"
-                        selected = best_hardware_trial(trials)
-                        parameters = dict(selected["parameters"])
-                        reference = _reference_descriptor(
-                            selected, "best successful hardware trial used as stability baseline"
-                        )
-                    elif stage == "stability_tuning" and best_stability_trial(trials):
-                        stage = "confirm"
-                        selected = best_stability_trial(trials)
-                        parameters = dict(selected["parameters"])
-                        reference = _reference_descriptor(
-                            selected,
-                            "best successful stability trial by terminal reward mean "
-                            "selected for confirmation",
-                        )
-                    else:
+                if proposal.get("decision") == "stop":
+                    transition_trigger = copy.deepcopy(proposal)
+                    transition = _next_stage_baseline(stage, trials)
+                    if transition is None:
                         write_json(
                             self.state_path,
                             {
-                                "current_stage": "stopped_no_candidate",
+                                "current_stage": "stage_transition_blocked",
+                                "resume_stage": stage,
                                 "last_trial_id": len(trials),
                                 "history_path": str(self.history_path),
-                                "proposal": proposal,
+                                "reason": (
+                                    "Agent stopped the current stage, but no successful "
+                                    "reference satisfies the next stage prerequisites"
+                                ),
+                                "proposal": transition_trigger,
                             },
                         )
                         break
-                    proposal = {
-                        "decision": "keep",
-                        "reason": "stage transition baseline",
-                        "reference_trial_id": reference.get("trial_id"),
-                        "reference_trial": copy.deepcopy(reference),
-                        "changes": {},
-                        "expected_effect": {},
-                    }
+                    stage, parameters, reference = transition
+                    proposal = _baseline_proposal(
+                        reference,
+                        "automatic baseline after Agent stopped the previous stage",
+                        transition_trigger,
+                    )
 
             history_limit = int(self.config.get("history_prompt_trials", 8))
 

@@ -15,6 +15,7 @@ from agent_tools.memory_estimator_V3 import (
     ACTOR_LOG_PROB_MAX_TOKENS_KEY,
     ACTOR_CP_KEY,
     ACTOR_OPTIMIZER_OFFLOAD_KEY,
+    ACTOR_REMOVE_PADDING_KEY,
     ACTOR_SP_KEY,
     ACTOR_TP_KEY,
     LORA_RANK_KEY,
@@ -119,7 +120,11 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
             phase,
             parameters or self._parameters(),
             {"resolved": {}},
-            {"point_tokens": 128, "upper_tokens": 192},
+            {
+                "point_tokens": 128,
+                "upper_tokens": 192,
+                "configured_upper_tokens": 256,
+            },
         )
 
     def test_logged_parameter_count_reconstructs_unique_tp_shards(self) -> None:
@@ -252,7 +257,8 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
             "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
             REF_SP_KEY: True,
             "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 16,
-            "actor_rollout_ref.ref.megatron.param_offload": True,
+            "actor_rollout_ref.actor.megatron.param_offload": True,
+            "actor_rollout_ref.ref.megatron.param_offload": False,
         }
         runtime = _runtime_args(
             "ref_log_prob",
@@ -292,6 +298,51 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
         self.assertIn(ACTOR_CP_KEY, ref["activation"])
         self.assertIn(REF_LOG_PROB_DYNAMIC_KEY, ref["activation"])
         self.assertIn(REF_LOG_PROB_MAX_TOKENS_KEY, ref["activation"])
+        self.assertNotIn(ACTOR_LOG_PROB_DYNAMIC_KEY, actor["uncalibrated"])
+        self.assertNotIn(REF_LOG_PROB_DYNAMIC_KEY, ref["uncalibrated"])
+        self.assertNotIn(ACTOR_REMOVE_PADDING_KEY, actor["uncalibrated"])
+        self.assertNotIn(ACTOR_REMOVE_PADDING_KEY, ref["uncalibrated"])
+
+    def test_dynamic_and_padding_token_shapes_cover_all_combinations(self) -> None:
+        length_profile = {
+            "point_tokens": 40,
+            "upper_tokens": 80,
+            "configured_upper_tokens": 120,
+        }
+        expected = {
+            (False, True): (80, 160, "fixed_microbatch_valid_tokens_per_cp_rank"),
+            (False, False): (
+                240,
+                240,
+                "fixed_microbatch_configured_padded_per_cp_rank",
+            ),
+            (True, True): (1280, 2560, "dynamic_token_cap_valid_tokens_per_cp_rank"),
+            (True, False): (
+                3840,
+                3840,
+                "dynamic_token_cap_configured_padded_per_cp_rank",
+            ),
+        }
+        for (dynamic, remove_padding), values in expected.items():
+            with self.subTest(dynamic=dynamic, remove_padding=remove_padding):
+                parameters = self._parameters(
+                    **{
+                        ACTOR_LOG_PROB_DYNAMIC_KEY: dynamic,
+                        ACTOR_LOG_PROB_MAX_TOKENS_KEY: 5000,
+                        ACTOR_REMOVE_PADDING_KEY: remove_padding,
+                    }
+                )
+                runtime = _runtime_args(
+                    "actor_log_prob",
+                    parameters,
+                    {"resolved": {}},
+                    length_profile,
+                )
+                point, upper, source = values
+                self.assertEqual(runtime["tokens_per_cp_rank"], point)
+                self.assertEqual(runtime["tokens_per_cp_rank_upper"], upper)
+                self.assertEqual(runtime["token_source"], source)
+                self.assertNotIn("requires_packed_shape_calibration", runtime)
 
     def test_actor_dynamic_batch_uses_rollout_keys_and_cp_rank_cap(self) -> None:
         parameters = self._parameters(
@@ -327,6 +378,23 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
         self.assertEqual(runtime["max_token_len_per_gpu"], 80)
         self.assertEqual(runtime["tokens_per_cp_rank"], 80)
 
+    def test_log_prob_runtime_does_not_fallback_to_training_batch_fields(self) -> None:
+        parameters = self._parameters(
+            **{
+                "actor_rollout_ref.actor.use_dynamic_bsz": True,
+                "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": 32,
+            }
+        )
+
+        for phase in ("actor_log_prob", "ref_log_prob"):
+            runtime = self._runtime(phase, parameters)
+            self.assertFalse(runtime["dynamic_batch"])
+            self.assertEqual(runtime["max_token_len_per_gpu"], 16384)
+            self.assertEqual(runtime["sources"]["dynamic_batch"], "framework_default")
+            self.assertEqual(
+                runtime["sources"]["max_token_len_per_gpu"], "framework_default"
+            )
+
     def test_cp_reduces_fixed_workload_log_prob_activation(self) -> None:
         cp1 = self._parameters()
         cp2 = self._parameters(
@@ -357,15 +425,37 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
             small_details["body_live_bytes"], large_details["body_live_bytes"]
         )
 
-    def test_nonfused_actor_has_two_vocab_copies_ref_has_one(self) -> None:
+    def test_nonfused_actor_has_three_vocab_copies_ref_has_one(self) -> None:
         actor_runtime = self._runtime("actor_log_prob")
         ref_runtime = self._runtime("ref_log_prob")
         actor, actor_details = _activation_bytes(self._architecture(), actor_runtime)
         ref, ref_details = _activation_bytes(self._architecture(), ref_runtime)
 
-        self.assertEqual(actor_details["vocab_logits_copies"], 2)
+        self.assertEqual(actor_details["vocab_logits_copies"], 3)
         self.assertEqual(ref_details["vocab_logits_copies"], 1)
         self.assertGreater(actor, ref)
+
+    def test_independent_ref_uses_non_fused_path(self) -> None:
+        runtime = self._runtime("ref_log_prob")
+
+        self.assertFalse(runtime["use_fused_kernels"])
+        self.assertEqual(
+            runtime["sources"]["use_fused_kernels"],
+            "verl_0.7.1:independent_ref_non_fused",
+        )
+
+    def test_actor_fused_kernel_does_not_fallback_to_model_field(self) -> None:
+        runtime = self._runtime(
+            "actor_log_prob",
+            self._parameters(
+                **{"actor_rollout_ref.model.use_fused_kernels": True}
+            ),
+        )
+
+        self.assertFalse(runtime["use_fused_kernels"])
+        self.assertEqual(
+            runtime["sources"]["actor_fused_kernels"], "framework_default"
+        )
 
     def test_nonsp_activation_uses_actual_ffn_ratio(self) -> None:
         runtime = self._runtime(

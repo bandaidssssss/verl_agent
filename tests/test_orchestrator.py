@@ -306,7 +306,14 @@ class ProposalSeriesContextTest(unittest.TestCase):
                     assert series["trial_id"] == 1
                     assert series["metrics"]["critic/rewards/mean"] == [0.1]
                     conversation = AgentConversation("proposal", dict(context), [])
-                    return AgentRun({"decision": "keep", "reason": "test"}, conversation)
+                    return AgentRun(
+                        {
+                            "decision": "stop",
+                            "reason": "hardware stage has no further responsible experiment",
+                            "candidates": [],
+                        },
+                        conversation,
+                    )
 
                 def diagnose(self, context):
                     raise AssertionError("successful trial should not be diagnosed")
@@ -327,9 +334,9 @@ class ProposalSeriesContextTest(unittest.TestCase):
                 }
             ]
             _, proposal, _, _ = orchestrator._propose_candidate("hardware_tuning", base, trials)
-            self.assertEqual(proposal["decision"], "keep")
+            self.assertEqual(proposal["decision"], "stop")
 
-    def test_first_stability_trial_receives_hardware_series_and_keep_runs_baseline(self) -> None:
+    def test_first_stability_trial_runs_automatic_baseline_without_proposal(self) -> None:
         base = load_json(ROOT / "config" / "base_parameters.json")
         config = load_json(ROOT / "config" / "agent_config.json")
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -361,12 +368,7 @@ class ProposalSeriesContextTest(unittest.TestCase):
 
             class FakeAgents:
                 def propose(self, context=None, conversation=None):
-                    assert context["current_stage"] == "stability_tuning"
-                    assert context["reference_stability_series"]["stage"] == "hardware_tuning"
-                    return AgentRun(
-                        {"decision": "keep", "reason": "hardware trajectory is the stability baseline"},
-                        AgentConversation("proposal", dict(context), []),
-                    )
+                    raise AssertionError("automatic stability baseline must skip Proposal")
 
                 def diagnose(self, context):
                     raise AssertionError("successful trial should not be diagnosed")
@@ -376,7 +378,95 @@ class ProposalSeriesContextTest(unittest.TestCase):
                 reports = orchestrator.run(max_trials=1, dry_run=True)
             self.assertEqual(len(reports), 1)
             self.assertEqual(run_trial.call_args.args[3], "stability_tuning")
+            self.assertEqual(reports[0]["proposal"]["decision"], "baseline")
+            self.assertEqual(reports[0]["proposal"]["source"], "orchestrator")
 
+
+class ProposalDecisionTransitionTest(unittest.TestCase):
+    def _hardware_trial(self, parameters):
+        return {
+            "trial_id": 1,
+            "stage": "hardware_tuning",
+            "result": "success",
+            "parameters": parameters,
+            "performance": {"throughput": {"mean": 1.0}},
+        }
+
+    def test_keep_is_rejected_then_stop_is_accepted_in_same_conversation(self) -> None:
+        base = load_json(ROOT / "config" / "base_parameters.json")
+        config = load_json(ROOT / "config" / "agent_config.json")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config.update({"output_dir": temp_dir, "stream_agent_events": False})
+            orchestrator = TuningOrchestrator(ROOT, base, config)
+            trials = [self._hardware_trial(base)]
+
+            class FakeAgents:
+                def __init__(self):
+                    self.calls = 0
+
+                def propose(self, context=None, conversation=None):
+                    self.calls += 1
+                    active = conversation or AgentConversation("proposal", dict(context), [])
+                    if self.calls == 1:
+                        result = {"decision": "keep", "reason": "no candidate", "candidates": []}
+                    else:
+                        assert any(
+                            "keep is not a valid Proposal decision" in row["content"]
+                            for row in active.messages
+                            if row.get("role") == "user"
+                        )
+                        result = {
+                            "decision": "stop",
+                            "reason": "hardware stage is complete",
+                            "candidates": [],
+                        }
+                    return AgentRun(result, active)
+
+                def diagnose(self, context):
+                    raise AssertionError("successful trial should not be diagnosed")
+
+            fake = FakeAgents()
+            orchestrator.agents = fake
+            _, proposal, _, trace = orchestrator._propose_candidate(
+                "hardware_tuning", base, trials
+            )
+        self.assertEqual(fake.calls, 2)
+        self.assertEqual(proposal["decision"], "stop")
+        self.assertEqual(trace["rejections"][0]["proposal"]["decision"], "keep")
+
+    def test_hardware_stop_runs_stability_baseline_and_preserves_trigger(self) -> None:
+        base = load_json(ROOT / "config" / "base_parameters.json")
+        config = load_json(ROOT / "config" / "agent_config.json")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config.update({"output_dir": temp_dir, "stream_agent_events": False})
+            orchestrator = TuningOrchestrator(ROOT, base, config)
+            trials = [self._hardware_trial(base)]
+            orchestrator.trials = lambda: trials
+            orchestrator.trial_indexes = lambda: trials
+
+            class StopAgents:
+                def propose(self, context=None, conversation=None):
+                    return AgentRun(
+                        {
+                            "decision": "stop",
+                            "reason": "hardware search is complete",
+                            "candidates": [],
+                        },
+                        AgentConversation("proposal", dict(context), []),
+                    )
+
+                def diagnose(self, context):
+                    raise AssertionError("successful trial should not be diagnosed")
+
+            orchestrator.agents = StopAgents()
+            with mock.patch("orchestrator.run_trial", return_value={}) as run_trial:
+                reports = orchestrator.run(max_trials=1, dry_run=True)
+        self.assertEqual(run_trial.call_args.args[3], "stability_tuning")
+        self.assertEqual(reports[0]["proposal"]["decision"], "baseline")
+        self.assertEqual(
+            reports[0]["proposal"]["transition_trigger"],
+            {"decision": "stop", "reason": "hardware search is complete"},
+        )
 
 class RejectionConversationTest(unittest.TestCase):
     def test_feasibility_selects_valid_candidate_with_its_own_reference(self) -> None:
@@ -566,10 +656,9 @@ class RejectionConversationTest(unittest.TestCase):
                             "proposal", dict(context), [{"role": "user", "content": "start"}]
                         )
                     result = {
-                        "reference_trial_id": 1,
-                        "changes": {
-                            "actor_rollout_ref.rollout.gpu_memory_utilization": 0.7
-                        },
+                        "decision": "keep",
+                        "reason": "no candidate",
+                        "candidates": [],
                     }
                     conversation.messages.append(
                         {"role": "assistant", "content": json.dumps(result)}

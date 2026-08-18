@@ -53,9 +53,8 @@ ACTOR_PARAM_OFFLOAD_KEY = "actor_rollout_ref.actor.megatron.param_offload"
 ACTOR_GRAD_OFFLOAD_KEY = "actor_rollout_ref.actor.megatron.grad_offload"
 ACTOR_OPTIMIZER_OFFLOAD_KEY = "actor_rollout_ref.actor.megatron.optimizer_offload"
 REF_PARAM_OFFLOAD_KEY = "actor_rollout_ref.ref.megatron.param_offload"
-MODEL_FUSED_KERNELS_KEY = "actor_rollout_ref.model.use_fused_kernels"
 ACTOR_FUSED_KERNELS_KEY = "actor_rollout_ref.actor.use_fused_kernels"
-REF_FUSED_KERNELS_KEY = "actor_rollout_ref.ref.use_fused_kernels"
+MODEL_FUSED_KERNELS_KEY = "actor_rollout_ref.model.use_fused_kernels"
 LORA_RANK_KEY = "actor_rollout_ref.model.lora_rank"
 LORA_ADAPTER_PATH_KEY = "actor_rollout_ref.model.lora_adapter_path"
 LORA_TARGET_MODULES_KEY = "actor_rollout_ref.model.target_modules"
@@ -603,11 +602,8 @@ def _phase_keys(phase: str) -> dict[str, str]:
             "sp": ACTOR_SP_KEY,
             "param_offload": ACTOR_PARAM_OFFLOAD_KEY,
             "dynamic_batch": REF_LOG_PROB_DYNAMIC_KEY,
-            "dynamic_fallback": TRAINING_DYNAMIC_KEY,
             "max_tokens": REF_LOG_PROB_MAX_TOKENS_KEY,
-            "max_tokens_fallback": TRAINING_MAX_TOKENS_KEY,
             "remove_padding": ACTOR_REMOVE_PADDING_KEY,
-            "remove_padding_fallback": ACTOR_REMOVE_PADDING_KEY,
         }
     if phase == "actor_log_prob":
         return {
@@ -621,11 +617,8 @@ def _phase_keys(phase: str) -> dict[str, str]:
             "sp": ACTOR_SP_KEY,
             "param_offload": ACTOR_PARAM_OFFLOAD_KEY,
             "dynamic_batch": ACTOR_LOG_PROB_DYNAMIC_KEY,
-            "dynamic_fallback": TRAINING_DYNAMIC_KEY,
             "max_tokens": ACTOR_LOG_PROB_MAX_TOKENS_KEY,
-            "max_tokens_fallback": TRAINING_MAX_TOKENS_KEY,
             "remove_padding": ACTOR_REMOVE_PADDING_KEY,
-            "remove_padding_fallback": ACTOR_REMOVE_PADDING_KEY,
         }
     return {
         "micro": TRAINING_MICRO_KEY,
@@ -638,11 +631,8 @@ def _phase_keys(phase: str) -> dict[str, str]:
         "sp": ACTOR_SP_KEY,
         "param_offload": ACTOR_PARAM_OFFLOAD_KEY,
         "dynamic_batch": TRAINING_DYNAMIC_KEY,
-        "dynamic_fallback": TRAINING_DYNAMIC_KEY,
         "max_tokens": TRAINING_MAX_TOKENS_KEY,
-        "max_tokens_fallback": TRAINING_MAX_TOKENS_KEY,
         "remove_padding": ACTOR_REMOVE_PADDING_KEY,
-        "remove_padding_fallback": ACTOR_REMOVE_PADDING_KEY,
     }
 
 
@@ -678,26 +668,6 @@ def _runtime_args(
         )
         sources[name] = source
         return value
-
-    def read_with_parameter_fallback(
-        name: str,
-        key: str,
-        fallback_key: str,
-        resolved_name: str,
-        default: Any,
-    ) -> Any:
-        if key in parameters and parameters[key] is not None:
-            sources[name] = f"parameters:{key}"
-            return parameters[key]
-        if fallback_key in parameters and parameters[fallback_key] is not None:
-            sources[name] = f"parameters:{fallback_key}:config_interpolation"
-            return parameters[fallback_key]
-        value = resolved.get(resolved_name)
-        if value is not None:
-            sources[name] = f"reference_train_log:{resolved_name}"
-            return value
-        sources[name] = "framework_default"
-        return default
 
     micro = float(read("micro_batch_size", keys["micro"], "micro_batch_size", 1))
     tp = int(
@@ -754,28 +724,25 @@ def _runtime_args(
         read("param_offload", keys["param_offload"], "param_offload", False)
     )
     dynamic_batch = bool(
-        read_with_parameter_fallback(
+        read(
             "dynamic_batch",
             keys["dynamic_batch"],
-            keys["dynamic_fallback"],
             "use_dynamic_bsz",
             False,
         )
     )
     max_tokens = float(
-        read_with_parameter_fallback(
+        read(
             "max_token_len_per_gpu",
             keys["max_tokens"],
-            keys["max_tokens_fallback"],
             "max_token_len_per_gpu",
             16384,
         )
     )
     remove_padding = bool(
-        read_with_parameter_fallback(
+        read(
             "remove_padding",
             keys["remove_padding"],
-            keys["remove_padding_fallback"],
             "use_remove_padding",
             True,
         )
@@ -836,24 +803,24 @@ def _runtime_args(
     ref_param_offload = bool(parameters.get(REF_PARAM_OFFLOAD_KEY, False))
     lora_rank = int(_number(parameters, LORA_RANK_KEY, 0.0))
     is_lora = lora_rank > 0 or bool(parameters.get(LORA_ADAPTER_PATH_KEY))
-    model_fused = bool(parameters.get(MODEL_FUSED_KERNELS_KEY, False))
-    actor_fused = bool(parameters.get(ACTOR_FUSED_KERNELS_KEY, model_fused))
+    actor_fused = bool(
+        read(
+            "actor_fused_kernels",
+            ACTOR_FUSED_KERNELS_KEY,
+            "use_fused_kernels",
+            False,
+        )
+    )
     if int(resolved.get("mtp_num_layers", 0) or 0) > 0:
         actor_fused = False
         sources["actor_fused_kernels"] = "framework_forced_false_with_mtp"
-    else:
-        sources["actor_fused_kernels"] = (
-            f"parameters:{ACTOR_FUSED_KERNELS_KEY}"
-            if ACTOR_FUSED_KERNELS_KEY in parameters
-            else f"parameters:{MODEL_FUSED_KERNELS_KEY}:config_interpolation"
-        )
     if phase == "ref_log_prob" and not is_lora:
-        use_fused_kernels = bool(parameters.get(REF_FUSED_KERNELS_KEY, False))
-        sources["use_fused_kernels"] = (
-            f"parameters:{REF_FUSED_KERNELS_KEY}"
-            if REF_FUSED_KERNELS_KEY in parameters
-            else "framework_default:false_for_independent_ref"
-        )
+        # verl 0.7.1 does not declare a ref.use_fused_kernels configuration.
+        # Independent reference-model log-prob therefore uses the non-fused
+        # path in this estimator.  A LoRA reference reuses the actor module and
+        # is handled by the actor-fused branch below.
+        use_fused_kernels = False
+        sources["use_fused_kernels"] = "verl_0.7.1:independent_ref_non_fused"
     else:
         use_fused_kernels = actor_fused
         sources["use_fused_kernels"] = sources["actor_fused_kernels"]
@@ -870,24 +837,27 @@ def _runtime_args(
             * _number(parameters, ROLLOUT_N_KEY, 1.0)
             / dp
         )
-    point_sequence = float(length_profile["point_tokens"])
-    upper_sequence = float(length_profile["upper_tokens"])
+    if remove_padding:
+        point_sequence = float(length_profile["point_tokens"])
+        upper_sequence = float(length_profile["upper_tokens"])
+        shape_source = "valid_tokens"
+    else:
+        configured_upper = float(length_profile["configured_upper_tokens"])
+        point_sequence = configured_upper
+        upper_sequence = configured_upper
+        shape_source = "configured_padded"
     if dynamic_batch:
         point_tokens_per_cp_rank = min(max_tokens, local_samples * point_sequence / cp)
         upper_tokens_per_cp_rank = min(max_tokens, local_samples * upper_sequence / cp)
         num_microbatches = max(
             1, math.ceil(local_samples * point_sequence / (max_tokens * cp))
         )
-        token_source = "dynamic_token_cap_per_cp_rank"
+        token_source = f"dynamic_token_cap_{shape_source}_per_cp_rank"
     else:
         point_tokens_per_cp_rank = micro * point_sequence / cp
         upper_tokens_per_cp_rank = micro * upper_sequence / cp
         num_microbatches = max(1, math.ceil(local_samples / micro))
-        token_source = (
-            "fixed_microbatch_valid_token_proxy_per_cp_rank"
-            if remove_padding
-            else "fixed_microbatch_padded_token_proxy_per_cp_rank"
-        )
+        token_source = f"fixed_microbatch_{shape_source}_per_cp_rank"
 
     return {
         "phase": phase,
@@ -943,7 +913,6 @@ def _runtime_args(
         "tokens_per_cp_rank": point_tokens_per_cp_rank,
         "tokens_per_cp_rank_upper": upper_tokens_per_cp_rank,
         "token_source": token_source,
-        "requires_packed_shape_calibration": dynamic_batch or remove_padding,
         "sources": sources,
     }
 
@@ -1113,7 +1082,9 @@ def _parameter_footprint(
     """
 
     analytical = _analytical_parameter_footprint(architecture, runtime)
+    #这个是计算结构得到的参数
     profile = architecture.get("parameter_profile")
+    #profile  是log.facts.json记录的参数
     if not isinstance(profile, Mapping) or not profile:
         return {
             **analytical,
@@ -1341,7 +1312,7 @@ def _training_activation_bytes(
         logits_one_copy = (
             tokens * float(architecture["padded_vocab_size"]) / tp * act_bytes
         )
-        logits_copies = 2 if runtime.get("calculate_entropy") else 1
+        logits_copies = 3 if runtime.get("calculate_entropy") else 1
     stage_peak_bytes[-1] += final_norm_bytes + logits_one_copy * logits_copies
 
     peak = max(stage_peak_bytes)
@@ -1350,10 +1321,6 @@ def _training_activation_bytes(
         limitations.append("moe_routing_and_dispatch_workspace_require_rank_histograms")
     if architecture.get("multi_latent_attention"):
         limitations.append("mla_activation_liveness_requires_calibration")
-    if runtime.get("dynamic_batch") and not runtime.get("remove_padding"):
-        limitations.append(
-            "dynamic_bshd_padded_shape_is_not_recoverable_from_token_cap"
-        )
     if granularity == "selective" and modules and "core_attn" not in modules:
         limitations.append("non_core_attn_selective_modules_use_no_recompute_proxy")
 
@@ -1381,8 +1348,7 @@ def _training_activation_bytes(
         "final_norm_bytes_last_stage": final_norm_bytes,
         "vocab_logits_one_copy_bytes": logits_one_copy,
         "vocab_logits_copies": logits_copies,
-        "requires_calibration": bool(limitations)
-        or runtime.get("requires_packed_shape_calibration", False),
+        "requires_calibration": bool(limitations),
         "limitations": limitations,
         "upper_sequence": upper_sequence,
     }
@@ -1419,7 +1385,8 @@ def _log_prob_activation_bytes(
         logits_one_copy = (
             tokens * float(architecture["padded_vocab_size"]) / tp * act_bytes
         )
-        logits_copies = 2 if phase == "actor_log_prob" else 1
+        logits_copies = 3 if phase == "actor_log_prob" else 1
+    #logit一份，logit.clone()和softmax（）约三份
     vocab_bytes = logits_one_copy * logits_copies
     output_fields = 2 if phase == "actor_log_prob" else 1
     result_accumulation_bytes = (
@@ -1428,7 +1395,7 @@ def _log_prob_activation_bytes(
         * float(runtime["local_call_samples"])
         * float(runtime["response_length"])
         * 4.0
-    )
+    )#micro在GPU累积的临时显存。2表示micro-batch 结果列表与 torch.cat() 生成的完整结果同时存在。4是torch.float32。
     last_stage_bytes = body_live_bytes + vocab_bytes + result_accumulation_bytes
     peak = max(non_last_stage_bytes, last_stage_bytes)
 
@@ -1445,11 +1412,6 @@ def _log_prob_activation_bytes(
         limitations.append("moe_routing_and_dispatch_workspace_require_rank_histograms")
     if architecture.get("multi_latent_attention"):
         limitations.append("mla_live_activation_requires_calibration")
-    if runtime.get("dynamic_batch") and not runtime.get("remove_padding"):
-        limitations.append(
-            "dynamic_bshd_padded_shape_is_not_recoverable_from_token_cap"
-        )
-
     return peak, {
         "formula": "forward_only_one_live_layer_plus_last_stage_logits",
         "phase": phase,
@@ -1662,11 +1624,8 @@ def _component_dependencies(phase: str) -> dict[str, set[str]]:
         keys["vpp"],
         keys["sp"],
         keys["dynamic_batch"],
-        keys["dynamic_fallback"],
         keys["max_tokens"],
-        keys["max_tokens_fallback"],
         keys["remove_padding"],
-        keys["remove_padding_fallback"],
         PROMPT_LENGTH_KEY,
         RESPONSE_LENGTH_KEY,
         TRAIN_BATCH_KEY,
@@ -1691,26 +1650,19 @@ def _component_dependencies(phase: str) -> dict[str, set[str]]:
         }
         optimizer = set(residency_controls) | model | {keys["cp"]}
     elif phase == "actor_log_prob":
-        activation |= {ACTOR_FUSED_KERNELS_KEY, MODEL_FUSED_KERNELS_KEY}
+        activation.add(ACTOR_FUSED_KERNELS_KEY)
     else:
-        activation.add(REF_FUSED_KERNELS_KEY)
         # LoRA ref executes the actor module and therefore follows actor fused state.
-        activation |= {ACTOR_FUSED_KERNELS_KEY, MODEL_FUSED_KERNELS_KEY}
+        activation.add(ACTOR_FUSED_KERNELS_KEY)
     uncalibrated = {
-        keys["dynamic_batch"],
-        keys["remove_padding"],
         LORA_RANK_KEY,
         LORA_ADAPTER_PATH_KEY,
         LORA_TARGET_MODULES_KEY,
     }
     if phase in {"actor_log_prob", "training"}:
-        uncalibrated |= {ACTOR_FUSED_KERNELS_KEY, MODEL_FUSED_KERNELS_KEY}
+        uncalibrated.add(ACTOR_FUSED_KERNELS_KEY)
     if phase == "ref_log_prob":
-        uncalibrated |= {
-            REF_FUSED_KERNELS_KEY,
-            ACTOR_FUSED_KERNELS_KEY,
-            MODEL_FUSED_KERNELS_KEY,
-        }
+        uncalibrated.add(ACTOR_FUSED_KERNELS_KEY)
     return {
         "model": model,
         "activation": activation,
@@ -2035,11 +1987,6 @@ def _compute_projection(
         structural_uncertainties.append("mla_activation_liveness")
     if candidate_runtime.get("is_lora") and affected & {"model", "optimizer"}:
         structural_uncertainties.append("lora_trainable_shard_is_analytical")
-    if candidate_runtime.get("dynamic_batch") and not candidate_runtime.get(
-        "remove_padding"
-    ):
-        structural_uncertainties.append("dynamic_bshd_padded_microbatch_shape")
-
     raw_delta_components: dict[str, float] = {}
     for name in set(reference_components) | set(candidate_components):
         if name.endswith("_upper_sequence_mb"):

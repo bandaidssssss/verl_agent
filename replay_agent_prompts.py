@@ -33,9 +33,9 @@ from agents import AgentError, LLMRoleAgent
 from config_utils import load_json, write_json
 from orchestrator import (
     TuningOrchestrator,
-    _reference_descriptor,
-    best_hardware_trial,
-    best_stability_trial,
+    _baseline_proposal,
+    _next_stage_baseline,
+    _runs_automatic_baseline,
     determine_stage,
 )
 from vllm_metrics import summarize_vllm_metrics
@@ -353,54 +353,25 @@ def _apply_recorded_transition_semantics(
     proposal: dict[str, Any],
     history: list[dict[str, Any]],
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    """Mirror run() post-processing when keep/stop causes a stage baseline."""
-    if proposal.get("decision") not in {"keep", "stop"}:
+    """Mirror run() post-processing when stop advances to a stage baseline."""
+    if proposal.get("decision") != "stop":
         return stage, parameters, proposal
 
-    stability_trials = [
-        trial for trial in history if trial.get("stage") == "stability_tuning"
-    ]
-    if stage == "stability_tuning" and not stability_trials:
-        return stage, parameters, proposal
-
-    selected: Mapping[str, Any] | None = None
-    reference: dict[str, Any] | None = None
-    next_stage: str | None = None
-    if stage.startswith("hardware"):
-        selected = best_hardware_trial(history)
-        if selected is not None:
-            next_stage = "stability_tuning"
-            reference = _reference_descriptor(
-                selected, "best successful hardware trial used as stability baseline"
-            )
-    elif stage == "stability_tuning":
-        selected = best_stability_trial(history)
-        if selected is not None:
-            next_stage = "confirm"
-            reference = _reference_descriptor(
-                selected,
-                "best successful stability trial by terminal reward mean selected for confirmation",
-            )
-
-    if selected is None or reference is None or next_stage is None:
+    transition = _next_stage_baseline(stage, history)
+    if transition is None:
         raise ValueError(
-            "this keep/stop decision would make the main loop stop without creating the target "
-            "trial report, so it cannot be compared as a replayed decision trial"
+            "this stop decision cannot advance because the next stage has no valid reference; "
+            "no trial report would be created for replay comparison"
         )
-    selected_parameters = selected.get("parameters")
-    if not isinstance(selected_parameters, Mapping):
-        raise ValueError("stage-transition reference trial has no parameter map")
+    next_stage, selected_parameters, reference = transition
     return (
         next_stage,
-        copy.deepcopy(dict(selected_parameters)),
-        {
-            "decision": "keep",
-            "reason": "stage transition baseline",
-            "reference_trial_id": reference.get("trial_id"),
-            "reference_trial": reference,
-            "changes": {},
-            "expected_effect": {},
-        },
+        copy.deepcopy(selected_parameters),
+        _baseline_proposal(
+            reference,
+            "automatic baseline after Agent stopped the previous stage",
+            proposal,
+        ),
     )
 
 
@@ -833,9 +804,15 @@ def main() -> int:
         else:
             current_parameters, reference = orchestrator._starting_point(stage, history)
             starting_point_source = "current orchestrator logic"
-        candidate, proposal, feasibility, trace = orchestrator._propose_candidate(
-            stage, current_parameters, history, reference
-        )
+        if _runs_automatic_baseline(stage, history):
+            candidate = current_parameters
+            proposal = _baseline_proposal(reference, "automatic stage baseline")
+            feasibility = {"verdict": "valid", "reason": "stage baseline"}
+            trace = None
+        else:
+            candidate, proposal, feasibility, trace = orchestrator._propose_candidate(
+                stage, current_parameters, history, reference
+            )
         trial_would_run = proposal.get("decision") != "blocked"
         if trial_would_run:
             stage, candidate, proposal = _apply_recorded_transition_semantics(

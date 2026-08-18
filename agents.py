@@ -411,8 +411,8 @@ class AgentSet:
                 "proposal",
                 rule_context,
                 {
-                    "decision": "keep",
-                    "reason": "rules mode keeps the current configuration",
+                    "decision": "stop",
+                    "reason": "rules mode completes the current tuning stage",
                     "candidates": [],
                     "changes": {},
                 },
