@@ -4,111 +4,75 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-from replay_agent_prompts import _write_replay_history, load_history_prefix
+from replay_agent_prompts import load_prior_trials, load_replay_case
 from trial_storage import trial_artifacts
 
 
-class ReplayHistoryTests(unittest.TestCase):
-    def _source_run(self, root: Path) -> tuple[Path, dict[str, object]]:
-        source_run = root / "source"
-        trial_dir = source_run / "trials" / "0001"
-        trial_dir.mkdir(parents=True)
-        (trial_dir / "train.log").write_text("step:1 - perf/throughput:1\n")
-        (trial_dir / "vllm_metrics.csv").write_text("placeholder\n")
-        row: dict[str, object] = {
+class ReplayArtifactTests(unittest.TestCase):
+    def _write_case(self, root: Path) -> Path:
+        run_dir = root / "run"
+        trial_one = run_dir / "trials" / "0001"
+        trial_two = run_dir / "trials" / "0002"
+        trial_one.mkdir(parents=True)
+        trial_two.mkdir(parents=True)
+        index = {
+            "schema_version": 2,
             "trial_id": 1,
-            "log_path": "/historical/run/trials/0001/train.log",
-            "vllm_metrics_path": "/historical/run/trials/0001/vllm_metrics.csv",
-            "rollout_engine": {"monitor": {"enabled": True}},
+            "stage": "hardware_tuning",
+            "result": "success",
+            "changes": {},
+            "artifacts": trial_artifacts(1),
         }
-        return source_run, row
-
-    def test_default_embeds_vllm_summary_without_copying_artifacts(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source_run, row = self._source_run(root)
-            sandbox = root / "sandbox"
-            summary = {"available": True, "samples": 3}
-
-            with patch(
-                "replay_agent_prompts.summarize_vllm_metrics",
-                return_value=summary,
-            ) as summarize:
-                history_path, copied_logs, summarized = _write_replay_history(
-                    source_run,
-                    sandbox,
-                    [row],
-                )
-
-            replay_row = json.loads(history_path.read_text().strip())
-            self.assertEqual(copied_logs, [])
-            self.assertEqual(summarized, [1])
-            self.assertIsNone(replay_row["log_path"])
-            self.assertIsNone(replay_row["vllm_metrics_path"])
-            self.assertEqual(replay_row["rollout_engine"]["metrics"], summary)
-            self.assertFalse((sandbox / "trials" / "0001" / "train.log").exists())
-            self.assertFalse(
-                (sandbox / "trials" / "0001" / "vllm_metrics.csv").exists()
-            )
-            summarize.assert_called_once_with(
-                source_run / "trials" / "0001" / "vllm_metrics.csv"
-            )
-
-    def test_copy_logs_is_explicit_opt_in(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source_run, row = self._source_run(root)
-            sandbox = root / "sandbox"
-
-            with patch(
-                "replay_agent_prompts.summarize_vllm_metrics",
-                return_value={"available": True},
-            ):
-                history_path, copied_logs, _ = _write_replay_history(
-                    source_run,
-                    sandbox,
-                    [row],
-                    copy_logs=True,
-                )
-
-            replay_row = json.loads(history_path.read_text().strip())
-            copied_log = sandbox / "trials" / "0001" / "train.log"
-            self.assertEqual(copied_logs, [1])
-            self.assertTrue(copied_log.is_file())
-            self.assertEqual(replay_row["log_path"], str(copied_log.resolve()))
-
-    def test_load_history_hydrates_prompt_data_from_source_artifacts(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            source_run = Path(directory) / "source"
-            trial_dir = source_run / "trials" / "0001"
-            trial_dir.mkdir(parents=True)
-            artifacts = trial_artifacts(1)
-            index = {
-                "schema_version": 2,
-                "trial_id": 1,
-                "stage": "hardware_tuning",
-                "result": "success",
-                "changes": {},
-                "artifacts": artifacts,
-            }
-            (source_run / "trials.jsonl").write_text(json.dumps(index) + "\n")
-            (trial_dir / "parameters.json").write_text(json.dumps({"x": 1}))
-            (trial_dir / "metrics.json").write_text(
-                json.dumps(
-                    {
-                        "throughput": {
-                            "summary": {
-                                "throughput": {"mean": 1, "p95": 2, "max": 3}
-                            }
+        (run_dir / "trials.jsonl").write_text(json.dumps(index) + "\n")
+        (trial_one / "parameters.json").write_text(json.dumps({"x": 1}))
+        (trial_one / "metrics.json").write_text(
+            json.dumps(
+                {
+                    "throughput": {
+                        "summary": {
+                            "throughput": {"mean": 1, "p95": 2, "max": 3}
                         }
                     }
-                )
+                }
             )
+        )
 
-            history = load_history_prefix(source_run, 1)
+        (trial_two / "trial_report.json").write_text(
+            json.dumps({"trial_id": 2, "stage": "hardware_tuning"})
+        )
+        (trial_two / "parameters.json").write_text(json.dumps({"x": 2}))
+        (trial_two / "metrics.json").write_text(json.dumps({"stability": {}}))
+        (trial_two / "decision.json").write_text(
+            json.dumps(
+                {
+                    "proposal": {"decision": "modify", "changes": {}},
+                    "feasibility": {"verdict": "valid"},
+                }
+            )
+        )
+        (trial_two / "agent_trace.json").write_text(
+            json.dumps(
+                {
+                    "proposal_conversation": {
+                        "context": {"current_stage": "hardware_tuning"}
+                    }
+                }
+            )
+        )
+        return trial_two
 
+    def test_loads_target_and_hydrates_only_prior_trial_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target_dir = self._write_case(Path(directory))
+
+            case = load_replay_case(target_dir)
+            history = load_prior_trials(case)
+
+            self.assertEqual(case.trial_id, 2)
+            self.assertEqual(case.parameters, {"x": 2})
+            self.assertEqual(case.decision["proposal"]["decision"], "modify")
+            self.assertEqual([trial["trial_id"] for trial in history], [1])
             self.assertEqual(history[0]["parameters"], {"x": 1})
             self.assertEqual(
                 history[0]["structured_metrics"]["throughput"]["summary"][
@@ -116,6 +80,15 @@ class ReplayHistoryTests(unittest.TestCase):
                 ]["mean"],
                 1,
             )
+
+    def test_rejects_history_with_missing_prior_trial(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target_dir = self._write_case(Path(directory))
+            case = load_replay_case(target_dir)
+            (case.run_dir / "trials.jsonl").write_text("")
+
+            with self.assertRaisesRegex(ValueError, r"missing trial IDs \[1\]"):
+                load_prior_trials(case)
 
 
 if __name__ == "__main__":

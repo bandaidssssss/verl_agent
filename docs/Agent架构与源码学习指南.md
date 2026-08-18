@@ -264,8 +264,9 @@ PLATFORM=C550 START_STAGE=stability_tuning \
 # 继续同一实验时必须复用 OUTPUT_PATH
 PLATFORM=C550 OUTPUT_PATH=/absolute/run MAX_TRIALS=5 bash run_circle.sh
 
-# Prompt 回放，不启动训练
-python replay_agent_prompts.py --run-dir output/某次实验 --after-trial 3 --render-only
+# 从具体 trial artifacts 重建 Proposal Prompt，不启动训练
+python replay_agent_prompts.py \
+  --trial-dir output/某次实验/trials/0004 --render-only
 
 # 重新提取一个 trial 的分类指标
 python tools/extract_trial_metrics.py --trial-dir output/某次实验/trials/0001 \
