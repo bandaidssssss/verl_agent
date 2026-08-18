@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from replay_agent_prompts import _write_replay_history
+from replay_agent_prompts import _write_replay_history, load_history_prefix
+from trial_storage import trial_artifacts
 
 
 class ReplayHistoryTests(unittest.TestCase):
@@ -77,6 +78,44 @@ class ReplayHistoryTests(unittest.TestCase):
             self.assertEqual(copied_logs, [1])
             self.assertTrue(copied_log.is_file())
             self.assertEqual(replay_row["log_path"], str(copied_log.resolve()))
+
+    def test_load_history_hydrates_prompt_data_from_source_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source_run = Path(directory) / "source"
+            trial_dir = source_run / "trials" / "0001"
+            trial_dir.mkdir(parents=True)
+            artifacts = trial_artifacts(1)
+            index = {
+                "schema_version": 2,
+                "trial_id": 1,
+                "stage": "hardware_tuning",
+                "result": "success",
+                "changes": {},
+                "artifacts": artifacts,
+            }
+            (source_run / "trials.jsonl").write_text(json.dumps(index) + "\n")
+            (trial_dir / "parameters.json").write_text(json.dumps({"x": 1}))
+            (trial_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "throughput": {
+                            "summary": {
+                                "throughput": {"mean": 1, "p95": 2, "max": 3}
+                            }
+                        }
+                    }
+                )
+            )
+
+            history = load_history_prefix(source_run, 1)
+
+            self.assertEqual(history[0]["parameters"], {"x": 1})
+            self.assertEqual(
+                history[0]["structured_metrics"]["throughput"]["summary"][
+                    "throughput"
+                ]["mean"],
+                1,
+            )
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 from agents import AgentResponseError, AgentSet
 from config_utils import append_jsonl, apply_changes, load_json, read_jsonl, write_json
+from prompt_context import compact_candidate_for_prompt, compact_reference_history
 from prompting import rejection_feedback
 from runner import run_trial
 from trial_storage import (
@@ -303,18 +304,6 @@ def _terminal_stability_value(
 
     points = _complete_stability_points(trial, metric)
     return points[-1][1] if points else None
-
-
-def _trial_stability_series(trial: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    if not isinstance(trial, Mapping):
-        return None
-    stability = trial.get("stability")
-    if not isinstance(stability, Mapping) or not isinstance(stability.get("windows"), list):
-        return None
-    series = copy.deepcopy(dict(stability))
-    series["trial_id"] = trial.get("trial_id")
-    series["stage"] = trial.get("stage")
-    return series
 
 
 def _reference_descriptor(trial: Mapping[str, Any] | None, selection_reason: str) -> dict[str, Any]:
@@ -798,26 +787,39 @@ class TuningOrchestrator:
             if isinstance(reference_resource, Mapping)
             else []
         )
+        observed_device_memory = min(
+            (
+                float(row["total_memory_mib"])
+                for row in observed_devices or []
+                if isinstance(row, Mapping)
+                and isinstance(row.get("total_memory_mib"), (int, float))
+            ),
+            default=None,
+        )
         reference_log_facts = (
             reference_trial_row.get("log_facts")
             if isinstance(reference_trial_row, Mapping)
             else None
         )
+        editable = editable_parameters(stage)
+        reference_trial_id = reference.get("trial_id")
+        required_reference_ids = (
+            [reference_trial_id] if isinstance(reference_trial_id, int) else []
+        )
         context = {
             "current_stage": stage,
             "mode": "failure_repair" if diagnosis else stage,
-            "current_parameters": dict(current),
             "fixed_parameters": {
                 key: value
                 for key, value in current.items()
-                if key not in set(editable_parameters(stage)) | IGNORED_PARAMETERS
+                if key not in set(editable) | IGNORED_PARAMETERS
             },
             "editable_parameter_values": {
                 key: {
                     "value": current.get(key),
                     "explicitly_configured": key in current,
                 }
-                for key in editable_parameters(stage)
+                for key in editable
             },
             "immutable_context": {
                 "model": {
@@ -834,11 +836,7 @@ class TuningOrchestrator:
                     "gpus_per_node": current.get("trainer.n_gpus_per_node"),
                     "world_size": int(current.get("trainer.nnodes", 1))
                     * int(current.get("trainer.n_gpus_per_node", 1)),
-                    "observed_device_memory_mib": {
-                        str(row.get("gpu_index")): row.get("total_memory_mib")
-                        for row in observed_devices
-                        if isinstance(row, Mapping)
-                    },
+                    "observed_device_memory_mib": observed_device_memory,
                     "resource_memory_reserve_mib": self.config.get(
                         "resource_memory_reserve_mib"
                     ),
@@ -859,16 +857,18 @@ class TuningOrchestrator:
                     ),
                 },
             },
-            "reference_trial": copy.deepcopy(dict(reference)),
-            "reference_options": [
-                _reference_descriptor(trial, "recorded candidate reference option")
-                for trial in trials[-history_limit:]
-                if isinstance(trial.get("parameters"), Mapping)
-            ],
-            "reference_stability_series": _trial_stability_series(
-                reference_trial_row
+            "default_reference": {
+                "trial_id": reference_trial_id,
+                "selection_reason": reference.get("selection_reason"),
+            },
+            "compact_reference_history": compact_reference_history(
+                trials,
+                stage,
+                editable,
+                required_trial_ids=required_reference_ids,
+                limit=history_limit,
             ),
-            "editable_parameters": editable_parameters(stage),
+            "editable_parameters": editable,
             "constraints": {
                 "min_proposal_candidates": min_candidates,
                 "max_proposal_candidates": max_candidates,
@@ -878,7 +878,6 @@ class TuningOrchestrator:
                 "throughput_memory_reserve_mib": self.config.get("throughput_memory_reserve_mib", 6554),
             },
             "diagnosis": diagnosis,
-            "recent_trials": read_trial_indexes(self.history_path)[-history_limit:],
         }
         proposal_conversation = None
         trace: dict[str, Any] = {
@@ -1144,18 +1143,26 @@ class TuningOrchestrator:
                 trace["proposal_conversation"] = proposal_conversation.as_trace()
                 continue
 
+            review_candidates = [
+                compact_candidate_for_prompt(row["packet"])
+                for row in validated.values()
+            ]
+            candidate_reference_ids = [
+                row["reference_trial_id"]
+                for row in review_candidates
+                if isinstance(row.get("reference_trial_id"), int)
+            ]
             review_run = self.agents.review(
                 {
                     "current_stage": stage,
-                    "current_parameters": dict(current),
-                    "candidates": [
-                        copy.deepcopy(row["packet"]) for row in validated.values()
-                    ],
-                    "last_trial": _compact_trial(trials[-1]) if trials else None,
-                    "recent_trials": [
-                        copy.deepcopy(trial)
-                        for trial in read_trial_indexes(self.history_path)[-history_limit:]
-                    ],
+                    "candidates": review_candidates,
+                    "compact_reference_history": compact_reference_history(
+                        trials,
+                        stage,
+                        editable,
+                        required_trial_ids=candidate_reference_ids,
+                        limit=history_limit,
+                    ),
                     "diagnosis": diagnosis,
                     "memory_limits": {
                         "unit": "MiB",

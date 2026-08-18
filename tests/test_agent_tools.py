@@ -501,14 +501,15 @@ class AgentToolsTest(unittest.TestCase):
         self.assertTrue(result["available"])
         self.assertEqual(result["matches"][0]["path"], "verl/workers/config/actor.py")
 
-    def test_trial_history_query_can_return_successful_parameters(self) -> None:
+    def test_trial_history_query_returns_ordered_reference_parameters_and_metrics(self) -> None:
+        parameter_key = "actor_rollout_ref.rollout.max_num_seqs"
         rows = [
             {
                 "schema_version": 2,
                 "trial_id": 1,
                 "stage": "hardware_tuning",
                 "result": "fail",
-                "scores": {"throughput_mean": 8.0},
+                "changes": {parameter_key: {"from": 64, "to": 128}},
                 "artifacts": trial_artifacts(1),
             },
             {
@@ -516,24 +517,167 @@ class AgentToolsTest(unittest.TestCase):
                 "trial_id": 2,
                 "stage": "hardware_tuning",
                 "result": "success",
-                "scores": {"throughput_mean": 12.0},
+                "changes": {parameter_key: {"from": 128, "to": 256}},
                 "artifacts": trial_artifacts(2),
             },
         ]
         for trial_id in (1, 2):
             trial_dir = self.history_path.parent / "trials" / f"{trial_id:04d}"
             trial_dir.mkdir(parents=True)
-            write_json(trial_dir / "parameters.json", {"x": trial_id})
+            write_json(
+                trial_dir / "parameters.json",
+                {parameter_key: trial_id * 128, "data.train_batch_size": 64},
+            )
+            write_json(
+                trial_dir / "metrics.json",
+                {
+                    "resource": {
+                        "by_phase": {
+                            phase: {
+                                "mean_used_mib": trial_id * 1000,
+                                "p95_used_mib": trial_id * 1100,
+                                "max_used_mib": trial_id * 1200,
+                                "max_used_gpu_index": "7",
+                            }
+                            for phase in (
+                                "rollout",
+                                "actor_log_prob",
+                                "ref_log_prob",
+                                "training",
+                            )
+                        }
+                    },
+                    "throughput": {
+                        "summary": {
+                            "throughput": {
+                                "mean": trial_id * 10,
+                                "p95": trial_id * 11,
+                                "max": trial_id * 12,
+                            },
+                            "actor_mfu": {
+                                "mean": trial_id / 10,
+                                "p95": trial_id / 9,
+                                "max": trial_id / 8,
+                            },
+                        }
+                    },
+                },
+            )
         self.history_path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
         registry = self.registry()
         result = registry.execute(
             "proposal",
             "query_trial_history",
-            {"result": "success", "sort_by": "throughput", "include_parameters": True},
+            {"reference_trial_ids": [2, 99, 1], "stage": "hardware"},
             registry.runtime({}),
         )
-        self.assertEqual(result["matched"], 1)
-        self.assertEqual(result["trials"][0]["parameters"], {"x": 2})
+        self.assertEqual(result["stage"], "hardware")
+        references = result["reference_trials"]
+        self.assertEqual([row["trial_id"] for row in references], [2, 99, 1])
+        self.assertEqual(
+            references[0]["parameters"][parameter_key],
+            {"value": 256, "explicitly_configured": True},
+        )
+        self.assertNotIn("data.train_batch_size", references[0]["parameters"])
+        self.assertEqual(
+            references[0]["metrics"]["summary"]["throughput"]["mean"], 20
+        )
+        self.assertNotIn("gpu_index", json.dumps(references[0]))
+        self.assertFalse(references[1]["available"])
+        self.assertEqual(references[1]["error"], "reference trial not found")
+
+    def test_trial_history_query_rejects_duplicate_reference_ids(self) -> None:
+        registry = self.registry()
+        with self.assertRaisesRegex(RuntimeError, "must not contain duplicates"):
+            registry.execute(
+                "proposal",
+                "query_trial_history",
+                {"reference_trial_ids": [1, 1], "stage": "hardware"},
+                registry.runtime({}),
+            )
+
+    def test_trial_history_schema_is_reference_batch_only(self) -> None:
+        registry = self.registry()
+        schema = next(
+            row["function"]["parameters"]
+            for row in registry.api_schemas("proposal")
+            if row["function"]["name"] == "query_trial_history"
+        )
+        self.assertEqual(
+            set(schema["properties"]), {"reference_trial_ids", "stage"}
+        )
+        self.assertEqual(
+            set(schema["required"]), {"reference_trial_ids", "stage"}
+        )
+
+    def test_trial_history_query_selects_stability_parameters_and_metrics(self) -> None:
+        learning_rate = "actor_rollout_ref.actor.optim.lr"
+        trial_dir = self.history_path.parent / "trials" / "0001"
+        trial_dir.mkdir(parents=True)
+        write_json(
+            trial_dir / "parameters.json",
+            {
+                learning_rate: 3e-6,
+                "actor_rollout_ref.rollout.max_num_seqs": 256,
+            },
+        )
+        write_json(
+            trial_dir / "metrics.json",
+            {
+                "stability": {
+                    "step_range": [4, 8],
+                    "windows": [
+                        {"start_step": 4, "end_step": 8, "sample_count": 5}
+                    ],
+                    "window_metrics": {"critic/rewards/mean": [0.25]},
+                    "terminal_window": {
+                        "start_step": 4,
+                        "end_step": 8,
+                        "sample_count": 5,
+                    },
+                    "terminal_metrics": {"critic/rewards/mean": 0.25},
+                }
+            },
+        )
+        self.history_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "trial_id": 1,
+                    "stage": "hardware_tuning",
+                    "result": "success",
+                    "changes": {},
+                    "artifacts": trial_artifacts(1),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        registry = self.registry()
+        result = registry.execute(
+            "proposal",
+            "query_trial_history",
+            {"reference_trial_ids": [1], "stage": "stability"},
+            registry.runtime({}),
+        )
+
+        reference = result["reference_trials"][0]
+        self.assertEqual(
+            reference["parameters"][learning_rate],
+            {"value": 3e-6, "explicitly_configured": True},
+        )
+        self.assertNotIn(
+            "actor_rollout_ref.rollout.max_num_seqs", reference["parameters"]
+        )
+        self.assertEqual(
+            reference["metrics"]["terminal_metrics"]["critic/rewards/mean"],
+            0.25,
+        )
+        self.assertIn(
+            "stability.window_metrics.actor/ppo_kl",
+            reference["missing_metrics"],
+        )
 
     def test_proposal_can_read_bounded_trial_metric_windows(self) -> None:
         trial_dir = self.history_path.parent / "trials" / "0001"

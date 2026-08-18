@@ -20,15 +20,12 @@ Every candidate must preserve these values, even when it selects another referen
 {FIXED_PARAMETERS}
 
 ### Default Reference Trial
-{REFERENCE_TRIAL}
+This identifies the orchestrator's default starting point without duplicating its full record.
+{DEFAULT_REFERENCE}
 
-### Recent Recorded Reference Options
-These are bounded recent options with exact parameter maps. You may call `query_trial_history` with `include_parameters: true` when an older trial is a better reference.
-{REFERENCE_OPTIONS}
-
-### Stability Time Series for the Default Reference Trial
-The metric arrays are aggregated into consecutive post-warmup windows and aligned by index with `windows`. `terminal_metrics` is separately aligned from the end and contains the mean over the final `window_size` observed updates; this is the score used when comparing completed stability trials. Do not change a parameter because of a single window. Call `read_trial_metrics` when you need to inspect a specific range, another metric, or a non-default reference trial.
-{REFERENCE_STABILITY_SERIES}
+### Compact Reference History
+Each entry contains only the recorded changes, actual values for parameters editable in the current stage, and stage-relevant metrics. `missing_metrics` names requested JSON paths that were unavailable; absence is not a zero value. Hardware memory is phase-aggregated and intentionally omits GPU identity. Stability arrays align with `windows`, while `terminal_metrics` align with `terminal_window`. Call `query_trial_history` with one or more reference trial IDs and the current metric stage to refresh the same parameter-and-metric view; call `read_trial_metrics` only for custom stability metrics or finer step ranges.
+{COMPACT_REFERENCE_HISTORY}
 
 ### Parameters Editable in This Stage
 {EDITABLE_PARAMETERS}
@@ -43,9 +40,6 @@ An absent override is shown with `explicitly_configured: false` and `value: null
 ### Most Recent Failure Diagnosis
 {DIAGNOSIS}
 
-### Trial History
-{TRIAL_HISTORY}
-
 ## Available Tools
 {AVAILABLE_TOOLS}
 
@@ -55,7 +49,7 @@ An absent override is shown with `explicitly_configured: false` and `value: null
 2. Before proposing a hardware-stage candidate, prefer calling `memory_estimator` to examine rollout, actor log-probability, reference log-probability, and training separately. If there is no empirical anchor, explicitly treat the result only as a low-confidence relative-pressure estimate.
 3. Call `search_verl_docs` when the actual verl 0.7 field name or implementation behavior must be verified.
 4. `live_gpu_snapshot` describes host usage only at the instant of the call. It cannot replace phase-specific measurements from a trial.
-5. Call `read_trial_metrics` for finer-grained training time-series evidence and `query_trial_history` to select comparable experiments. Use `include_parameters: true` before inheriting from a trial whose exact parameters are not shown under "Recent Recorded Reference Options".
+5. Call `query_trial_history` once with all relevant `reference_trial_ids` and `stage: "hardware"` or `stage: "stability"` before inheriting them. It returns the exact editable parameter values needed for `changes.from` plus the corresponding stage metrics. Use `read_trial_metrics` only for finer-grained stability time-series evidence.
 6. Every candidate owns its `reference_trial_id`. It must name the exact recorded trial whose complete parameters the candidate inherits. Use `null` only for the initial base configuration. Every change's `from` value must exactly match that candidate's reference parameters; use `null` only when the field was not explicitly configured there.
 7. A `memory_estimator` call requires an integer reference trial ID with measured memory data. Evaluate candidates separately and pass exactly that candidate's `{"from": ..., "to": ...}` changes plus its own `reference_trial_id`. Omit per-parameter `reason`; do not pass a parameter snapshot or target-value duplicate.
 8. Compare phases by `relative_change_pct.upper`, direction, confidence, and `uncalibrated_changes`. This estimate does not certify absolute safety; the real short-run Resource Gate remains authoritative.

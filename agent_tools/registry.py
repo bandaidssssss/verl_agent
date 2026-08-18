@@ -16,6 +16,7 @@ from metrics import (
     build_metric_windows,
     records_from_metric_steps,
 )
+from prompt_context import select_stage_metrics
 from trial_storage import (
     hydrate_trial,
     read_metrics_for_trial,
@@ -24,7 +25,7 @@ from trial_storage import (
     resolve_artifact,
 )
 from vllm_metrics import assess_rollout_metrics, summarize_vllm_metrics
-from validator import IGNORED_PARAMETERS
+from validator import IGNORED_PARAMETERS, editable_parameters
 
 
 @dataclass(frozen=True)
@@ -60,36 +61,6 @@ def _number(value: str) -> float:
     if not match:
         raise ValueError(f"cannot parse numeric GPU field: {value}")
     return float(match.group(0))
-
-
-def _nested_metric(trial: Mapping[str, Any], *path: str) -> float | None:
-    value: Any = trial
-    for key in path:
-        if not isinstance(value, Mapping):
-            return None
-        value = value.get(key)
-    if isinstance(value, Mapping):
-        value = value.get("mean")
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-
-
-def _last_stability_reward(trial: Mapping[str, Any]) -> float | None:
-    stability = trial.get("stability")
-    if not isinstance(stability, Mapping):
-        return None
-    windows = stability.get("windows")
-    metrics = stability.get("metrics")
-    rewards = metrics.get("critic/rewards/mean") if isinstance(metrics, Mapping) else None
-    window_size = stability.get("window_size")
-    if isinstance(windows, list) and isinstance(rewards, list):
-        for window, reward in reversed(list(zip(windows, rewards))):
-            if not isinstance(window, Mapping) or not isinstance(reward, (int, float)):
-                continue
-            required = window_size if isinstance(window_size, int) else window.get("sample_count")
-            if window.get("sample_count") == required:
-                return float(reward)
-        return None
-    return _nested_metric(trial, "stability", "reward")
 
 
 def _normalize_memory_changes(
@@ -540,71 +511,78 @@ class ToolRegistry:
         }
 
     def _query_trial_history(self, arguments: Mapping[str, Any], runtime: ToolRuntime) -> dict[str, Any]:
-        trials = read_trial_indexes(runtime.history_path)
+        reference_trial_ids = arguments.get("reference_trial_ids")
+        if (
+            not isinstance(reference_trial_ids, list)
+            or not 1 <= len(reference_trial_ids) <= 5
+            or any(
+                not isinstance(trial_id, int) or isinstance(trial_id, bool)
+                for trial_id in reference_trial_ids
+            )
+        ):
+            raise ToolError(
+                "reference_trial_ids must contain 1-5 integer trial IDs"
+            )
+        if len(set(reference_trial_ids)) != len(reference_trial_ids):
+            raise ToolError("reference_trial_ids must not contain duplicates")
         stage = arguments.get("stage")
-        result = arguments.get("result")
-        failure_type = arguments.get("failure_type")
-        if stage:
-            trials = [trial for trial in trials if trial.get("stage") == stage]
-        if result:
-            trials = [trial for trial in trials if trial.get("result") == result]
-        if failure_type:
-            trials = [trial for trial in trials if trial.get("error", {}).get("type") == failure_type]
-        sort_by = arguments.get("sort_by", "trial_id")
-        metric_paths = {
-            "throughput": ("performance", "throughput"),
-            "memory": ("resource", "max_used_mib"),
+        stage_to_runtime_stage = {
+            "hardware": "hardware_tuning",
+            "stability": "stability_tuning",
         }
-        if sort_by == "trial_id":
-            trials.sort(key=lambda trial: int(trial.get("trial_id", 0)), reverse=True)
-        elif sort_by == "reward":
-            trials.sort(
-                key=lambda trial: (
-                    _nested_metric(trial, "scores", "terminal_reward")
-                    or _last_stability_reward(trial)
-                    or float("-inf")
-                ),
-                reverse=True,
-            )
-        elif sort_by in metric_paths:
-            path = metric_paths[sort_by]
-            score_key = "throughput_mean" if sort_by == "throughput" else None
-            trials.sort(
-                key=lambda trial: (
-                    _nested_metric(trial, "scores", score_key)
-                    if score_key
-                    else _nested_metric(trial, *path)
+        if stage not in stage_to_runtime_stage:
+            raise ToolError("stage must be hardware or stability")
+
+        trials_by_id = {
+            row.get("trial_id"): row for row in read_trial_indexes(runtime.history_path)
+        }
+        editable = editable_parameters(stage_to_runtime_stage[stage])
+        references = []
+        for trial_id in reference_trial_ids:
+            indexed = trials_by_id.get(trial_id)
+            if indexed is None:
+                references.append(
+                    {
+                        "trial_id": trial_id,
+                        "available": False,
+                        "error": "reference trial not found",
+                    }
                 )
-                or _nested_metric(trial, *path)
-                or float("-inf"),
-                reverse=True,
+                continue
+
+            trial = hydrate_trial(indexed, runtime.history_path)
+            parameters = trial.get("parameters")
+            if not isinstance(parameters, Mapping):
+                references.append(
+                    {
+                        "trial_id": trial_id,
+                        "available": False,
+                        "error": "reference trial parameters not found",
+                    }
+                )
+                continue
+            structured = trial.get("structured_metrics")
+            structured = structured if isinstance(structured, Mapping) else {}
+            metrics, missing_metrics = select_stage_metrics(structured, stage)
+            references.append(
+                {
+                    "trial_id": trial_id,
+                    "available": True,
+                    "recorded_stage": trial.get("stage"),
+                    "result": trial.get("result"),
+                    "changes": trial.get("changes", {}),
+                    "parameters": {
+                        key: {
+                            "value": parameters.get(key),
+                            "explicitly_configured": key in parameters,
+                        }
+                        for key in editable
+                    },
+                    "metrics": metrics,
+                    "missing_metrics": missing_metrics,
+                }
             )
-        else:
-            raise ToolError(f"unsupported sort_by: {sort_by}")
-        limit = arguments.get("limit", 5)
-        if not isinstance(limit, int):
-            raise ToolError("limit must be an integer")
-        include_parameters = bool(arguments.get("include_parameters", False))
-        selected = []
-        for trial in trials[: max(1, min(10, limit))]:
-            hydrated = (
-                hydrate_trial(trial, runtime.history_path)
-                if include_parameters
-                else trial
-            )
-            row = {
-                "trial_id": trial.get("trial_id"),
-                "stage": trial.get("stage"),
-                "result": trial.get("result"),
-                "changes": trial.get("changes", trial.get("proposal", {}).get("changes")),
-                "scores": trial.get("scores"),
-                "resource": trial.get("resource"),
-                "error": trial.get("error"),
-            }
-            if include_parameters:
-                row["parameters"] = hydrated.get("parameters")
-            selected.append(row)
-        return {"history_path": str(runtime.history_path), "matched": len(trials), "trials": selected}
+        return {"stage": stage, "reference_trials": references}
 
     def _read_trial_log_excerpt(self, arguments: Mapping[str, Any], runtime: ToolRuntime) -> dict[str, Any]:
         trial_id = arguments.get("trial_id")

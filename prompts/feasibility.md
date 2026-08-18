@@ -11,20 +11,18 @@ You are a gatekeeper and selector, not a proposal generator. Do not create an al
 - Current stage: {CURRENT_STAGE}
 
 ### Deterministically Valid Canonical Candidates
-Every entry contains its own reference trial, normalized changes, target-value map, and complete executable parameter map. Select only by `candidate_id`.
+Every entry contains its reference ID, rationale, normalized changes, expected effect, and confidence. Complete executable maps remain inside deterministic validation and are intentionally not duplicated here. Select only by `candidate_id`.
 {CANDIDATES}
 
-### Most Recent Trial
-{LAST_TRIAL}
+### Compact Reference History
+This includes the bounded recent history plus every candidate reference, with current-stage editable values and stage-relevant metrics. `missing_metrics` names unavailable JSON paths. Use one `query_trial_history` call with all candidate reference IDs and the current metric stage when the reference evidence must be refreshed.
+{COMPACT_REFERENCE_HISTORY}
 
 ### Diagnosis
 {DIAGNOSIS}
 
 ### Memory Safety Limits
 {MEMORY_LIMITS}
-
-### Relevant Trial History
-{TRIAL_HISTORY}
 
 ## Available Tools
 {AVAILABLE_TOOLS}

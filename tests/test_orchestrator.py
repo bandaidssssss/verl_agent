@@ -290,8 +290,8 @@ class FeasibilitySelectionTest(unittest.TestCase):
         )
 
 
-class ProposalSeriesContextTest(unittest.TestCase):
-    def test_hardware_proposal_receives_reference_metric_windows_without_summary(self) -> None:
+class ProposalContextTest(unittest.TestCase):
+    def test_hardware_proposal_receives_compact_reference_metrics(self) -> None:
         base = load_json(ROOT / "config" / "base_parameters.json")
         config = load_json(ROOT / "config" / "agent_config.json")
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -301,10 +301,13 @@ class ProposalSeriesContextTest(unittest.TestCase):
             class FakeAgents:
                 def propose(self, context=None, conversation=None):
                     assert context is not None
-                    assert "stability" not in context["reference_trial"]
-                    series = context["reference_stability_series"]
-                    assert series["trial_id"] == 1
-                    assert series["metrics"]["critic/rewards/mean"] == [0.1]
+                    assert "current_parameters" not in context
+                    assert "reference_trial" not in context
+                    assert context["default_reference"]["trial_id"] == 1
+                    compact = context["compact_reference_history"][0]
+                    assert compact["trial_id"] == 1
+                    assert compact["metrics"]["summary"]["throughput"]["mean"] == 1.0
+                    assert "max_used_gpu_index" not in str(compact)
                     conversation = AgentConversation("proposal", dict(context), [])
                     return AgentRun(
                         {
@@ -326,10 +329,30 @@ class ProposalSeriesContextTest(unittest.TestCase):
                     "result": "success",
                     "parameters": base,
                     "performance": {"throughput": {"mean": 1.0}},
-                    "stability": {
-                        "window_size": 5,
-                        "windows": [{"start_step": 6, "end_step": 10, "sample_count": 5}],
-                        "metrics": {"critic/rewards/mean": [0.1]},
+                    "structured_metrics": {
+                        "resource": {
+                            "devices": [],
+                            "by_phase": {
+                                phase: {
+                                    "mean_used_mib": 10,
+                                    "p95_used_mib": 20,
+                                    "max_used_mib": 30,
+                                    "max_used_gpu_index": "7",
+                                }
+                                for phase in (
+                                    "rollout",
+                                    "actor_log_prob",
+                                    "ref_log_prob",
+                                    "training",
+                                )
+                            }
+                        },
+                        "throughput": {
+                            "summary": {
+                                "throughput": {"mean": 1.0, "p95": 1.1, "max": 1.2},
+                                "actor_mfu": {"mean": 0.1, "p95": 0.2, "max": 0.3},
+                            }
+                        },
                     },
                 }
             ]
@@ -578,6 +601,12 @@ class RejectionConversationTest(unittest.TestCase):
                         "rollout_memory",
                     ]
                     assert context["candidates"][1]["reference_trial_id"] == 2
+                    assert "candidate_parameters" not in context["candidates"][0]
+                    assert "reference_trial" not in context["candidates"][0]
+                    assert [
+                        row["trial_id"]
+                        for row in context["compact_reference_history"]
+                    ] == [1, 2]
                     result = {
                         "verdict": "valid",
                         "selected_candidate_id": "rollout_memory",

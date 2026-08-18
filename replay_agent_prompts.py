@@ -38,6 +38,7 @@ from orchestrator import (
     _runs_automatic_baseline,
     determine_stage,
 )
+from trial_storage import hydrate_trial
 from vllm_metrics import summarize_vllm_metrics
 
 
@@ -130,7 +131,9 @@ def load_history_prefix(run_dir: Path, after_trial: int) -> list[dict[str, Any]]
     if after_trial < 1:
         raise ValueError("--after-trial must be at least 1")
 
-    rows = _read_jsonl_prefix(run_dir / "trials.jsonl", after_trial)
+    source_history_path = run_dir / "trials.jsonl"
+    rows = _read_jsonl_prefix(source_history_path, after_trial)
+    loaded_from_index = bool(rows)
     if not rows:
         for trial_id in range(1, after_trial + 1):
             report_path = run_dir / "trials" / f"{trial_id:04d}" / "trial_report.json"
@@ -149,7 +152,10 @@ def load_history_prefix(run_dir: Path, after_trial: int) -> list[dict[str, Any]]
         raise ValueError(
             f"history is missing completed trial IDs {missing}; available IDs are {sorted(by_id)}"
         )
-    return [copy.deepcopy(by_id[trial_id]) for trial_id in range(1, after_trial + 1)]
+    ordered = [by_id[trial_id] for trial_id in range(1, after_trial + 1)]
+    if loaded_from_index:
+        return [hydrate_trial(row, source_history_path) for row in ordered]
+    return [copy.deepcopy(row) for row in ordered]
 
 
 def _write_replay_history(

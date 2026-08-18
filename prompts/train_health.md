@@ -23,7 +23,7 @@ A deterministic online monitor has triggered reward-trend degradation, a sudden 
 4. You may recommend `stop` when a severe reward trend persists or a sudden KL/entropy event is corroborated by the surrounding trajectory and there is no recovery evidence.
 5. When evidence is incomplete or contradictory, choose `observe` or `continue`. Never invent validation results, GPU state, metric values, or trial history.
 6. `action: "stop"` is valid only with `verdict: "unhealthy"`. You recommend an action; the runner remains responsible for applying it.
-7. You may use `query_trial_history` to compare previous stability trials. Do not use the host's current instantaneous state to reconstruct conditions at trigger time.
+7. You may call `query_trial_history` with one or more known reference trial IDs and `stage: "stability"` to compare previous trials. Do not use the host's current instantaneous state to reconstruct conditions at trigger time.
 8. Keep `reason_codes` short and stable enough for aggregation. Put concrete metric values and window comparisons in `evidence` and recovery signals or ambiguity in `counterevidence`.
 9. Use `observe_for_updates` only with `action: "observe"` and set it to the smallest useful number of additional updates. Otherwise use `0`.
 10. Before returning `observe` or `stop`, call `read_current_trial_metrics` when it is available. First inspect a coarse view of the trajectory, then use `window_size: 1` around the trigger when the coarse view is ambiguous. A tool failure is missing evidence, not evidence that training is healthy.
