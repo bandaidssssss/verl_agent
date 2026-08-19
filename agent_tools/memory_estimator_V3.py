@@ -2024,6 +2024,7 @@ def _compute_projection(
     candidate_activation_upper = candidate_components.get(
         "activation_upper_sequence_mb"
     )
+    #upper按照prompt和response——length的最大值计算，可能比实际的activation_mb大很多。activation_mb是按照prompt+response 长度mean计算的。相差较多
     sequence_delta_gap = 0.0
     if (
         reference_activation_upper is not None
@@ -2033,7 +2034,7 @@ def _compute_projection(
         sequence_delta_gap = max(
             0.0, upper_delta - delta_components.get("activation_mb", 0.0)
         )
-
+    #delta_components 这个根据真实的实验校准activation_mb
     topology_changed = bool(
         relevant_changes
         & (dependencies["model"] | {ACTOR_CP_KEY, REF_CP_KEY, ACTOR_SP_KEY, REF_SP_KEY})
@@ -2505,30 +2506,43 @@ def estimate_phase_memory(
             else "medium"
         )
     )
+    # return {
+    #     "method": "measured_reference_relative_component_delta",
+    #     "version": 3,
+    #     # "confidence": {
+    #     #     "level": confidence,
+    #     #     "reasons": sorted(
+    #     #         {
+    #     #             reason
+    #     #             for phase in affected_phases
+    #     #             for reason in phase.get("confidence", {}).get("reasons", [])
+    #     #         }
+    #     #     ),
+    #     # },
+    #     "reference_trial_id": reference.get("trial_id"),
+    #     "changed_parameters": changed_parameters,
+    #     "phases": phases,
+    # }
+    # return {
+    #         **{
+    #             phase: result.get("relative_change_pct", {}).get("lower")
+    #             if isinstance(result.get("relative_change_pct"), Mapping)
+    #             else None
+    #             for phase, result in phases.items()
+    #         },
+    #         "note": "Estimated based on the mean of the experimental prompts and responses.",
+    #     }
     return {
-        "method": "measured_reference_relative_component_delta",
-        "version": 3,
-        "confidence": {
-            "level": confidence,
-            "reasons": sorted(
-                {
-                    reason
-                    for phase in affected_phases
-                    for reason in phase.get("confidence", {}).get("reasons", [])
-                }
-            ),
+        **{
+            phase: result.get("relative_change_pct", {}).get("estimate")
+            if isinstance(result.get("relative_change_pct"), Mapping)
+            else None
+            for phase, result in phases.items()
         },
-        "reference_trial_id": reference.get("trial_id"),
-        "changed_parameters": changed_parameters,
-        "phases": phases,
-        "limitations": [
-            (
-                "Compute estimates add only changed model-state, optimizer, and "
-                "activation components to the measured reference peak."
-            )
-        ],
+        "note": (
+            "The central memory prediction is based on the P95 of the average token count (prompt + response) across each step of the experiment."
+        ),
     }
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(

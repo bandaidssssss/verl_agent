@@ -6,7 +6,7 @@
       "name": "parameter_understanding",
       "handler": "parameter_understanding",
       "roles": ["proposal", "feasibility", "diagnosis"],
-      "description": "Query compact non-obvious runtime facts: authority, hidden constraints, exceptional effects, and critical couplings. Use it only when those facts are uncertain; use measurements and tuning strategies for ordinary direction-of-change reasoning.",
+      "description": "Query curated verl parameter semantics, memory/throughput effects, interactions, and hard constraints. Query every parameter you intend to change when its effect is uncertain.",
       "parameters": {
         "type": "object",
         "properties": {

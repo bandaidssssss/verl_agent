@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Replay one recorded proposal through memory_estimator_V3.
+"""Replay recorded proposals through memory_estimator_V3.
 
 This script does not call an LLM and does not start training.  It reconstructs
-the candidate parameters from a recorded trial's ``proposal.changes``, exposes
-only earlier trials to the estimator, and then compares the prediction with the
-target trial's observed per-phase memory.
+each candidate from its recorded ``proposal.changes``, exposes only earlier
+trials to the estimator, and compares the prediction with that trial's observed
+per-phase memory.  With no ``--target-trial``, every discoverable trial is
+processed and the complete terminal report is also saved as Markdown.
 
 Typical use after editing the defaults near the top of this file:
 
     python tests/test_memory.py
 
-Command-line values can override every frequently changed default:
+To replay only one target trial:
 
     python tests/test_memory.py \
       --run-dir output/0807_1110_2026 \
@@ -21,9 +22,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import math
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -37,16 +40,11 @@ from trial_storage import hydrate_trial
 
 
 # =============================================================================
-# 每次重新评估历史实验时，通常只需要修改下面 2 项
+# 每次重新评估历史实验时，通常只需要修改下面 1 项
 # =============================================================================
 
 # 完整实验目录，里面应包含 trials.jsonl 或 trials/NNNN/trial_report.json。
-DEFAULT_RUN_DIR = ROOT / "output" / "0819_1237_2026"
-
-# 要重新评估哪一个已经执行过的 trial。脚本读取它的 proposal，并且只用
-# trial_id 小于它的历史数据做预测；该 trial 的实测显存只用于最后对比。
-DEFAULT_TARGET_TRIAL = 4
-
+DEFAULT_RUN_DIR = ROOT / "output" / "0819_1134_2026"
 
 # =============================================================================
 # 其他参数一般不需要修改
@@ -58,6 +56,9 @@ DEFAULT_MEMORY_LIMIT_PCT: float | None = None
 
 # None 表示只打印结果，不写文件。也可以设置成一个 JSON 文件路径。
 DEFAULT_OUTPUT_JSON: Path | None = None
+
+# None 表示自动写入 DEFAULT_RUN_DIR/memory_replay_report.md。
+DEFAULT_OUTPUT_MD: Path | None = None
 
 
 def _absolute(path: str | Path) -> Path:
@@ -785,6 +786,81 @@ def print_report(report: Mapping[str, Any]) -> None:
     print("  note: compact estimator output contains center predictions only")
 
 
+def _discover_trial_ids(run_dir: Path) -> list[int]:
+    """Return every indexed or artifact-backed trial ID in the run directory."""
+    trial_ids = {
+        int(row["trial_id"])
+        for row in _load_trials(run_dir)
+        if isinstance(row.get("trial_id"), int)
+        and not isinstance(row.get("trial_id"), bool)
+    }
+    trials_dir = run_dir / "trials"
+    if trials_dir.is_dir():
+        for path in trials_dir.iterdir():
+            if path.is_dir() and path.name.isdigit():
+                trial_ids.add(int(path.name))
+    return sorted(trial_ids)
+
+
+def _render_report(report: Mapping[str, Any]) -> str:
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        print_report(report)
+    return buffer.getvalue().rstrip()
+
+
+def _render_batch(
+    run_dir: Path,
+    reports: Sequence[Mapping[str, Any]],
+    skipped: Sequence[tuple[int, str]],
+    output_md: Path,
+) -> str:
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        print(f"Memory replay batch: {run_dir}")
+        print(f"Markdown report: {output_md}")
+        print(f"Successful replays: {len(reports)} | skipped: {len(skipped)}")
+
+        if reports:
+            print("\nBatch summary")
+            summary_rows = []
+            for report in reports:
+                case = report["case"]
+                summary = report["summary"]
+                summary_rows.append(
+                    [
+                        str(case["target_trial_id"]),
+                        str(case["reference_trial_id"]),
+                        _format_value(summary["mae_gib"]),
+                        _format_value(summary["mae_pct"]),
+                        _format_value(summary["max_underestimate_gib"]),
+                        _format_value(summary["max_underestimate_pct"]),
+                    ]
+                )
+            _print_table(
+                summary_rows,
+                (
+                    "trial",
+                    "reference",
+                    "MAE GiB",
+                    "MAE pct",
+                    "max under GiB",
+                    "max under pct",
+                ),
+            )
+
+        for report in reports:
+            print("\n" + "=" * 96)
+            print(_render_report(report))
+
+        if skipped:
+            print("\n" + "=" * 96)
+            print("Skipped trials")
+            for trial_id, reason in skipped:
+                print(f"  trial {trial_id}: {reason}")
+    return buffer.getvalue().rstrip() + "\n"
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -806,8 +882,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help=(
-            "Executed trial whose recorded proposal should be replayed; when "
-            "omitted, use DEFAULT_TARGET_TRIAL from this file"
+            "Replay only this executed trial; when omitted, replay every trial "
+            "discovered under the run directory"
         ),
     )
     parser.add_argument(
@@ -819,7 +895,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-json",
         default=DEFAULT_OUTPUT_JSON,
-        help="Optional path for the full machine-readable report",
+        help="Optional path for all successful machine-readable reports",
+    )
+    parser.add_argument(
+        "--output-md",
+        default=DEFAULT_OUTPUT_MD,
+        help=(
+            "Markdown output path; defaults to "
+            "<run-dir>/memory_replay_report.md"
+        ),
     )
     return parser.parse_args(argv)
 
@@ -830,32 +914,63 @@ def main() -> int:
         run_dir = _absolute(
             DEFAULT_RUN_DIR if args.run_dir is None else args.run_dir
         )
-        target_trial_id = (
-            DEFAULT_TARGET_TRIAL
-            if args.target_trial is None
-            else args.target_trial
-        )
         if not run_dir.is_dir():
             raise FileNotFoundError(f"run directory does not exist: {run_dir}")
-        if target_trial_id < 1:
+        if args.target_trial is not None and args.target_trial < 1:
             raise ValueError("--target-trial must be at least 1")
 
-        report = replay_memory_estimate(
-            run_dir,
-            target_trial_id,
-            args.memory_limit_pct,
+        target_trial_ids = (
+            [args.target_trial]
+            if args.target_trial is not None
+            else _discover_trial_ids(run_dir)
         )
-        print_report(report)
+        reports: list[dict[str, Any]] = []
+        skipped: list[tuple[int, str]] = []
+        for target_trial_id in target_trial_ids:
+            try:
+                reports.append(
+                    replay_memory_estimate(
+                        run_dir,
+                        target_trial_id,
+                        args.memory_limit_pct,
+                    )
+                )
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                skipped.append((target_trial_id, str(exc)))
+
+        output_md = (
+            _absolute(args.output_md)
+            if args.output_md is not None
+            else run_dir / "memory_replay_report.md"
+        )
+        terminal_output = _render_batch(run_dir, reports, skipped, output_md)
+        print(terminal_output, end="")
+        markdown = (
+            "# Memory estimator replay report\n\n"
+            f"Run directory: `{run_dir}`\n\n"
+            "## Complete terminal output\n\n"
+            "```text\n"
+            f"{terminal_output}"
+            "```\n"
+        )
+        output_md.parent.mkdir(parents=True, exist_ok=True)
+        output_md.write_text(markdown, encoding="utf-8")
+
         if args.output_json:
             output_path = _absolute(args.output_json)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2, default=str)
+                json.dumps(
+                    {"reports": reports, "skipped": skipped},
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                )
                 + "\n",
                 encoding="utf-8",
             )
             print(f"\nFull JSON report: {output_path}")
-        return 0
+        return 0 if reports else 2
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"memory replay failed: {exc}", file=sys.stderr)
         return 2
