@@ -27,6 +27,7 @@
   "actor_rollout_ref.rollout.name": "vllm",
   "actor_rollout_ref.rollout.gpu_memory_utilization": 0.5,
   "actor_rollout_ref.rollout.n": 4,
+  "actor_rollout_ref.rollout.disable_log_stats": false,
   "actor_rollout_ref.ref.megatron.param_offload": true,
   "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
   "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": 2,

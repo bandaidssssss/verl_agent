@@ -2,7 +2,7 @@
   "algorithm.adv_estimator": "grpo",
   "data.train_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/dapo17k_dedup.parquet",
   "data.val_files": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/data/aime24.parquet",
-  "data.train_batch_size": 128,
+  "data.train_batch_size": 256,
   "data.max_prompt_length": 1280,
   "data.max_response_length": 5120,
   "data.filter_overlong_prompts": true,
@@ -34,7 +34,7 @@
   "actor_rollout_ref.rollout.enable_prefix_caching": true,
   "actor_rollout_ref.rollout.free_cache_engine": true,
   "actor_rollout_ref.rollout.enforce_eager": false,
-  "actor_rollout_ref.rollout.n": 8,
+  "actor_rollout_ref.rollout.n": 4,
   "actor_rollout_ref.rollout.disable_log_stats": false,
   "actor_rollout_ref.ref.megatron.param_offload": true,
   "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
@@ -45,11 +45,11 @@
   "trainer.critic_warmup": 0,
   "trainer.logger": ["console", "wandb"],
   "trainer.project_name": "verl_stage_tuner",
-  "trainer.experiment_name": "qwen3_8B_agent",
+  "trainer.experiment_name": "qwen3_8b_agent",
   "trainer.n_gpus_per_node": 8,
   "trainer.nnodes": 1,
   "trainer.val_before_train": false,
   "trainer.save_freq": -1,
   "trainer.test_freq": -1,
-  "trainer.total_epochs": 2
+  "trainer.total_epochs": 1
 }

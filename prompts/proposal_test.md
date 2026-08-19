@@ -116,6 +116,11 @@ After all tool calls, output exactly one JSON object and no Markdown or addition
           "from": "value in this candidate's reference trial",
           "to": "target value",
           "reason": "Why this parameter should change"
+        },
+        "full.hydra.parameter.name": {
+          "from": "value in this candidate's reference trial",
+          "to": "target value",
+          "reason": "Why this parameter should change"
         }
       },
       "expected_effect": {

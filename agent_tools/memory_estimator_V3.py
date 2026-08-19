@@ -2526,46 +2526,7 @@ def estimate_phase_memory(
             (
                 "Compute estimates add only changed model-state, optimizer, and "
                 "activation components to the measured reference peak."
-            ),
-            (
-                "Fixed model-state parameters use Megatron's logged per-rank count; "
-                "topology changes re-shard that measured total when TP/PP coverage "
-                "is available."
-            ),
-            (
-                "In colocated Megatron workers, ref log-prob uses the actor's "
-                "effective model-parallel topology; ref keeps only its own batch "
-                "and offload controls."
-            ),
-            (
-                "Fixed micro-batches use stable-step effective tokens and configured "
-                "padded length as point/upper proxies. Dynamic phases use their own "
-                "per-CP-rank token cap; exact packed shapes still require profiling."
-            ),
-            (
-                "MoE routed weights account for EP and expert-TP sharding, but "
-                "expert routing workspace and token imbalance remain runtime-dependent."
-            ),
-            (
-                "Training activation distinguishes no/selective/full recompute and "
-                "pipeline stages, but non-core modules, VPP schedules, MLA, and kernel "
-                "workspaces remain calibration-dependent."
-            ),
-            (
-                "Log-prob uses a forward-only one-live-layer proxy and explicit "
-                "last-stage vocabulary copies. Fused-kernel workspace and MoE rank "
-                "imbalance are intentionally not assigned universal constants."
-            ),
-            (
-                "Phase residency includes colocated actor/ref weights and active "
-                "training optimizer state. LoRA trainable state is an analytical "
-                "target-module approximation until per-rank trainable numel is logged."
-            ),
-            (
-                "Rollout is driven by vLLM gpu_memory_utilization; scheduler, cache, "
-                "and rollout-topology changes without matched trials are uncalibrated."
-            ),
-            "A short resource-gate trial remains the final OOM authority.",
+            )
         ],
     }
 

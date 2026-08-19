@@ -175,6 +175,7 @@ def stability_healthy(trial: Mapping[str, Any], config: Mapping[str, Any]) -> bo
     indexed = scores.get("stability_healthy") if isinstance(scores, Mapping) else None
     if isinstance(indexed, bool):
         return indexed
+    #下面的代码是兼容以前的
     if trial.get("result") != "success":
         return False
     reward_points = _complete_stability_points(trial, "critic/rewards/mean")
@@ -817,7 +818,6 @@ class TuningOrchestrator:
             "editable_parameter_values": {
                 key: {
                     "value": current.get(key),
-                    "explicitly_configured": key in current,
                 }
                 for key in editable
             },
