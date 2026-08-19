@@ -9,9 +9,6 @@ from config_utils import load_json, read_jsonl
 from metrics import legacy_metrics_from_structured
 
 
-INDEX_SCHEMA_VERSION = 2
-
-
 def trial_artifacts(trial_id: int) -> dict[str, str]:
     prefix = f"trials/{trial_id:04d}"
     return {
@@ -82,7 +79,6 @@ def build_trial_index(
     error = error if isinstance(error, Mapping) else {}
     artifacts = trial_artifacts(trial_id)
     return {
-        "schema_version": INDEX_SCHEMA_VERSION,
         "trial_id": trial_id,
         "stage": report.get("stage"),
         "result": report.get("result"),
@@ -119,7 +115,6 @@ def compact_trial_report(
 ) -> dict[str, Any]:
     """Keep one human-readable summary without duplicating detailed artifacts."""
     return {
-        "schema_version": INDEX_SCHEMA_VERSION,
         "trial_id": report.get("trial_id"),
         "stage": report.get("stage"),
         "platform": report.get("platform"),
@@ -146,11 +141,9 @@ def compact_trial_report(
 
 
 def hydrate_trial(row: Mapping[str, Any], history_path: str | Path) -> dict[str, Any]:
-    """Load one current-schema index into the in-memory report shape."""
-    if row.get("schema_version") != INDEX_SCHEMA_VERSION or not isinstance(row.get("artifacts"), Mapping):
-        raise ValueError(
-            "unsupported trial index schema; only schema_version=2 is accepted"
-        )
+    """Load one trial index into the in-memory report shape."""
+    if not isinstance(row.get("artifacts"), Mapping):
+        raise ValueError("trial index is missing its artifact map")
     result = copy.deepcopy(dict(row))
     artifacts = row["artifacts"]
 
@@ -198,12 +191,8 @@ def hydrate_trial(row: Mapping[str, Any], history_path: str | Path) -> dict[str,
 def read_trial_indexes(history_path: str | Path) -> list[dict[str, Any]]:
     rows = read_jsonl(history_path)
     for row in rows:
-        if row.get("schema_version") != INDEX_SCHEMA_VERSION or not isinstance(
-            row.get("artifacts"), Mapping
-        ):
-            raise ValueError(
-                "unsupported trial index schema; only schema_version=2 is accepted"
-            )
+        if not isinstance(row.get("artifacts"), Mapping):
+            raise ValueError("trial index is missing its artifact map")
     return rows
 
 

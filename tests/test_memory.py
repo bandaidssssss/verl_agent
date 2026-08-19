@@ -113,16 +113,14 @@ def _load_trials(run_dir: Path) -> list[dict[str, Any]]:
         )
     trials = [by_id[trial_id] for trial_id in sorted(by_id)]
 
-    # Schema v2 keeps trials.jsonl deliberately small.  The proposal,
-    # parameters, structured metrics, and log facts used by V3 live in the
-    # per-trial artifacts, so hydrate those indexes before replaying them.
+    # trials.jsonl stays deliberately small. The proposal, parameters,
+    # structured metrics, and log facts used by V3 live in per-trial artifacts,
+    # so hydrate those indexes before replaying them.
     history_path = run_dir / "trials.jsonl"
     if history_path.is_file():
         hydrated: list[dict[str, Any]] = []
         for trial in trials:
-            if trial.get("schema_version") == 2 and isinstance(
-                trial.get("artifacts"), Mapping
-            ):
+            if isinstance(trial.get("artifacts"), Mapping):
                 hydrated.append(hydrate_trial(trial, history_path))
             else:
                 hydrated.append(trial)
@@ -135,8 +133,8 @@ def _target_report(
     trials: Sequence[Mapping[str, Any]],
     target_trial_id: int,
 ) -> dict[str, Any]:
-    # Current-schema trial reports are compact summaries.  ``_load_trials``
-    # has already hydrated their decision and measurement artifacts.
+    # Trial reports are compact summaries. ``_load_trials`` has already
+    # hydrated their decision and measurement artifacts.
     for row in trials:
         if row.get("trial_id") == target_trial_id:
             return dict(row)

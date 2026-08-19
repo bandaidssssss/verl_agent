@@ -120,10 +120,9 @@ def _extract_log_context(
     """从log.facts.json中提取模型和工作负载的上下文信息。Extract model and workload context from log.facts.json."""
     del parameters
     facts = trial.get("log_facts")
-    if not isinstance(facts, Mapping) or facts.get("schema_version") != 1:
+    if not isinstance(facts, Mapping):
         raise ValueError(
-            "reference trial requires schema-version-1 log_facts.json; "
-            "memory estimator never parses train.log"
+            "reference trial requires log_facts.json; memory estimator never parses train.log"
         )
     source = facts.get("source")
     megatron = facts.get("megatron")

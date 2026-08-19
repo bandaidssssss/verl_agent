@@ -39,10 +39,8 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
     def test_v3_consumes_log_facts_without_log_parsing(self) -> None:
         context = _extract_log_context(
             {
-                "schema_version": 2,
                 "log_path": "/path/that/must/not/be/read/train.log",
                 "log_facts": {
-                    "schema_version": 1,
                     "source": {
                         "train_log": "train.log",
                         "parser_version": 1,

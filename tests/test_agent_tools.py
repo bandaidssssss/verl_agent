@@ -47,7 +47,6 @@ class AgentToolsTest(unittest.TestCase):
         write_json(
             trial_dir / "metrics.json",
             {
-                "schema_version": 1,
                 "status": "final",
                 "resource": {
                     "devices": [{"gpu_index": "0", "total_memory_mib": 65536}],
@@ -69,7 +68,6 @@ class AgentToolsTest(unittest.TestCase):
         write_json(
             trial_dir / "log_facts.json",
             {
-                "schema_version": 1,
                 "source": {
                     "train_log": "train.log",
                     "parser_version": 1,
@@ -120,7 +118,6 @@ class AgentToolsTest(unittest.TestCase):
         )
         write_json(trial_dir / "trial_report.json", {"trial_id": trial_id})
         row = {
-            "schema_version": 2,
             "trial_id": trial_id,
             "stage": "hardware_tuning",
             "result": "success",
@@ -505,7 +502,6 @@ class AgentToolsTest(unittest.TestCase):
         parameter_key = "actor_rollout_ref.rollout.max_num_seqs"
         rows = [
             {
-                "schema_version": 2,
                 "trial_id": 1,
                 "stage": "hardware_tuning",
                 "result": "fail",
@@ -513,7 +509,6 @@ class AgentToolsTest(unittest.TestCase):
                 "artifacts": trial_artifacts(1),
             },
             {
-                "schema_version": 2,
                 "trial_id": 2,
                 "stage": "hardware_tuning",
                 "result": "success",
@@ -642,7 +637,6 @@ class AgentToolsTest(unittest.TestCase):
         self.history_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 2,
                     "trial_id": 1,
                     "stage": "hardware_tuning",
                     "result": "success",
@@ -685,7 +679,6 @@ class AgentToolsTest(unittest.TestCase):
         write_json(
             trial_dir / "metrics.json",
             {
-                "schema_version": 1,
                 "stability": {
                     "steps": [
                         {
@@ -704,7 +697,6 @@ class AgentToolsTest(unittest.TestCase):
         self.history_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 2,
                     "trial_id": 1,
                     "artifacts": {"metrics": "trials/0001/metrics.json"},
                 }
@@ -733,7 +725,6 @@ class AgentToolsTest(unittest.TestCase):
         (trial_dir / "metrics.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
                     "status": "final",
                     "stability": {
                         "steps": [
@@ -754,7 +745,6 @@ class AgentToolsTest(unittest.TestCase):
         self.history_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 2,
                     "trial_id": 1,
                     "stage": "stability_tuning",
                     "result": "success",
@@ -797,7 +787,6 @@ class AgentToolsTest(unittest.TestCase):
         write_json(
             metrics_path,
             {
-                "schema_version": 1,
                 "status": "running",
                 "latest_step": 5,
                 "stability": {
@@ -893,7 +882,6 @@ class AgentToolsTest(unittest.TestCase):
         write_json(
             trial_dir / "metrics.json",
             {
-                "schema_version": 1,
                 "throughput": {"vllm": vllm, "summary": {}, "phase_duration_s": {}},
                 "stability": {"steps": [], "window_metrics": {}},
                 "resource": {
@@ -923,7 +911,6 @@ class AgentToolsTest(unittest.TestCase):
         self.history_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 2,
                     "trial_id": trial_id,
                     "result": "success",
                     "artifacts": trial_artifacts(trial_id),

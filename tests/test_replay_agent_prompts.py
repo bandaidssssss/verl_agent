@@ -17,7 +17,6 @@ class ReplayArtifactTests(unittest.TestCase):
         trial_one.mkdir(parents=True)
         trial_two.mkdir(parents=True)
         index = {
-            "schema_version": 2,
             "trial_id": 1,
             "stage": "hardware_tuning",
             "result": "success",

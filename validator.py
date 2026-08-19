@@ -117,7 +117,6 @@ def parameter_groups(parameters: Mapping[str, Any], stage: str) -> dict[str, Any
         if key not in editable and key not in IGNORED_PARAMETERS
     }
     return {
-        "schema_version": 1,
         "trial_stage": stage,
         "editable_in_trial_stage": sorted(editable),
         "throughput_tuning": throughput,

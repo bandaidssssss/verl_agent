@@ -10,7 +10,7 @@ from trial_storage import build_trial_index, hydrate_trial, trial_artifacts
 
 
 class TrialStorageTest(unittest.TestCase):
-    def test_v2_index_is_small_and_hydrates_artifacts(self) -> None:
+    def test_index_is_small_and_hydrates_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)
             history = run_dir / "trials.jsonl"
@@ -38,7 +38,6 @@ class TrialStorageTest(unittest.TestCase):
             write_json(
                 trial_dir / "metrics.json",
                 {
-                    "schema_version": 1,
                     "latest_step": 10,
                     "throughput": {"summary": {"throughput": {"mean": 12.0}}, "phase_duration_s": {}},
                     "stability": {"steps": [], "window_metrics": {}},
@@ -50,7 +49,6 @@ class TrialStorageTest(unittest.TestCase):
             write_json(
                 trial_dir / "log_facts.json",
                 {
-                    "schema_version": 1,
                     "megatron": {"resolved_config": {"bf16": True}},
                 },
             )

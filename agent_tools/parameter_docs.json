@@ -1,5 +1,4 @@
 {
-  "schema_version": 3,
   "known_parameters": [
     "data.train_batch_size",
     "data.max_prompt_length",

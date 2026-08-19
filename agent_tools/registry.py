@@ -198,10 +198,6 @@ class ToolRegistry:
         )
         if reference_index is None:
             raise ToolError(f"reference trial {reference_id} was not found")
-        if reference_index.get("schema_version") != 2:
-            raise ToolError(
-                f"reference trial {reference_id} does not use the current trial schema"
-            )
         artifacts = reference_index.get("artifacts")
         if not isinstance(artifacts, Mapping):
             raise ToolError(f"reference trial {reference_id} has no artifact map")
@@ -237,8 +233,6 @@ class ToolRegistry:
         candidate.update(normalized_changes)
         trials: list[dict[str, Any]] = []
         for row in read_trial_indexes(runtime.history_path):
-            if row.get("schema_version") != 2:
-                continue
             try:
                 hydrated = hydrate_trial(row, runtime.history_path)
             except (OSError, ValueError, json.JSONDecodeError):

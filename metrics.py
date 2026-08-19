@@ -664,7 +664,6 @@ def build_structured_metrics(
         if "critic/rewards/mean" in row
     ]
     return {
-        "schema_version": 1,
         "status": status,
         "latest_step": max(records, default=0),
         "source": {
@@ -792,7 +791,6 @@ def build_running_metrics(
         },
     }
     return {
-        "schema_version": 1,
         "status": "running",
         "latest_step": max(visible, default=0),
         "source": {"parser_version": 1, "train_log": "train.log", "warnings": []},
