@@ -5,6 +5,7 @@
     "data.max_response_length",
     "actor_rollout_ref.actor.use_dynamic_bsz",
     "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
+    "actor_rollout_ref.actor.ppo_max_token_len_per_gpu",
     "actor_rollout_ref.actor.ppo_mini_batch_size",
     "actor_rollout_ref.actor.megatron.tensor_model_parallel_size",
     "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size",
@@ -23,6 +24,7 @@
     "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_num_layers",
     "actor_rollout_ref.rollout.tensor_model_parallel_size",
     "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
+    "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu",
     "actor_rollout_ref.rollout.gpu_memory_utilization",
     "actor_rollout_ref.rollout.max_num_batched_tokens",
     "actor_rollout_ref.rollout.max_num_seqs",
@@ -31,6 +33,7 @@
     "actor_rollout_ref.rollout.enable_chunked_prefill",
     "actor_rollout_ref.rollout.enable_prefix_caching",
     "actor_rollout_ref.rollout.enforce_eager",
+    "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz",
     "actor_rollout_ref.ref.megatron.tensor_model_parallel_size",
     "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size",
     "actor_rollout_ref.ref.megatron.virtual_pipeline_model_parallel_size",
@@ -41,6 +44,8 @@
     "actor_rollout_ref.ref.megatron.use_remove_padding",
     "actor_rollout_ref.ref.megatron.param_offload",
     "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
+    "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu",
+    "actor_rollout_ref.ref.log_prob_use_dynamic_bsz",
     "actor_rollout_ref.actor.optim.lr",
     "actor_rollout_ref.actor.optim.lr_warmup_steps",
     "actor_rollout_ref.actor.use_kl_loss",
@@ -50,661 +55,205 @@
     "actor_rollout_ref.rollout.n"
   ],
   "data": {
-    "data.train_batch_size": {
-      "stage": "hardware",
-      "type": "int",
-      "impact": "Number of prompts in one training update; changes total work and data-parallel scheduling more than single-kernel peak memory.",
-      "increase": "More work per update and potentially better amortization, but longer steps and more rollout samples.",
-      "decrease": "Shorter updates with noisier measurements and potentially lower utilization.",
-      "interactions": [
-        "actor_rollout_ref.rollout.n",
-        "actor_rollout_ref.actor.ppo_mini_batch_size"
-      ],
-      "constraints": [
-        "train_batch_size * rollout.n must be divisible by ppo_mini_batch_size",
-        "hardware comparisons preserve the total token budget"
-      ]
-    },
-    "data.max_prompt_length": {
-      "stage": "hardware",
-      "type": "int",
-      "impact": "Maximum prompt tokens; affects prefill compute, activations, KV cache, and padded work.",
-      "increase": "Raises rollout and log-prob memory/latency, especially without remove padding.",
-      "decrease": "Lowers pressure but changes the workload unless compensated under the token-budget rule.",
-      "interactions": [
-        "data.max_response_length",
-        "rollout.enable_chunked_prefill",
-        "actor.megatron.use_remove_padding"
-      ],
-      "constraints": [
-        "Must match dataset truncation policy",
-        "hardware token budget is frozen"
-      ]
-    },
-    "data.max_response_length": {
-      "stage": "hardware",
-      "type": "int",
-      "impact": "Maximum generated tokens; strongly affects decode time, KV cache, log-prob, and actor-training activations.",
-      "increase": "Raises all four phase costs and makes rollout more likely to dominate.",
-      "decrease": "Reduces memory/time but changes the RL workload unless budget is preserved.",
-      "interactions": [
-        "rollout.n",
-        "rollout.gpu_memory_utilization",
-        "log-prob micro batches"
-      ],
-      "constraints": [
-        "hardware token budget is frozen"
-      ]
-    },
     "actor_rollout_ref.actor.use_dynamic_bsz": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Uses token-aware dynamic micro batches instead of fixed sample counts.",
-      "increase": "Can improve packing and reduce padding variance, but changes which fixed micro-batch settings are authoritative.",
-      "decrease": "Makes fixed per-GPU micro batches directly control work.",
-      "interactions": [
-        "actor.ppo_micro_batch_size_per_gpu",
-        "actor.megatron.use_remove_padding"
+      "non_obvious_effects": [
+        "When enabled, fixed per-GPU PPO and reference log-prob micro-batch settings are not authoritative."
       ],
-      "constraints": [
-        "Verify the selected verl backend supports the dynamic-batch fields"
+      "critical_couplings": [
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
+        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu"
       ]
     },
     "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "training",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Per-GPU fixed PPO update micro batch; controls training activation memory, gradient-accumulation work, and kernel utilization.",
-      "increase": "May improve training utilization and reduce gradient-accumulation iterations when the current micro batch is too small and training memory has headroom; otherwise it can raise the training peak or cause OOM without improving step time.",
-      "decrease": "Reduces training activation pressure and is the first local control for training OOM, but adds gradient-accumulation iterations and can lower utilization.",
-      "interactions": [
-        "actor.ppo_mini_batch_size",
-        "actor TP/PP",
-        "actor.use_dynamic_bsz",
-        "recompute"
+      "non_obvious_effects": ["Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is false."],
+      "hard_constraints": [
+        "The backend-normalized local PPO mini batch must be divisible by this value.",
+        "A topology change requires revalidating legal PPO mini/micro-batch values."
       ],
-      "constraints": [
-        "Positive integer",
-        "Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is false",
-        "The backend-normalized local PPO mini batch must be divisible by this per-GPU micro batch",
-        "Changing actor TP or PP requires revalidating the legal micro-batch values"
-      ]
+      "critical_couplings": ["actor_rollout_ref.actor.ppo_mini_batch_size"]
+    },
+    "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": {
+      "non_obvious_effects": ["This parameter controls the maximum number of tokens that can be processed per GPU in the PPO computation."],
+      "hard_constraints": ["Validate installed backend token-length support."],
+      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
     },
     "actor_rollout_ref.actor.ppo_mini_batch_size": {
-      "stage": "hardware",
-      "type": "int",
-      "impact": "PPO mini-batch size per update; controls optimization grouping and the number of PPO mini batches.",
-      "increase": "Changes optimization granularity and may reduce loop overhead, but is not the main per-kernel memory control.",
-      "decrease": "Creates more mini-batch partitions and may increase overhead.",
-      "interactions": [
-        "data.train_batch_size",
-        "rollout.n",
-        "actor.ppo_micro_batch_size_per_gpu"
-      ],
-      "constraints": [
-        "train_batch_size * rollout.n must be divisible by it",
-        "it must be divisible by ppo_micro_batch_size_per_gpu"
+      "hard_constraints": [
+        "data.train_batch_size * actor_rollout_ref.rollout.n must be divisible by this value.",
+        "This value must be divisible by actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu."
       ]
     },
     "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "training",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Shards actor training tensor computation and model states across ranks; it is a topology control rather than a monotonic throughput knob.",
-      "increase": "Reduces per-rank model and activation pressure, but adds tensor-parallel collectives and can reduce throughput when communication is already significant.",
-      "decrease": "Reduces tensor-parallel communication and may improve kernels, but increases per-rank memory and can become infeasible.",
-      "interactions": [
-        "actor PP",
-        "actor sequence_parallel",
-        "actor PPO mini/micro batching",
-        "world size"
-      ],
-      "constraints": [
-        "Positive integer",
-        "world size must be divisible by actor TP * PP",
-        "Changing TP changes data-parallel size and requires revalidating backend-normalized PPO mini/micro batching"
+      "runtime_authority": "Authoritative shared actor/ref tensor-parallel topology; the ref override is ignored at runtime.",
+      "hard_constraints": ["World size must be divisible by the shared actor/ref TP * PP topology."],
+      "critical_couplings": [
+        "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size",
+        "actor_rollout_ref.actor.megatron.sequence_parallel",
+        "actor_rollout_ref.actor.ppo_mini_batch_size",
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
       ]
     },
     "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "training",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Partitions actor training layers into pipeline stages; it trades per-rank model memory for pipeline bubbles, transfers, and scheduling complexity.",
-      "increase": "Reduces layers and model-state memory per rank, but usually adds pipeline bubbles and inter-stage communication; it is mainly useful when actor memory does not fit with lower PP.",
-      "decrease": "Reduces pipeline overhead and often improves training efficiency when memory fits, but increases per-rank model memory.",
-      "interactions": [
-        "actor TP",
-        "actor PPO mini/micro batching",
-        "recompute",
-        "world size"
-      ],
-      "constraints": [
-        "Positive integer",
-        "world size must be divisible by actor TP * PP",
-        "Changing PP changes data-parallel size and requires revalidating backend-normalized PPO mini/micro batching"
+      "runtime_authority": "Authoritative shared actor/ref pipeline-parallel topology; the ref override is ignored at runtime.",
+      "hard_constraints": ["World size must be divisible by the shared actor/ref TP * PP topology."],
+      "critical_couplings": [
+        "actor_rollout_ref.actor.megatron.tensor_model_parallel_size",
+        "actor_rollout_ref.actor.ppo_mini_batch_size",
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
       ]
+    },
+    "actor_rollout_ref.actor.megatron.virtual_pipeline_model_parallel_size": {
+      "runtime_authority": "Authoritative shared actor/ref virtual-pipeline topology; the ref override is ignored at runtime.",
+      "not_tunable_reason": "Not editable by the current Validator policy."
+    },
+    "actor_rollout_ref.actor.megatron.context_parallel_size": {
+      "runtime_authority": "Authoritative shared actor/ref context-parallel topology; the ref override is ignored at runtime.",
+      "not_tunable_reason": "Not editable by the current Validator policy."
+    },
+    "actor_rollout_ref.actor.megatron.expert_model_parallel_size": {
+      "runtime_authority": "Authoritative shared actor/ref expert-parallel topology; the ref override is ignored at runtime.",
+      "not_tunable_reason": "Not editable by the current Validator policy."
+    },
+    "actor_rollout_ref.actor.megatron.expert_tensor_parallel_size": {
+      "runtime_authority": "Authoritative shared actor/ref expert-tensor-parallel topology; the ref override is ignored at runtime.",
+      "not_tunable_reason": "Not editable by the current Validator policy."
     },
     "actor_rollout_ref.actor.megatron.sequence_parallel": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "training",
-      "mutability": "normal",
-      "type": "bool",
-      "impact": "Shards eligible actor training sequence-dimension activations within tensor-parallel groups.",
-      "enable": "Can lower training activation memory when TP is greater than one and sequences are long, but adds sequence-parallel collective communication.",
-      "disable": "Avoids sequence-parallel collectives and may improve training throughput when activation memory is not limiting, but increases replicated activation memory.",
-      "interactions": [
-        "actor TP",
-        "sequence lengths",
-        "training activation pressure"
-      ],
-      "constraints": [
-        "Backend kernels must support sequence parallelism",
-        "Normally useful only when actor TP > 1",
-        "Evaluate it together with actor TP rather than as an independent monotonic knob"
-      ]
-    },
-    "actor_rollout_ref.actor.megatron.use_distributed_optimizer": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Shards optimizer states and related buffers across data-parallel ranks.",
-      "increase": "Reduces training optimizer memory with communication/bookkeeping cost.",
-      "decrease": "Replicates more optimizer state and may simplify execution.",
-      "interactions": [
-        "optimizer_offload",
-        "data parallel size"
-      ],
-      "constraints": [
-        "Requires compatible Megatron/distributed backend"
-      ]
+      "runtime_authority": "Authoritative shared actor/ref sequence-parallel control; the ref override is ignored at runtime.",
+      "hard_constraints": ["Requires backend kernel support and is normally meaningful only when actor TP is greater than one."],
+      "critical_couplings": ["actor_rollout_ref.actor.megatron.tensor_model_parallel_size"]
     },
     "actor_rollout_ref.actor.megatron.use_remove_padding": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Removes padded tokens from actor computation when supported.",
-      "increase": "Reduces wasted compute and memory for variable-length samples.",
-      "decrease": "Uses regular padded shapes, which may be simpler but wasteful.",
-      "interactions": [
-        "max prompt/response length",
-        "dynamic batch"
-      ],
-      "constraints": [
-        "Validate kernel/backend compatibility"
-      ]
-    },
-    "actor_rollout_ref.actor.megatron.optimizer_offload": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Moves actor optimizer states away from GPU between/within training operations.",
-      "increase": "Lowers training GPU memory but adds host/device transfer latency.",
-      "decrease": "Keeps optimizer state on GPU for speed at higher memory cost.",
-      "interactions": [
-        "distributed optimizer",
-        "host bandwidth",
-        "param_offload"
-      ],
-      "constraints": [
-        "Host memory must be sufficient"
-      ]
+      "runtime_authority": "Authoritative shared actor/ref packing control; the ref override is ignored at runtime.",
+      "not_tunable_reason": "Not editable by the current Validator policy.",
+      "hard_constraints": ["Requires compatible actor and ref backend kernels."]
     },
     "actor_rollout_ref.actor.megatron.param_offload": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Moves actor parameters away from GPU when inactive.",
-      "increase": "Creates headroom for rollout/ref phases but adds reload transfer time.",
-      "decrease": "Keeps parameters resident for faster phase transitions at higher memory use.",
-      "interactions": [
-        "free_cache_engine",
-        "optimizer_offload",
-        "hybrid engine"
-      ],
-      "constraints": [
-        "Host memory and transfer bandwidth must be sufficient"
-      ]
+      "runtime_authority": "Authoritative shared actor/ref parameter-offload control; the ref override is ignored at runtime.",
+      "not_tunable_reason": "Not editable by the current Validator policy.",
+      "hard_constraints": ["Host memory and transfer bandwidth must support both actor and ref."]
     },
     "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_granularity": {
-      "stage": "hardware",
-      "type": "string/null",
-      "impact": "Selects activation recomputation scope, commonly full or selective.",
-      "increase": "Stronger recomputation lowers training activation memory and increases compute.",
-      "decrease": "Stores more activations for faster backward at higher peak memory.",
-      "interactions": [
-        "recompute_method",
-        "recompute_num_layers",
-        "recompute_modules"
-      ],
-      "constraints": [
-        "Values must be supported by the installed Megatron version"
+      "not_tunable_reason": "This profile control is not editable by the current Validator policy.",
+      "hard_constraints": ["Values must be supported by the installed Megatron version."],
+      "critical_couplings": [
+        "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method",
+        "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_num_layers"
       ]
     },
     "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_modules": {
-      "stage": "hardware",
-      "type": "list/string",
-      "impact": "Selects transformer submodules included in selective recomputation.",
-      "increase": "More modules reduce saved activations but add repeated forward work.",
-      "decrease": "Less repeated compute but higher activation memory.",
-      "interactions": [
-        "recompute_granularity"
-      ],
-      "constraints": [
-        "Module names are backend-version specific; search local verl/Megatron docs first"
-      ]
+      "not_tunable_reason": "This profile control is not editable by the current Validator policy.",
+      "hard_constraints": ["Module names are backend-version specific; verify installed Megatron support before use."]
     },
     "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method": {
-      "stage": "hardware",
-      "type": "string/null",
-      "impact": "Controls how recomputation is distributed across transformer layers.",
-      "increase": "Method choice shifts the memory/compute pattern across layers.",
-      "decrease": "No universal monotonic direction; compare supported uniform/block behavior.",
-      "interactions": [
-        "recompute_num_layers",
-        "recompute_granularity"
-      ],
-      "constraints": [
-        "Must match backend-supported enum values"
-      ]
+      "not_tunable_reason": "This profile control is not editable by the current Validator policy.",
+      "hard_constraints": ["The enum must be supported by the installed Megatron version."]
     },
     "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_num_layers": {
-      "stage": "hardware",
-      "type": "int/null",
-      "impact": "Number or grouping of layers recomputed under the selected method.",
-      "increase": "Usually lowers stored activation memory and raises repeated compute.",
-      "decrease": "Usually improves speed while consuming more activation memory.",
-      "interactions": [
-        "recompute_method",
-        "pipeline parallelism"
-      ],
-      "constraints": [
-        "Meaning depends on recompute_method and Megatron version"
-      ]
+      "not_tunable_reason": "This profile control is not editable by the current Validator policy.",
+      "critical_couplings": ["actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method"]
     },
     "actor_rollout_ref.rollout.tensor_model_parallel_size": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "rollout",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Shards rollout model execution, weights, and KV-cache-related state across ranks; it trades per-rank memory for per-token tensor-parallel communication.",
-      "increase": "Reduces per-rank weight and cache pressure and may make larger scheduler batches feasible, but adds communication to generation and can reduce decode throughput.",
-      "decrease": "Reduces per-token communication and may improve rollout throughput when the model and KV cache fit, but raises per-rank memory pressure.",
-      "interactions": [
-        "rollout.gpu_memory_utilization",
-        "rollout.max_num_batched_tokens",
-        "rollout.max_num_seqs",
-        "world size"
-      ],
-      "constraints": [
-        "Positive integer",
-        "world size must be divisible by rollout TP",
-        "Compare measured rollout throughput and memory rather than assuming either direction is faster",
-        "Avoid changing rollout TP and scheduler caps in the same trial unless restoring feasibility"
+      "hard_constraints": ["World size must be divisible by rollout TP."],
+      "critical_couplings": [
+        "actor_rollout_ref.rollout.gpu_memory_utilization",
+        "actor_rollout_ref.rollout.max_num_batched_tokens",
+        "actor_rollout_ref.rollout.max_num_seqs"
       ]
     },
     "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "actor_log_prob",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Per-GPU fixed micro batch for actor old-log-prob computation; despite its rollout config path, it affects the actor_log_prob phase rather than token generation.",
-      "increase": "May improve actor_log_prob utilization and reduce forward-pass iterations when that phase is significant and memory has headroom, but raises its activation peak.",
-      "decrease": "Reduces actor_log_prob activation pressure and is useful for phase-specific OOM, but adds forward-pass iterations and may lower utilization.",
-      "interactions": [
-        "actor TP",
-        "sequence lengths",
-        "remove padding"
-      ],
-      "constraints": [
-        "Positive integer",
-        "Validate the installed backend's local batching and divisibility semantics"
-      ]
+      "non_obvious_effects": ["Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is false."],
+      "hard_constraints": ["Validate installed backend local-batching semantics."],
+      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
+    },
+    "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu": {
+      "non_obvious_effects": ["This parameter controls the maximum number of tokens that can be processed per GPU in the log-probability computation."],
+      "hard_constraints": ["Validate installed backend token-length support."],
+      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
     },
     "actor_rollout_ref.rollout.gpu_memory_utilization": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "rollout",
-      "mutability": "normal",
-      "type": "float",
-      "impact": "Fraction of GPU memory exposed as a rollout-engine memory budget, primarily for model execution and KV-cache capacity; it is not the measured GPU compute-utilization percentage.",
-      "increase": "Raises the rollout memory budget and may permit more cache capacity or concurrency when memory capacity is the binding limit, but reduces safety headroom and can cause initialization/runtime OOM.",
-      "decrease": "Creates memory safety headroom, but may reduce cache capacity, concurrency, and rollout throughput when the budget is already binding.",
-      "interactions": [
-        "rollout.max_num_batched_tokens",
-        "rollout.max_num_seqs",
-        "rollout TP",
-        "free_cache_engine"
-      ],
-      "tuning_strategies": "Call analyze_rollout_metrics on a comparable trial. Increase only when KV-cache usage or preemption demonstrates capacity pressure and phase-specific physical memory has safe headroom; never use low GPU compute utilization alone.",
-      "constraints": [
-        "Agent range 0.1-0.95",
-        "Treat it as a memory-capacity control, not a direct GPU-utilization target",
-        "Estimate effects from comparable trial history because the realized reservation is backend dependent"
-      ]
-    },
-    "actor_rollout_ref.rollout.max_num_batched_tokens": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "rollout",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Upper bound on tokens admitted to one rollout scheduler batch; it is a capacity ceiling, not a request to allocate that many tokens every iteration.",
-      "increase": "Can improve prefill/decode packing only when the current token cap is binding and pending work exists; otherwise it may have no throughput effect while allowing higher temporary memory pressure.",
-      "decrease": "Reduces scheduler-batch memory pressure and may avoid OOM or long oversized batches, but adds scheduling waves when the cap was binding.",
-      "tuning_strategies": "Call analyze_rollout_metrics. Increase only when exported iteration-token statistics approach this cap while requests remain queued and KV/physical memory have headroom; if the exporter omits iteration-token metrics, treat the cap as unobserved and use an isolated comparison trial.",
-      "interactions": [
-        "rollout.max_num_seqs",
-        "enable_chunked_prefill",
-        "rollout.gpu_memory_utilization",
-        "prompt/response lengths"
-      ],
-      "constraints": [
-        "Positive integer",
-        "Must support viable request shapes for the configured sequence lengths",
-        "Confirm from rollout logs or trial comparisons that the token cap is binding before optimizing it"
-      ]
-    },
-    "actor_rollout_ref.rollout.max_num_seqs": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "rollout",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Upper bound on concurrent sequences admitted by the rollout scheduler; it limits scheduler concurrency but does not guarantee that many runnable sequences.",
-      "increase": "Can improve batching and device utilization only when the current sequence cap is binding and enough requests are pending; otherwise it may have no effect while permitting more KV-cache and scheduler state.",
-      "decrease": "Reduces concurrency-related memory pressure and may improve stability, but can underfill the device and increase rollout duration when the cap was binding.",
-      "interactions": [
-        "rollout.max_num_batched_tokens",
-        "rollout.n",
-        "rollout.gpu_memory_utilization",
-        "available request concurrency"
-      ],
-      "tuning_strategies": "Call analyze_rollout_metrics. Increase only when requests_running reaches this cap while requests_waiting remains positive and KV/physical memory have headroom. A token-length ratio is only a feasibility heuristic, not proof that the sequence cap is binding.",
-      "constraints": [
-        "Positive integer",
-        "Confirm from rollout logs or trial comparisons that the sequence cap is binding before optimizing it"
+      "non_obvious_effects": ["This is a rollout-engine memory-budget control, not a direct GPU-utilization target."],
+      "hard_constraints": ["Agent range: 0.1 to 0.95."],
+      "critical_couplings": [
+        "actor_rollout_ref.rollout.max_num_batched_tokens",
+        "actor_rollout_ref.rollout.max_num_seqs"
       ]
     },
     "actor_rollout_ref.rollout.disable_log_stats": {
-      "stage": "instrumentation",
-      "scope": "fixed",
-      "phase": "rollout",
-      "mutability": "not_agent_tunable",
-      "type": "bool",
-      "impact": "Controls whether vLLM exposes/logs runtime statistics used by the rollout monitor. It is an observability switch, not a throughput-tuning parameter.",
-      "enable": "Set to false before the experiment to allow automatic collection of compact vLLM metrics.",
-      "disable": "When true or absent, the automatic vLLM monitor does not start because scheduler/KV statistics are not considered available.",
-      "interactions": [
-        "analyze_rollout_metrics",
-        "vllm_metrics.csv"
-      ],
-      "constraints": [
-        "Must be explicitly false to start the vLLM monitor",
-        "Do not propose changing it as a performance experiment",
-        "It remains outside the editable tuning whitelist"
-      ]
-    },
-    "actor_rollout_ref.rollout.free_cache_engine": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Releases rollout cache-engine memory when moving to other colocated phases.",
-      "increase": "Creates actor/ref/training headroom but adds cache teardown/recreation overhead.",
-      "decrease": "Improves phase transition speed while keeping more rollout memory resident.",
-      "interactions": [
-        "actor/ref param offload",
-        "gpu_memory_utilization"
-      ],
-      "constraints": [
-        "Behavior depends on rollout backend"
-      ]
-    },
-    "actor_rollout_ref.rollout.enable_chunked_prefill": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Splits long prompt prefills into scheduler chunks.",
-      "increase": "Reduces single-prefill peaks and can mix prefill/decode work, with scheduling overhead.",
-      "decrease": "Uses simpler full prefills that may peak higher for long prompts.",
-      "interactions": [
-        "max_num_batched_tokens",
-        "max_prompt_length"
-      ],
-      "constraints": [
-        "Requires rollout-backend support"
-      ]
-    },
-    "actor_rollout_ref.rollout.enable_prefix_caching": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Caches reusable prompt prefixes in rollout KV state.",
-      "increase": "Speeds repeated prefixes but retains cache entries and adds bookkeeping.",
-      "decrease": "Avoids cache retention when prompts do not share useful prefixes.",
-      "interactions": [
-        "gpu_memory_utilization",
-        "dataset prompt similarity"
-      ],
-      "constraints": [
-        "Benefit depends on actual prefix reuse"
-      ]
+      "not_tunable_reason": "Instrumentation control, outside the editable whitelist; it is not a performance experiment.",
+      "non_obvious_effects": ["It must be explicitly false for automatic compact vLLM metric collection to start."]
     },
     "actor_rollout_ref.rollout.enforce_eager": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Forces eager rollout execution instead of graph-based execution where available.",
-      "increase": "Often improves compatibility and reduces graph-capture memory, but can lower throughput.",
-      "decrease": "Allows graph optimizations with capture/startup memory and backend constraints.",
-      "interactions": [
-        "platform backend",
-        "sequence-shape variability"
-      ],
-      "constraints": [
-        "Use the installed rollout backend's semantics"
-      ]
+      "hard_constraints": ["Installed rollout-backend semantics and compatibility determine whether this setting is usable."]
     },
     "actor_rollout_ref.ref.megatron.tensor_model_parallel_size": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "ref_log_prob",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Shards reference-model forward computation and states across ranks; it trades ref_log_prob memory for tensor-parallel communication.",
-      "increase": "Reduces per-rank reference-model and activation pressure, but adds collectives and can slow ref_log_prob when memory was already sufficient.",
-      "decrease": "Reduces collective communication and may improve ref_log_prob throughput when the model fits, but raises per-rank memory pressure.",
-      "interactions": [
-        "ref PP",
-        "ref sequence_parallel",
-        "ref log-prob micro batch",
-        "world size"
-      ],
-      "constraints": [
-        "Positive integer",
-        "world size must be divisible by ref TP * PP",
-        "Prioritize this only when ref_log_prob time or memory pressure is material"
-      ]
+      "runtime_authority": "Ignored at runtime; actor_rollout_ref.actor.megatron.tensor_model_parallel_size controls both actor and ref.",
+      "not_tunable_reason": "Retained only as Hydra provenance."
     },
     "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "ref_log_prob",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Partitions reference-model layers into pipeline stages; it mainly trades per-rank model memory for pipeline bubbles and transfers in ref_log_prob.",
-      "increase": "Reduces reference-model layers and memory per rank, but adds pipeline overhead; it is mainly useful when ref memory does not fit with lower PP.",
-      "decrease": "Reduces pipeline overhead and may improve ref_log_prob efficiency when memory fits, but raises per-rank model memory.",
-      "interactions": [
-        "ref TP",
-        "ref log-prob micro batch",
-        "world size"
-      ],
-      "constraints": [
-        "Positive integer",
-        "world size must be divisible by ref TP * PP",
-        "Prioritize this only when ref_log_prob time or memory pressure is material"
-      ]
+      "runtime_authority": "Ignored at runtime; actor_rollout_ref.actor.megatron.pipeline_model_parallel_size controls both actor and ref.",
+      "not_tunable_reason": "Retained only as Hydra provenance."
+    },
+    "actor_rollout_ref.ref.megatron.virtual_pipeline_model_parallel_size": {
+      "runtime_authority": "Ignored at runtime; actor virtual-pipeline topology controls both actor and ref.",
+      "not_tunable_reason": "Retained only as Hydra provenance."
+    },
+    "actor_rollout_ref.ref.megatron.context_parallel_size": {
+      "runtime_authority": "Ignored at runtime; actor context-parallel topology controls both actor and ref.",
+      "not_tunable_reason": "Retained only as Hydra provenance."
+    },
+    "actor_rollout_ref.ref.megatron.expert_model_parallel_size": {
+      "runtime_authority": "Ignored at runtime; actor expert-parallel topology controls both actor and ref.",
+      "not_tunable_reason": "Retained only as Hydra provenance."
+    },
+    "actor_rollout_ref.ref.megatron.expert_tensor_parallel_size": {
+      "runtime_authority": "Ignored at runtime; actor expert-tensor-parallel topology controls both actor and ref.",
+      "not_tunable_reason": "Retained only as Hydra provenance."
     },
     "actor_rollout_ref.ref.megatron.sequence_parallel": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "ref_log_prob",
-      "mutability": "normal",
-      "type": "bool",
-      "impact": "Shards eligible reference-model sequence activations within tensor-parallel groups during ref_log_prob.",
-      "enable": "Can lower reference activation memory when ref TP is greater than one and sequences are long, but adds sequence-parallel collective communication.",
-      "disable": "Avoids sequence-parallel collectives and may improve ref_log_prob throughput when activation memory is not limiting, but increases replicated activation memory.",
-      "interactions": [
-        "ref TP",
-        "sequence lengths",
-        "ref_log_prob activation pressure"
-      ],
-      "constraints": [
-        "Backend kernels must support sequence parallelism",
-        "Normally useful only when ref TP > 1",
-        "Prioritize this only when ref_log_prob time or memory pressure is material"
-      ]
+      "runtime_authority": "Ignored at runtime; actor_rollout_ref.actor.megatron.sequence_parallel controls both actor and ref.",
+      "not_tunable_reason": "Retained only as Hydra provenance."
+    },
+    "actor_rollout_ref.ref.megatron.use_remove_padding": {
+      "runtime_authority": "Ignored at runtime; actor_rollout_ref.actor.megatron.use_remove_padding controls both actor and ref.",
+      "not_tunable_reason": "Retained only as Hydra provenance."
     },
     "actor_rollout_ref.ref.megatron.param_offload": {
-      "stage": "hardware",
-      "type": "bool",
-      "impact": "Offloads inactive reference-model parameters from GPU.",
-      "increase": "Reduces cross-phase resident memory but adds reload transfers.",
-      "decrease": "Keeps ref parameters resident for speed at higher GPU memory cost.",
-      "interactions": [
-        "ref TP/PP",
-        "actor/rollout colocation"
-      ],
-      "constraints": [
-        "Host memory and bandwidth must be sufficient"
-      ]
+      "runtime_authority": "Ignored at runtime; actor_rollout_ref.actor.megatron.param_offload controls both actor and ref.",
+      "not_tunable_reason": "Retained only as Hydra provenance."
     },
     "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": {
-      "stage": "hardware",
-      "scope": "hardware",
-      "phase": "ref_log_prob",
-      "mutability": "normal",
-      "type": "int",
-      "impact": "Per-GPU fixed micro batch for reference log-prob forward passes; it directly controls ref_log_prob activation pressure and iteration count.",
-      "increase": "May improve ref_log_prob utilization and reduce forward-pass iterations when that phase is significant and memory has headroom, but raises its activation peak.",
-      "decrease": "Reduces ref_log_prob activation pressure and is useful for phase-specific OOM, but adds forward-pass iterations and may lower utilization.",
-      "interactions": [
-        "ref TP/PP",
-        "actor_rollout_ref.ref.use_dynamic_bsz",
-        "sequence lengths",
-        "ref param offload"
-      ],
-      "constraints": [
-        "Positive integer",
-        "Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is false",
-        "Validate the installed backend's local batching and divisibility semantics"
-      ]
+      "non_obvious_effects": ["Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is false."],
+      "hard_constraints": ["Validate installed backend local-batching semantics."],
+      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
     },
-    "actor_rollout_ref.actor.optim.lr": {
-      "stage": "stability",
-      "type": "float",
-      "impact": "Actor optimizer learning rate; a primary RL update-size and stability control.",
-      "increase": "Can learn faster but raises KL/clip pressure and collapse risk.",
-      "decrease": "Usually improves stability but may slow reward improvement.",
-      "interactions": [
-        "lr_warmup_steps",
-        "kl_loss_coef",
-        "ppo mini batch"
-      ],
-      "constraints": [
-        "Agent range 1e-7 to 1e-5"
-      ]
-    },
-    "actor_rollout_ref.actor.optim.lr_warmup_steps": {
-      "stage": "stability",
-      "type": "int",
-      "impact": "Number of initial optimizer steps used to ramp the learning rate.",
-      "increase": "Reduces early shocks but delays full learning rate.",
-      "decrease": "Reaches target LR sooner with more startup instability risk.",
-      "interactions": [
-        "actor optim.lr",
-        "trial update budget"
-      ],
-      "constraints": [
-        "Warmup must be meaningfully smaller than the evaluation horizon"
-      ]
+    "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu": {
+      "non_obvious_effects": ["This parameter controls the maximum number of tokens that can be processed per GPU in the reference log-probability computation."],
+      "hard_constraints": ["Validate installed backend token-length support."],
+      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
     },
     "actor_rollout_ref.actor.use_kl_loss": {
-      "stage": "stability",
-      "type": "bool",
-      "impact": "Enables an explicit actor KL penalty in the optimization loss.",
-      "increase": "Constrains policy drift when coefficient/type are configured.",
-      "decrease": "Removes this loss constraint; reward-side KL is a separate mechanism.",
-      "interactions": [
-        "kl_loss_coef",
-        "kl_loss_type",
-        "algorithm.use_kl_in_reward"
-      ],
-      "constraints": [
-        "Do not confuse loss KL with reward KL"
-      ]
+      "non_obvious_effects": ["This loss-KL control is distinct from reward-side KL."],
+      "critical_couplings": ["actor_rollout_ref.actor.kl_loss_coef", "actor_rollout_ref.actor.kl_loss_type"]
     },
     "actor_rollout_ref.actor.kl_loss_coef": {
-      "stage": "stability",
-      "type": "float",
-      "impact": "Weight of the actor KL loss.",
-      "increase": "Restrains policy drift but can suppress reward learning.",
-      "decrease": "Allows larger policy updates with greater KL risk.",
-      "interactions": [
-        "use_kl_loss",
-        "learning rate",
-        "kl_loss_type"
-      ],
-      "constraints": [
-        "Has effect only when use_kl_loss is true",
-        "Agent range 0-0.2"
-      ]
+      "non_obvious_effects": ["Has no effect unless actor_rollout_ref.actor.use_kl_loss is true."],
+      "hard_constraints": ["Agent range: 0 to 0.2."],
+      "critical_couplings": ["actor_rollout_ref.actor.use_kl_loss"]
     },
     "actor_rollout_ref.actor.kl_loss_type": {
-      "stage": "stability",
-      "type": "string",
-      "impact": "Estimator/formulation used for KL loss; changes numerical behavior and variance.",
-      "increase": "No monotonic direction; select based on installed verl semantics and observed KL behavior.",
-      "decrease": "No monotonic direction.",
-      "interactions": [
-        "kl_loss_coef",
-        "use_kl_loss"
-      ],
-      "constraints": [
-        "Search local verl source for supported enum values before changing"
-      ]
+      "hard_constraints": ["Verify supported enum values against the installed verl version before changing it."],
+      "critical_couplings": ["actor_rollout_ref.actor.use_kl_loss", "actor_rollout_ref.actor.kl_loss_coef"]
     },
     "actor_rollout_ref.actor.entropy_coeff": {
-      "stage": "stability",
-      "type": "float",
-      "impact": "Weight of entropy regularization in the actor objective.",
-      "increase": "Encourages exploration but may weaken task-reward optimization.",
-      "decrease": "Makes updates more reward-directed and may reduce diversity.",
-      "interactions": [
-        "reward",
-        "actor entropy",
-        "learning rate"
-      ],
-      "constraints": [
-        "Agent range 0-0.2; diagnose entropy behavior before changing"
-      ]
+      "non_obvious_effects": ["At exactly zero, update_policy can skip entropy calculation, reducing training logits memory and training work; nonzero values enable that work."],
+      "hard_constraints": ["Agent range: 0 to 0.2."],
+      "critical_couplings": ["training memory", "training throughput"]
     },
     "actor_rollout_ref.rollout.n": {
-      "stage": "stability",
-      "type": "int",
-      "impact": "Number of responses sampled per prompt for GRPO grouping.",
-      "increase": "Provides more within-prompt comparisons but increases rollout/token work and can affect variance.",
-      "decrease": "Reduces rollout cost but weakens group statistics.",
-      "interactions": [
-        "train_batch_size",
-        "ppo_mini_batch_size",
-        "hardware token budget"
-      ],
-      "constraints": [
-        "train_batch_size * n must be divisible by ppo_mini_batch_size",
-        "Changing n changes workload and requires careful end-to-end comparison"
-      ]
+      "non_obvious_effects": ["Changing this changes the RL workload, so it is not a directly comparable hardware-only change."],
+      "hard_constraints": ["data.train_batch_size * this value must be divisible by actor_rollout_ref.actor.ppo_mini_batch_size."],
+      "critical_couplings": ["data.train_batch_size", "actor_rollout_ref.actor.ppo_mini_batch_size"]
     }
   }
 }
