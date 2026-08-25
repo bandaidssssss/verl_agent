@@ -56,35 +56,44 @@
   ],
   "data": {
     "actor_rollout_ref.actor.use_dynamic_bsz": {
+      "runtime_authority": "Controls PPO training batching: true selects actor_rollout_ref.actor.ppo_max_token_len_per_gpu; false selects actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu.",
       "non_obvious_effects": [
-        "When enabled, fixed per-GPU PPO and reference log-prob micro-batch settings are not authoritative."
+        "actor_rollout_ref.ref.log_prob_use_dynamic_bsz inherits this value when the ref option is not explicitly set; an explicit ref value overrides the inheritance."
       ],
       "critical_couplings": [
         "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
-        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu"
+        "actor_rollout_ref.actor.ppo_max_token_len_per_gpu",
+        "actor_rollout_ref.ref.log_prob_use_dynamic_bsz"
       ]
     },
     "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": {
       "non_obvious_effects": ["Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is false."],
       "hard_constraints": [
-        "The backend-normalized local PPO mini batch must be divisible by this value.",
+        "Only when actor_rollout_ref.actor.use_dynamic_bsz is false, the backend-normalized local PPO mini batch must be divisible by this value.",
         "A topology change requires revalidating legal PPO mini/micro-batch values."
       ],
-      "critical_couplings": ["actor_rollout_ref.actor.ppo_mini_batch_size"]
+      "critical_couplings": [
+        "actor_rollout_ref.actor.use_dynamic_bsz",
+        "actor_rollout_ref.actor.ppo_mini_batch_size"
+      ]
     },
     "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": {
-      "non_obvious_effects": ["This parameter controls the maximum number of tokens that can be processed per GPU in the PPO computation."],
+      "non_obvious_effects": ["Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is true; it then limits the tokens processed per GPU in each PPO micro-batch."],
       "hard_constraints": ["Validate installed backend token-length support."],
       "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
     },
     "actor_rollout_ref.actor.ppo_mini_batch_size": {
       "hard_constraints": [
         "data.train_batch_size * actor_rollout_ref.rollout.n must be divisible by this value.",
-        "This value must be divisible by actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu."
+        "Only when actor_rollout_ref.actor.use_dynamic_bsz is false, this value must be divisible by actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu; dynamic batching does not require this mini/micro divisibility."
+      ],
+      "critical_couplings": [
+        "actor_rollout_ref.actor.use_dynamic_bsz",
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
       ]
     },
     "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": {
-      "runtime_authority": "Authoritative shared actor/ref tensor-parallel topology; the ref override is ignored at runtime.",
+      "non_obvious_effects": ["This parameter affects both actor and ref."],
       "hard_constraints": ["World size must be divisible by the shared actor/ref TP * PP topology."],
       "critical_couplings": [
         "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size",
@@ -94,7 +103,7 @@
       ]
     },
     "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size": {
-      "runtime_authority": "Authoritative shared actor/ref pipeline-parallel topology; the ref override is ignored at runtime.",
+      "non_obvious_effects": ["This parameter affects both actor and ref."],
       "hard_constraints": ["World size must be divisible by the shared actor/ref TP * PP topology."],
       "critical_couplings": [
         "actor_rollout_ref.actor.megatron.tensor_model_parallel_size",
@@ -103,37 +112,32 @@
       ]
     },
     "actor_rollout_ref.actor.megatron.virtual_pipeline_model_parallel_size": {
-      "runtime_authority": "Authoritative shared actor/ref virtual-pipeline topology; the ref override is ignored at runtime.",
-      "not_tunable_reason": "Not editable by the current Validator policy."
+      "non_obvious_effects": ["This parameter affects both actor and ref."]
     },
     "actor_rollout_ref.actor.megatron.context_parallel_size": {
-      "runtime_authority": "Authoritative shared actor/ref context-parallel topology; the ref override is ignored at runtime.",
-      "not_tunable_reason": "Not editable by the current Validator policy."
+      "non_obvious_effects": ["This parameter affects both actor and ref."]
     },
     "actor_rollout_ref.actor.megatron.expert_model_parallel_size": {
-      "runtime_authority": "Authoritative shared actor/ref expert-parallel topology; the ref override is ignored at runtime.",
-      "not_tunable_reason": "Not editable by the current Validator policy."
+      "non_obvious_effects": ["This parameter affects both actor and ref."]
     },
     "actor_rollout_ref.actor.megatron.expert_tensor_parallel_size": {
-      "runtime_authority": "Authoritative shared actor/ref expert-tensor-parallel topology; the ref override is ignored at runtime.",
-      "not_tunable_reason": "Not editable by the current Validator policy."
+      "non_obvious_effects": ["This parameter affects both actor and ref."]
     },
     "actor_rollout_ref.actor.megatron.sequence_parallel": {
-      "runtime_authority": "Authoritative shared actor/ref sequence-parallel control; the ref override is ignored at runtime.",
+      "non_obvious_effects": ["This parameter affects both actor and ref."],
       "hard_constraints": ["Requires backend kernel support and is normally meaningful only when actor TP is greater than one."],
       "critical_couplings": ["actor_rollout_ref.actor.megatron.tensor_model_parallel_size"]
     },
     "actor_rollout_ref.actor.megatron.use_remove_padding": {
-      "runtime_authority": "Authoritative shared actor/ref packing control; the ref override is ignored at runtime.",
-      "not_tunable_reason": "Not editable by the current Validator policy.",
+      "non_obvious_effects": ["This parameter affects both actor and ref."],
       "hard_constraints": ["Requires compatible actor and ref backend kernels."]
     },
     "actor_rollout_ref.actor.megatron.param_offload": {
-      "runtime_authority": "Authoritative shared actor/ref parameter-offload control; the ref override is ignored at runtime.",
-      "not_tunable_reason": "Not editable by the current Validator policy.",
+      "non_obvious_effects": ["This parameter affects both actor and ref."],
       "hard_constraints": ["Host memory and transfer bandwidth must support both actor and ref."]
     },
     "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_granularity": {
+      "non_obvious_effects": ["This parameter affects both actor and ref."],
       "not_tunable_reason": "This profile control is not editable by the current Validator policy.",
       "hard_constraints": ["Values must be supported by the installed Megatron version."],
       "critical_couplings": [
@@ -142,14 +146,17 @@
       ]
     },
     "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_modules": {
+      "non_obvious_effects": ["This parameter affects both actor and ref."],
       "not_tunable_reason": "This profile control is not editable by the current Validator policy.",
       "hard_constraints": ["Module names are backend-version specific; verify installed Megatron support before use."]
     },
     "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method": {
+      "non_obvious_effects": ["This parameter affects both actor and ref."],
       "not_tunable_reason": "This profile control is not editable by the current Validator policy.",
       "hard_constraints": ["The enum must be supported by the installed Megatron version."]
     },
     "actor_rollout_ref.actor.megatron.override_transformer_config.recompute_num_layers": {
+      "non_obvious_effects": ["This parameter affects both actor and ref."],
       "not_tunable_reason": "This profile control is not editable by the current Validator policy.",
       "critical_couplings": ["actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method"]
     },
@@ -223,14 +230,23 @@
       "not_tunable_reason": "Retained only as Hydra provenance."
     },
     "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": {
-      "non_obvious_effects": ["Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is false."],
+      "non_obvious_effects": ["Only authoritative when the effective actor_rollout_ref.ref.log_prob_use_dynamic_bsz value is false."],
       "hard_constraints": ["Validate installed backend local-batching semantics."],
-      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
+      "critical_couplings": ["actor_rollout_ref.ref.log_prob_use_dynamic_bsz"]
     },
     "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu": {
-      "non_obvious_effects": ["This parameter controls the maximum number of tokens that can be processed per GPU in the reference log-probability computation."],
+      "non_obvious_effects": ["Only authoritative when the effective actor_rollout_ref.ref.log_prob_use_dynamic_bsz value is true; it then limits the tokens processed per GPU in each reference log-probability micro-batch."],
       "hard_constraints": ["Validate installed backend token-length support."],
-      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
+      "critical_couplings": ["actor_rollout_ref.ref.log_prob_use_dynamic_bsz"]
+    },
+    "actor_rollout_ref.ref.log_prob_use_dynamic_bsz": {
+      "runtime_authority": "Controls reference log-probability batching: true selects actor_rollout_ref.ref.log_prob_max_token_len_per_gpu; false selects actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu.",
+      "non_obvious_effects": ["When this option is omitted from the launch arguments, its effective value inherits actor_rollout_ref.actor.use_dynamic_bsz; when explicitly set, the ref value takes precedence."],
+      "critical_couplings": [
+        "actor_rollout_ref.actor.use_dynamic_bsz",
+        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
+        "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu"
+      ]
     },
     "actor_rollout_ref.actor.use_kl_loss": {
       "non_obvious_effects": ["This loss-KL control is distinct from reward-side KL."],
@@ -238,7 +254,6 @@
     },
     "actor_rollout_ref.actor.kl_loss_coef": {
       "non_obvious_effects": ["Has no effect unless actor_rollout_ref.actor.use_kl_loss is true."],
-      "hard_constraints": ["Agent range: 0 to 0.2."],
       "critical_couplings": ["actor_rollout_ref.actor.use_kl_loss"]
     },
     "actor_rollout_ref.actor.kl_loss_type": {
@@ -247,7 +262,6 @@
     },
     "actor_rollout_ref.actor.entropy_coeff": {
       "non_obvious_effects": ["At exactly zero, update_policy can skip entropy calculation, reducing training logits memory and training work; nonzero values enable that work."],
-      "hard_constraints": ["Agent range: 0 to 0.2."],
       "critical_couplings": ["training memory", "training throughput"]
     },
     "actor_rollout_ref.rollout.n": {

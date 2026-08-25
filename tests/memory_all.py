@@ -44,7 +44,7 @@ from trial_storage import hydrate_trial
 # =============================================================================
 
 # 完整实验目录，里面应包含 trials.jsonl 或 trials/NNNN/trial_report.json。
-DEFAULT_RUN_DIR = ROOT / "output" / "0819_1134_2026"
+DEFAULT_RUN_DIR = ROOT / "output" / "0819_0935_2026"
 
 # =============================================================================
 # 其他参数一般不需要修改

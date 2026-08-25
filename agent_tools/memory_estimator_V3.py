@@ -1309,9 +1309,10 @@ def _training_activation_bytes(
     logits_copies = 0
     if not runtime["use_fused_kernels"]:
         logits_one_copy = (
-            tokens * float(architecture["padded_vocab_size"]) / tp * act_bytes
+            tokens * float(architecture["padded_vocab_size"]) / tp * 4
         )
         logits_copies = 3 if runtime.get("calculate_entropy") else 1
+    #跟log_prob_activation_bytes()类似，最后的输出有 to_fp32的操作，所以使用4字节
     stage_peak_bytes[-1] += final_norm_bytes + logits_one_copy * logits_copies
 
     peak = max(stage_peak_bytes)
@@ -1375,18 +1376,23 @@ def _log_prob_activation_bytes(
     # This is a one-live-layer proxy.  Forward-only log-prob must not retain
     # one copy for every transformer layer as training does.
     body_live_bytes = _dense_selective_layer_bytes(architecture, runtime, tokens)
-    pipeline_buffer_bytes = tokens * hidden * act_bytes if pp > 1 else 0.0
+    #pp之间的通信消耗,当sp为True时，pp之间的通信消耗会减少
+    pp_tokens = tokens
+    if runtime["sequence_parallel"]:
+        pp_tokens *= 1.0 / tp
+    pipeline_buffer_bytes = pp_tokens * hidden * act_bytes if pp > 1 else 0.0
     non_last_stage_bytes = body_live_bytes + pipeline_buffer_bytes
 
     logits_one_copy = 0.0
     logits_copies = 0
     if not runtime["use_fused_kernels"]:
         logits_one_copy = (
-            tokens * float(architecture["padded_vocab_size"]) / tp * act_bytes
+            tokens * float(architecture["padded_vocab_size"]) / tp * 4
         )
         logits_copies = 3 if phase == "actor_log_prob" else 1
-    #logit一份，logit.clone()和softmax（）约三份
+    #logit一份，logit.clone()和softmax（）约三份,megatron里面最后的输出有 to_fp32的操作，所以使用4字节
     vocab_bytes = logits_one_copy * logits_copies
+    # actor_logprob 需要计算log_prob和entropy，所以需要两份输出，ref_log_prob只需要一份输出
     output_fields = 2 if phase == "actor_log_prob" else 1
     result_accumulation_bytes = (
         2.0

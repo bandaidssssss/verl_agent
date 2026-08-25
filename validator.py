@@ -13,19 +13,24 @@ HARDWARE_PARAMETERS = {
     "actor_rollout_ref.actor.megatron.tensor_model_parallel_size",
     "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size",
     "actor_rollout_ref.actor.megatron.sequence_parallel",
+    "actor_rollout_ref.actor.ppo_max_token_len_per_gpu",
+    "actor_rollout_ref.actor.use_dynamic_bsz",
 
     # Rollout generation.
     "actor_rollout_ref.rollout.tensor_model_parallel_size",
     "actor_rollout_ref.rollout.gpu_memory_utilization",
     "actor_rollout_ref.rollout.max_num_batched_tokens",
     "actor_rollout_ref.rollout.max_num_seqs",
-
+    "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu",
+    "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz",
     # Actor old-log-prob.
     "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
 
     # Reference log-prob owns batching only. Its colocated Megatron model
     # follows the actor model-parallel topology in verl 0.7.
     "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
+    "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu",
+    "actor_rollout_ref.ref.log_prob_use_dynamic_bsz",
 }
 
 STABILITY_PARAMETERS = {
@@ -210,7 +215,10 @@ def validate_candidate(
     micro_batch = int(parameters["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"])
     if (train_batch * rollout_n) % mini_batch != 0:
         violations.append("data.train_batch_size * rollout.n must be divisible by ppo_mini_batch_size")
-    if mini_batch % micro_batch != 0:
+    use_dynamic_bsz = bool(
+        parameters.get("actor_rollout_ref.actor.use_dynamic_bsz", False)
+    )
+    if not use_dynamic_bsz and mini_batch % micro_batch != 0:
         violations.append("ppo_mini_batch_size must be divisible by ppo_micro_batch_size_per_gpu")
 
     num_gpus = int(parameters["trainer.n_gpus_per_node"]) * int(parameters["trainer.nnodes"])
