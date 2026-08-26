@@ -2581,11 +2581,12 @@ def estimate_phase_memory(
             " Every affected phase's predicted absolute memory upper bound "
             "remains below the configured memory limit. If more throughput is "
             "needed, consider a larger one-step change instead of repeatedly "
-            "increasing the same parameter in small increments; the short-run "
-            "Resource Gate remains authoritative."
+            "increasing the same parameter in small increments."
         )
 
     return {
+        "reference_trial_id": reference.get("trial_id"),
+        "changed_parameters": changed_parameters,
         **{
             phase: result.get("relative_change_pct", {}).get("estimate")
             if isinstance(result.get("relative_change_pct"), Mapping)

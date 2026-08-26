@@ -21,11 +21,12 @@ HARDWARE_PARAMETERS = {
     "actor_rollout_ref.rollout.gpu_memory_utilization",
     "actor_rollout_ref.rollout.max_num_batched_tokens",
     "actor_rollout_ref.rollout.max_num_seqs",
-    "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu",
-    "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz",
+
     # Actor old-log-prob.
     "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
-
+    "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu",
+    "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz",
+    
     # Reference log-prob owns batching only. Its colocated Megatron model
     # follows the actor model-parallel topology in verl 0.7.
     "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
