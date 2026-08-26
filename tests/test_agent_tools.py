@@ -172,17 +172,20 @@ class AgentToolsTest(unittest.TestCase):
         actor = result["parameters"]["actor_rollout_ref.actor.megatron.tensor_model_parallel_size"]
         ref = result["parameters"]["actor_rollout_ref.ref.megatron.tensor_model_parallel_size"]
         entropy = result["parameters"]["actor_rollout_ref.actor.entropy_coeff"]
-        self.assertIn("shared actor/ref", actor["runtime_authority"])
+        self.assertIn("both actor and ref", actor["non_obvious_effects"][0])
         self.assertIn("Ignored at runtime", ref["runtime_authority"])
         self.assertEqual(ref["not_tunable_reason"], "Retained only as Hydra provenance.")
         self.assertIn("exactly zero", entropy["non_obvious_effects"][0])
 
     def test_memory_estimator_uses_phase_observation_anchor(self) -> None:
-        current_micro = self.base[
-            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
-        ]
+        current_micro = 2
         target_micro = current_micro * 2
-        self.write_memory_trial(self.base)
+        reference = {
+            **self.base,
+            "actor_rollout_ref.actor.use_dynamic_bsz": False,
+            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": current_micro,
+        }
+        self.write_memory_trial(reference)
         registry = self.registry()
         result = registry.execute(
             "proposal",
@@ -198,19 +201,20 @@ class AgentToolsTest(unittest.TestCase):
             },
             registry.runtime({}),
         )
-        self.assertEqual(result["method"], "measured_reference_relative_component_delta")
         self.assertEqual(result["reference_trial_id"], 1)
+        training = result["phases"]["training"]
+        self.assertEqual(training["status"], "estimated")
         self.assertGreater(
-            result["phases"]["training"]["relative_change_pct"]["estimate"], 0
+            training["estimated_relative_change_pct"], 0
         )
+        self.assertEqual(result["phases"]["rollout"]["status"], "unaffected")
         self.assertEqual(
-            result["phases"]["rollout"]["relative_change_pct"],
-            {"lower": 0.0, "estimate": 0.0, "upper": 0.0},
+            result["phases"]["rollout"]["estimated_relative_change_pct"], 0.0
         )
 
     def test_memory_estimator_normalizes_proposal_style_changes(self) -> None:
         reference = dict(self.base)
-        reference["actor_rollout_ref.rollout.gpu_memory_utilization"] = 0.5
+        reference["actor_rollout_ref.rollout.gpu_memory_utilization"] = 0.6
         self.write_memory_trial(reference)
         registry = self.registry()
         result = registry.execute(
@@ -219,7 +223,7 @@ class AgentToolsTest(unittest.TestCase):
             {
                 "changes": {
                     "actor_rollout_ref.rollout.gpu_memory_utilization": {
-                        "from": 0.5,
+                        "from": 0.6,
                         "to": 0.7,
                     }
                 },
@@ -228,8 +232,12 @@ class AgentToolsTest(unittest.TestCase):
             registry.runtime({}),
         )
         rollout = result["phases"]["rollout"]
-        self.assertGreater(rollout["relative_change_pct"]["estimate"], 0)
-        self.assertEqual(rollout["direction"], "increase")
+        self.assertEqual(rollout["status"], "estimated")
+        self.assertGreater(rollout["estimated_relative_change_pct"], 0)
+        self.assertEqual(rollout["reference_peak_mib"], 46000.0)
+        self.assertGreater(rollout["estimated_peak_mib"], 46000.0)
+        self.assertEqual(result["safety"], "within_limit")
+        self.assertIn("does not certify an unevaluated target", result["note"])
         serialized = json.dumps(result, sort_keys=True)
         for removed_field in (
             "projected_memory_mb",
@@ -238,10 +246,7 @@ class AgentToolsTest(unittest.TestCase):
             '"risk"',
         ):
             self.assertNotIn(removed_field, serialized)
-        self.assertEqual(
-            result["phases"]["ref_log_prob"]["relative_change_pct"],
-            {"lower": 0.0, "estimate": 0.0, "upper": 0.0},
-        )
+        self.assertEqual(result["phases"]["ref_log_prob"]["status"], "unaffected")
 
     def test_memory_estimator_treats_rollout_caps_as_uncalibrated(self) -> None:
         key = "actor_rollout_ref.rollout.max_num_seqs"
@@ -258,11 +263,156 @@ class AgentToolsTest(unittest.TestCase):
             registry.runtime({}),
         )
         rollout = result["phases"]["rollout"]
-        self.assertEqual(rollout["relative_change_pct"]["estimate"], 0.0)
-        self.assertIn(key, rollout["uncalibrated_changes"])
-        self.assertGreater(rollout["relative_change_pct"]["upper"], 0.0)
-        self.assertEqual(rollout["confidence"]["level"], "low")
-        self.assertEqual(result["confidence"]["level"], "low")
+        self.assertEqual(rollout["status"], "unmodeled")
+        self.assertIsNone(rollout["estimated_peak_mib"])
+        self.assertIsNone(rollout["estimated_relative_change_pct"])
+        self.assertEqual(result["safety"], "unknown")
+        self.assertNotIn("evaluate a larger target", result["note"])
+
+    def test_memory_estimator_marks_dynamic_micro_batch_as_inactive(self) -> None:
+        key = "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
+        self.write_memory_trial(self.base)
+        result = self.registry().execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": {key: {"from": None, "to": 4}},
+                "reference_trial_id": 1,
+            },
+            self.registry().runtime({}),
+        )
+
+        training = result["phases"]["training"]
+        self.assertEqual(training["status"], "inactive")
+        self.assertEqual(training["estimated_relative_change_pct"], 0.0)
+        self.assertEqual(training["reference_peak_mib"], training["estimated_peak_mib"])
+        self.assertEqual(result["safety"], "within_limit")
+        self.assertNotIn("evaluate a larger target", result["note"])
+
+    def test_memory_estimator_marks_fixed_batch_max_tokens_as_inactive(self) -> None:
+        dynamic_key = "actor_rollout_ref.actor.use_dynamic_bsz"
+        micro_key = "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
+        max_tokens_key = "actor_rollout_ref.actor.ppo_max_token_len_per_gpu"
+        reference = {
+            **self.base,
+            dynamic_key: False,
+            micro_key: 2,
+        }
+        self.write_memory_trial(reference)
+        result = self.registry().execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": {max_tokens_key: {"from": 24576, "to": 32768}},
+                "reference_trial_id": 1,
+            },
+            self.registry().runtime({}),
+        )
+
+        training = result["phases"]["training"]
+        self.assertEqual(training["status"], "inactive")
+        self.assertEqual(training["estimated_relative_change_pct"], 0.0)
+        self.assertNotIn("evaluate a larger target", result["note"])
+
+    def test_memory_estimator_allows_inactive_companion_in_increase_note(self) -> None:
+        micro_key = "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
+        max_tokens_key = "actor_rollout_ref.actor.ppo_max_token_len_per_gpu"
+        reference = {
+            **self.base,
+            "actor_rollout_ref.actor.use_dynamic_bsz": False,
+            micro_key: 2,
+            max_tokens_key: 24576,
+        }
+        self.write_memory_trial(
+            reference,
+            phase_peaks={
+                "rollout": 20000.0,
+                "actor_log_prob": 20000.0,
+                "ref_log_prob": 20000.0,
+                "training": 20000.0,
+            },
+        )
+        result = self.registry().execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": {
+                    micro_key: {"from": 2, "to": 4},
+                    max_tokens_key: {"from": 24576, "to": 32768},
+                },
+                "reference_trial_id": 1,
+            },
+            self.registry().runtime({}),
+        )
+
+        self.assertEqual(result["phases"]["training"]["status"], "estimated")
+        self.assertIn("evaluate a larger target", result["note"])
+
+    def test_memory_estimator_marks_missing_unaffected_phase_unavailable(self) -> None:
+        key = "actor_rollout_ref.rollout.gpu_memory_utilization"
+        reference = {**self.base, key: 0.6}
+        self.write_memory_trial(reference)
+        metrics_path = self.history_path.parent / "trials" / "0001" / "metrics.json"
+        metrics = load_json(metrics_path)
+        del metrics["resource"]["by_phase"]["ref_log_prob"]
+        write_json(metrics_path, metrics)
+        result = self.registry().execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": {key: {"from": 0.6, "to": 0.7}},
+                "reference_trial_id": 1,
+            },
+            self.registry().runtime({}),
+        )
+
+        ref_log_prob = result["phases"]["ref_log_prob"]
+        self.assertEqual(ref_log_prob["status"], "unavailable")
+        self.assertIsNone(ref_log_prob["estimated_peak_mib"])
+        self.assertIsNone(ref_log_prob["estimated_relative_change_pct"])
+        self.assertEqual(result["safety"], "unknown")
+        self.assertNotIn("evaluate a larger target", result["note"])
+
+    def test_memory_estimator_marks_unsafe_candidate(self) -> None:
+        key = "actor_rollout_ref.rollout.gpu_memory_utilization"
+        reference = {**self.base, key: 0.6}
+        self.write_memory_trial(reference)
+        result = self.registry().execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": {key: {"from": 0.6, "to": 0.9}},
+                "reference_trial_id": 1,
+            },
+            self.registry().runtime({}),
+        )
+
+        self.assertEqual(result["safety"], "exceeds_limit")
+        self.assertIn("not memory-feasible", result["note"])
+        self.assertNotIn("evaluate a larger target", result["note"])
+
+    def test_memory_estimator_marks_missing_affected_phase_unavailable(self) -> None:
+        key = "actor_rollout_ref.actor.ppo_max_token_len_per_gpu"
+        self.write_memory_trial(self.base)
+        metrics_path = self.history_path.parent / "trials" / "0001" / "metrics.json"
+        metrics = load_json(metrics_path)
+        del metrics["resource"]["by_phase"]["training"]
+        write_json(metrics_path, metrics)
+        result = self.registry().execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": {key: {"from": 24576, "to": 32768}},
+                "reference_trial_id": 1,
+            },
+            self.registry().runtime({}),
+        )
+
+        training = result["phases"]["training"]
+        self.assertEqual(training["status"], "unavailable")
+        self.assertIsNone(training["estimated_peak_mib"])
+        self.assertIsNone(training["estimated_relative_change_pct"])
+        self.assertEqual(result["safety"], "unknown")
 
     def test_dynamic_batch_and_remove_padding_use_modeled_activation_deltas(self) -> None:
         dynamic_key = "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz"
@@ -283,19 +433,10 @@ class AgentToolsTest(unittest.TestCase):
             self.registry().runtime({}),
         )
 
-        for phase_name in ("actor_log_prob", "ref_log_prob", "training"):
-            phase = result["phases"][phase_name]
-            self.assertNotIn(dynamic_key, phase["uncalibrated_changes"])
-            self.assertNotIn(padding_key, phase["uncalibrated_changes"])
         actor_log_prob = result["phases"]["actor_log_prob"]
+        self.assertEqual(actor_log_prob["status"], "estimated")
         self.assertGreater(
-            actor_log_prob["relative_change_pct"]["estimate"], 0.0
-        )
-        self.assertIn(
-            "activation", actor_log_prob["drivers"]["affected_components"]
-        )
-        self.assertTrue(
-            actor_log_prob["drivers"]["candidate_runtime"]["dynamic_batch"]
+            actor_log_prob["estimated_relative_change_pct"], 0.0
         )
 
     def test_entropy_zero_disables_training_workspace_only(self) -> None:
@@ -312,19 +453,10 @@ class AgentToolsTest(unittest.TestCase):
             },
             registry.runtime({}),
         )
-        self.assertLess(
-            result["phases"]["training"]["relative_change_pct"]["estimate"], 0
-        )
-        self.assertEqual(
-            result["phases"]["training"]["drivers"]["candidate_runtime"][
-                "calculate_entropy"
-            ],
-            False,
-        )
-        self.assertEqual(
-            result["phases"]["rollout"]["relative_change_pct"],
-            {"lower": 0.0, "estimate": 0.0, "upper": 0.0},
-        )
+        training = result["phases"]["training"]
+        self.assertEqual(training["status"], "estimated")
+        self.assertLess(training["estimated_relative_change_pct"], 0)
+        self.assertEqual(result["phases"]["rollout"]["status"], "unaffected")
 
     def test_training_component_savings_do_not_multiply_full_peak(self) -> None:
         distributed_key = (
@@ -360,9 +492,8 @@ class AgentToolsTest(unittest.TestCase):
             registry.runtime({}),
         )
         training = result["phases"]["training"]
-        self.assertEqual(training["direction"], "decrease")
-        self.assertLess(training["relative_change_pct"]["estimate"], 0)
-        self.assertGreaterEqual(training["relative_change_pct"]["lower"], -100.0)
+        self.assertEqual(training["status"], "estimated")
+        self.assertLess(training["estimated_relative_change_pct"], 0)
 
     def test_memory_estimator_rejects_reference_mismatch(self) -> None:
         self.write_memory_trial(self.base)
@@ -446,17 +577,11 @@ class AgentToolsTest(unittest.TestCase):
         )
         rollout = result["phases"]["rollout"]
         training = result["phases"]["training"]
-        self.assertIn(key, rollout["uncalibrated_changes"])
-        self.assertGreater(rollout["relative_change_pct"]["upper"], 0)
-        self.assertGreater(training["relative_change_pct"]["upper"], 0)
-        self.assertIn(
-            "activation", training["drivers"]["affected_components"]
-        )
-        for phase in result["phases"].values():
-            interval = phase["relative_change_pct"]
-            self.assertGreaterEqual(interval["lower"], -100.0)
-            self.assertLessEqual(interval["lower"], interval["estimate"])
-            self.assertLessEqual(interval["estimate"], interval["upper"])
+        self.assertEqual(rollout["status"], "unmodeled")
+        self.assertIsNone(rollout["estimated_relative_change_pct"])
+        self.assertEqual(training["status"], "estimated")
+        self.assertGreaterEqual(training["estimated_relative_change_pct"], 0)
+        self.assertEqual(result["safety"], "unknown")
 
     def test_repeated_memory_estimates_never_open_train_log(self) -> None:
         key = "actor_rollout_ref.rollout.gpu_memory_utilization"
@@ -930,7 +1055,7 @@ class AgentToolsTest(unittest.TestCase):
         knobs = result["assessment"]["knobs"]
         self.assertEqual(
             knobs["actor_rollout_ref.rollout.max_num_seqs"]["status"],
-            "binding_consider_increase_one_step",
+            "binding_increase_if_memory_feasible",
         )
         self.assertEqual(
             knobs["actor_rollout_ref.rollout.max_num_batched_tokens"]["status"],

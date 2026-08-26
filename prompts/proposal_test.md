@@ -50,11 +50,13 @@ An absent override is shown with `explicitly_configured: false` and `value: null
 
 - For `modify`, return between `min_proposal_candidates` and `max_proposal_candidates` from the Hard-Constraint Summary. Candidates must represent distinct causal hypotheses, not cosmetic value variants of the same experiment.
 - `hardware_repair`: Repair only the training substage identified by the diagnosis, prioritizing lower resource pressure.
+
 - `hardware_tuning`: Optimize end-to-end throughput. 
 
 - `max_parameter_changes` applies independently to every candidate. It is a hard safety ceiling, not a target. 
 
 - When `memory_estimator` recommends `increase` and increasing the relevant parameter is necessary to relieve the identified throughput bottleneck, increase it to a meaningful target. Do not ignore an `increase` recommendation or translate it into repeated minimal increments merely out of caution.
+
 
 - Candidate IDs must be unique, short, stable strings. The Validator and Feasibility Agent use them as opaque identifiers.
 
