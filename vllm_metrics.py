@@ -484,7 +484,7 @@ def assess_rollout_metrics(
     seq_ratio = running_p95 / max_seqs if running_p95 is not None and max_seqs else None
     seq_binding = bool(seq_ratio is not None and seq_ratio >= 0.95 and queue_present)
     if seq_binding and not memory_pressure:
-        seq_status = "binding_consider_increase_one_step"
+        seq_status = "binding_increase_if_memory_feasible"
     elif seq_binding:
         seq_status = "binding_but_memory_pressure_blocks_increase"
     else:
@@ -498,7 +498,7 @@ def assess_rollout_metrics(
     if iteration_p95 is None:
         token_status = "unknown_metric_not_exported"
     elif token_binding and not memory_pressure:
-        token_status = "binding_consider_increase_one_step"
+        token_status = "binding_increase_if_memory_feasible"
     elif token_binding:
         token_status = "binding_but_memory_pressure_blocks_increase"
     else:
@@ -516,7 +516,7 @@ def assess_rollout_metrics(
             and configured_memory is not None
             and configured_memory < 0.95
         ):
-            memory_status = "kv_capacity_binding_consider_small_increase"
+            memory_status = "kv_capacity_binding_increase_if_memory_feasible"
         else:
             memory_status = "kv_capacity_binding_without_safe_physical_headroom"
     elif (

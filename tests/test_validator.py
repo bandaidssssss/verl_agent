@@ -27,6 +27,56 @@ class ValidatorTest(unittest.TestCase):
         )
         self.assertTrue(result.valid, result.violations)
 
+    def test_dynamic_batching_does_not_require_inactive_micro_batches(self) -> None:
+        candidate = dict(self.base)
+        candidate.pop("actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu", None)
+        candidate.pop("actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu", None)
+        candidate.pop("actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu", None)
+        result = validate_candidate(
+            candidate,
+            {},
+            "hardware_tuning",
+            self.config,
+            self.base,
+            [],
+        )
+        self.assertTrue(result.valid, result.violations)
+
+    def test_fixed_batching_requires_actor_micro_batch(self) -> None:
+        candidate = {
+            **self.base,
+            "actor_rollout_ref.actor.use_dynamic_bsz": False,
+        }
+        candidate.pop("actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu", None)
+        result = validate_candidate(
+            candidate,
+            {"actor_rollout_ref.actor.use_dynamic_bsz": False},
+            "hardware_tuning",
+            self.config,
+            self.base,
+            [],
+        )
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any("ppo_micro_batch_size_per_gpu" in row for row in result.violations)
+        )
+
+    def test_dynamic_batching_requires_max_token_controls(self) -> None:
+        candidate = dict(self.base)
+        candidate.pop("actor_rollout_ref.ref.log_prob_max_token_len_per_gpu")
+        result = validate_candidate(
+            candidate,
+            {},
+            "hardware_tuning",
+            self.config,
+            self.base,
+            [],
+        )
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any("ref.log_prob_max_token_len_per_gpu" in row for row in result.violations)
+        )
+
     def test_rejects_stability_hardware_change(self) -> None:
         candidate = dict(self.base)
         candidate["actor_rollout_ref.rollout.max_num_seqs"] = 128
@@ -57,11 +107,11 @@ class ValidatorTest(unittest.TestCase):
         groups = parameter_groups(self.base, "stability_tuning")
         self.assertIn("actor_rollout_ref.actor.optim.lr", groups["stability_tuning"])
         self.assertIn(
-            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
+            "actor_rollout_ref.actor.ppo_max_token_len_per_gpu",
             groups["throughput_tuning"],
         )
         self.assertIn(
-            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
+            "actor_rollout_ref.actor.ppo_max_token_len_per_gpu",
             groups["fixed"],
         )
         self.assertNotIn("actor_rollout_ref.actor.optim.lr", groups["fixed"])

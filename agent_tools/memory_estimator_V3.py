@@ -32,6 +32,16 @@ ACTOR_LOG_PROB_MAX_TOKENS_KEY = (
 REF_LOG_PROB_MAX_TOKENS_KEY = "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu"
 TRAINING_MAX_TOKENS_KEY = "actor_rollout_ref.actor.ppo_max_token_len_per_gpu"
 
+CAPACITY_PARAMETER_PHASES = {
+    ROLLOUT_UTILIZATION_KEY: "rollout",
+    ACTOR_MICRO_KEY: "actor_log_prob",
+    ACTOR_LOG_PROB_MAX_TOKENS_KEY: "actor_log_prob",
+    REF_MICRO_KEY: "ref_log_prob",
+    REF_LOG_PROB_MAX_TOKENS_KEY: "ref_log_prob",
+    TRAINING_MICRO_KEY: "training",
+    TRAINING_MAX_TOKENS_KEY: "training",
+}
+
 ACTOR_TP_KEY = "actor_rollout_ref.actor.megatron.tensor_model_parallel_size"
 ACTOR_PP_KEY = "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size"
 ACTOR_CP_KEY = "actor_rollout_ref.actor.megatron.context_parallel_size"
@@ -1912,7 +1922,6 @@ def _compute_projection(
             "projected_mb": reference_mb,
             "delta_mb": 0.0 if reference_mb is not None else None,
             "uncertainty_mb": 0.0 if reference_mb is not None else None,
-            "confidence": "high",
             "model": "unchanged_reference_phase",
             "drivers": {"affected_components": []},
             "uncalibrated_changes": [],
@@ -1924,7 +1933,6 @@ def _compute_projection(
             "projected_mb": reference_mb,
             "delta_mb": 0.0 if reference_mb is not None else None,
             "uncertainty_mb": 0.0 if reference_mb is not None else None,
-            "confidence": "high",
             "model": "unaffected_phase",
             "drivers": {
                 "affected_components": [],
@@ -1944,7 +1952,6 @@ def _compute_projection(
             "projected_mb": reference_mb,
             "delta_mb": 0.0 if reference_mb is not None else None,
             "uncertainty_mb": uncertainty_mb if reference_mb is not None else None,
-            "confidence": "low",
             "model": "reference_peak_with_unknown_memory_sensitive_changes",
             "drivers": {
                 "affected_components": [],
@@ -2098,15 +2105,6 @@ def _compute_projection(
         "projected_mb": projected_mb,
         "delta_mb": delta_mb if reference_mb is not None else None,
         "uncertainty_mb": uncertainty_mb if reference_mb is not None else None,
-        "confidence": (
-            "low"
-            if uncalibrated or structural_uncertainties
-            else (
-                "medium"
-                if topology_changed or activation_multiplier is not None
-                else "low"
-            )
-        ),
         "model": "reference_peak_plus_changed_component_deltas",
         "drivers": {
             "affected_components": sorted(affected),
@@ -2258,7 +2256,6 @@ def _rollout_projection(
             "projected_mb": reference_mb,
             "delta_mb": 0.0 if reference_mb is not None else None,
             "uncertainty_mb": 0.0 if reference_mb is not None else None,
-            "confidence": "high",
             "model": "unchanged_reference_phase",
             "drivers": {"affected_components": []},
             "uncalibrated_changes": [],
@@ -2294,7 +2291,6 @@ def _rollout_projection(
         "projected_mb": projected_mb,
         "delta_mb": delta_mb,
         "uncertainty_mb": uncertainty_mb,
-        "confidence": "low" if uncalibrated else ("high" if calibrated else "medium"),
         "model": "reference_peak_plus_vllm_utilization_capacity_delta",
         "drivers": {
             "affected_components": ["vllm_memory_budget"],
@@ -2316,116 +2312,181 @@ def _rollout_projection(
     }
 
 
-def _relative_drivers(projection: Mapping[str, Any]) -> dict[str, Any]:
-    source = projection.get("drivers")
-    source = source if isinstance(source, Mapping) else {}
-    result: dict[str, Any] = {
-        "estimation_model": projection.get("model"),
-        "affected_components": list(source.get("affected_components", [])),
-        "changed_parameters": list(source.get("changed_parameters", [])),
-    }
-    utilization = source.get("gpu_memory_utilization")
-    if isinstance(utilization, Mapping):
-        result["gpu_memory_utilization"] = dict(utilization)
-    if source.get("calibration") is not None:
-        result["calibration"] = source.get("calibration")
-    candidate_runtime = source.get("candidate_runtime")
-    if isinstance(candidate_runtime, Mapping):
-        result["candidate_runtime"] = {
-            key: candidate_runtime.get(key)
-            for key in (
-                "calculate_entropy",
-                "micro_batch_size",
-                "dynamic_batch",
-                "tensor_model_parallel_size",
-                "pipeline_model_parallel_size",
-                "context_parallel_size",
-                "sequence_parallel",
-            )
-            if key in candidate_runtime
-        }
-    structural = source.get("structural_uncertainties")
-    if isinstance(structural, list) and structural:
-        result["structural_uncertainties"] = list(structural)
-    return result
+def _projection_changed_parameters(projection: Mapping[str, Any]) -> set[str]:
+    drivers = projection.get("drivers")
+    if not isinstance(drivers, Mapping):
+        return set()
+    changed = drivers.get("changed_parameters")
+    return {str(key) for key in changed} if isinstance(changed, list) else set()
 
 
-def _format_phase_result(
-    measurement: Mapping[str, Any],
+def _projection_has_only_inactive_batching_changes(
+    phase: str,
     projection: Mapping[str, Any],
-    reference_context: Mapping[str, Any],
+) -> bool:
+    if phase == "rollout":
+        return False
+    changed = _projection_changed_parameters(projection)
+    if not changed:
+        return False
+    drivers = projection.get("drivers")
+    if not isinstance(drivers, Mapping):
+        return False
+    runtime = drivers.get("candidate_runtime")
+    if not isinstance(runtime, Mapping):
+        return False
+    keys = _phase_keys(phase)
+    inactive_key = (
+        keys["micro"]
+        if bool(runtime.get("dynamic_batch"))
+        else keys["max_tokens"]
+    )
+    return changed == {inactive_key}
+
+
+def _compact_phase_result(
+    phase: str,
+    projection: Mapping[str, Any],
 ) -> dict[str, Any]:
     reference_mb = projection.get("reference_mb")
-    delta_mb = projection.get("delta_mb")
-    uncertainty_mb = projection.get("uncertainty_mb")
-    unaffected = projection.get("model") in {
-        "unchanged_reference_phase",
-        "unaffected_phase",
-    }
-    if unaffected:
-        estimate = lower = upper = 0.0
-        confidence_level = "high"
-        reasons = ["candidate changes do not affect this phase"]
-    elif reference_mb in (None, 0) or delta_mb is None or uncertainty_mb is None:
-        return {
-            "available": False,
-            "relative_change_pct": None,
-            "direction": "unknown",
-            "confidence": {
-                "level": "low",
-                "reasons": ["reference phase peak is unavailable in metrics.json"],
-            },
-            "drivers": _relative_drivers(projection),
-            "uncalibrated_changes": projection.get("uncalibrated_changes", []),
-        }
+    projected_mb = projection.get("projected_mb")
+    model = projection.get("model")
+    if not _is_number(reference_mb) or float(reference_mb) <= 0:
+        status = "unavailable"
+    elif model in {"unchanged_reference_phase", "unaffected_phase"}:
+        status = "unaffected"
+    elif _projection_has_only_inactive_batching_changes(phase, projection):
+        status = "inactive"
+    elif (
+        projection.get("uncalibrated_changes")
+        or not _is_number(projected_mb)
+        or not _is_number(projection.get("delta_mb"))
+    ):
+        status = "unmodeled"
     else:
+        status = "estimated"
+
+    estimate = None
+    if status not in {"unmodeled", "unavailable"}:
         estimate = max(
-            -100.0, 100.0 * float(delta_mb) / float(reference_mb)
+            -100.0,
+            100.0 * (float(projected_mb) - float(reference_mb)) / float(reference_mb),
         )
-        uncertainty = 100.0 * abs(float(uncertainty_mb)) / float(reference_mb)
-        lower = max(-100.0, estimate - uncertainty)
-        upper = max(lower, estimate + uncertainty)
-        confidence_level = str(projection.get("confidence", "low"))
-        reasons = []
-        uncalibrated = projection.get("uncalibrated_changes", [])
-        if uncalibrated:
-            reasons.append("one or more changed parameters lack matched calibration")
-        profile = reference_context.get("parameter_profile")
-        if (
-            isinstance(profile, Mapping)
-            and profile.get("complete_tp_pp_coverage") is not True
-            and "model" in projection.get("drivers", {}).get("affected_components", [])
-        ):
-            reasons.append("Megatron TP/PP parameter coverage is incomplete")
-            confidence_level = "low"
-        if reference_context.get("warnings"):
-            reasons.append("log_facts.json contains parser warnings")
-            if confidence_level == "high":
-                confidence_level = "medium"
-        if not reasons:
-            reasons.append(
-                "matched empirical calibration is available"
-                if confidence_level == "high"
-                else "estimate uses an analytical delta anchored to one measured trial"
-            )
-    if estimate > 1e-9:
-        direction = "increase"
-    elif estimate < -1e-9:
-        direction = "decrease"
-    else:
-        direction = "unchanged"
     return {
-        "available": True,
-        "relative_change_pct": {
-            "lower": _round(lower, 4),
-            "estimate": _round(estimate, 4),
-            "upper": _round(upper, 4),
-        },
-        "direction": direction,
-        "confidence": {"level": confidence_level, "reasons": reasons},
-        "drivers": _relative_drivers(projection),
-        "uncalibrated_changes": projection.get("uncalibrated_changes", []),
+        "status": status,
+        "reference_peak_mib": _round(float(reference_mb), 2)
+        if _is_number(reference_mb)
+        else None,
+        "estimated_peak_mib": _round(float(projected_mb), 2)
+        if _is_number(projected_mb) and status not in {"unmodeled", "unavailable"}
+        else None,
+        "estimated_relative_change_pct": _round(float(estimate), 4)
+        if _is_number(estimate)
+        else None,
     }
+
+
+def _memory_safety_status(
+    compact_phases: Mapping[str, Mapping[str, Any]],
+    projections: Mapping[str, Mapping[str, Any]],
+    memory_limit_mib: float | None,
+) -> str:
+    if any(
+        result.get("status") in {"unmodeled", "unavailable"}
+        for result in compact_phases.values()
+    ):
+        return "unknown"
+    modeled = [
+        projections[phase]
+        for phase, result in compact_phases.items()
+        if result.get("status") == "estimated"
+    ]
+    if not modeled:
+        return "within_limit"
+    if not _is_number(memory_limit_mib):
+        return "unknown"
+    upper_bounds: list[float] = []
+    for projection in modeled:
+        projected_mb = projection.get("projected_mb")
+        uncertainty_mb = projection.get("uncertainty_mb")
+        if not _is_number(projected_mb) or not _is_number(uncertainty_mb):
+            return "unknown"
+        upper_bounds.append(float(projected_mb) + abs(float(uncertainty_mb)))
+    return (
+        "exceeds_limit"
+        if any(value >= float(memory_limit_mib) for value in upper_bounds)
+        else "within_limit"
+    )
+
+
+def _inactive_changed_parameters(
+    projections: Mapping[str, Mapping[str, Any]],
+) -> set[str]:
+    inactive: set[str] = set()
+    for phase, projection in projections.items():
+        if phase == "rollout":
+            continue
+        drivers = projection.get("drivers")
+        if not isinstance(drivers, Mapping):
+            continue
+        runtime = drivers.get("candidate_runtime")
+        if not isinstance(runtime, Mapping):
+            continue
+        keys = _phase_keys(phase)
+        inactive_key = (
+            keys["micro"]
+            if bool(runtime.get("dynamic_batch"))
+            else keys["max_tokens"]
+        )
+        if inactive_key in _projection_changed_parameters(projection):
+            inactive.add(inactive_key)
+    return inactive
+
+
+def _capacity_increase_note(
+    changed_parameters: Mapping[str, Mapping[str, Any]],
+    compact_phases: Mapping[str, Mapping[str, Any]],
+    projections: Mapping[str, Mapping[str, Any]],
+    safety: str,
+) -> str | None:
+    if safety != "within_limit":
+        return None
+    inactive = _inactive_changed_parameters(projections)
+    effective_changes = set(changed_parameters) - inactive
+    if len(effective_changes) != 1:
+        return None
+    parameter = next(iter(effective_changes))
+    phase = CAPACITY_PARAMETER_PHASES.get(parameter)
+    change = changed_parameters.get(parameter)
+    if phase is None or not isinstance(change, Mapping):
+        return None
+    from_value = change.get("from")
+    to_value = change.get("to")
+    if not _is_number(from_value) or not _is_number(to_value):
+        return None
+    if float(to_value) <= float(from_value):
+        return None
+    phase_result = compact_phases[phase]
+    if phase_result.get("status") != "estimated":
+        return None
+    reference_peak = phase_result.get("reference_peak_mib")
+    estimated_peak = phase_result.get("estimated_peak_mib")
+    relative_change = phase_result.get("estimated_relative_change_pct")
+    if not all(
+        _is_number(value)
+        for value in (reference_peak, estimated_peak, relative_change)
+    ):
+        return None
+    if float(relative_change) <= 1e-9:
+        return None
+    return (
+        f"The evaluated {parameter} change from {from_value:g} to {to_value:g} is "
+        f"estimated to raise {phase} peak memory from {reference_peak:g} MiB to "
+        f"{estimated_peak:g} MiB ({float(relative_change):+.4f}%). Its internal "
+        "upper bound remains below the configured memory limit. If "
+        f"{phase} remains throughput-bound, evaluate a larger target in a new "
+        "memory_estimator call; this result does not certify an unevaluated target."
+    )
 
 
 def estimate_phase_memory(
@@ -2464,7 +2525,6 @@ def estimate_phase_memory(
     candidate_context = reference_context
 
     measurements = _phase_measurements(reference)
-    phases: dict[str, Any] = {}
     projections: dict[str, Mapping[str, Any]] = {}
     for phase in PHASES:
         measurement = measurements[phase]
@@ -2487,65 +2547,8 @@ def estimate_phase_memory(
                 candidate_length,
                 trials,
             )
-        phases[phase] = _format_phase_result(
-            measurement, projection, reference_context
-        )
         projections[phase] = projection
 
-    affected_phases = []
-    for phase_result in phases.values():
-        interval = phase_result.get("relative_change_pct")
-        affected = phase_result.get("available") is not True or (
-            isinstance(interval, Mapping)
-            and any(
-                abs(float(interval.get(bound, 0.0))) > 1e-12
-                for bound in ("lower", "estimate", "upper")
-            )
-        )
-        if affected:
-            affected_phases.append(phase_result)
-    confidence_values = [
-        phase["confidence"]["level"] for phase in affected_phases
-    ]
-    confidence = (
-        "low"
-        if "low" in confidence_values
-        else (
-            "high"
-            if not confidence_values or all(value == "high" for value in confidence_values)
-            else "medium"
-        )
-    )
-    # return {
-    #     "method": "measured_reference_relative_component_delta",
-    #     "version": 3,
-    #     # "confidence": {
-    #     #     "level": confidence,
-    #     #     "reasons": sorted(
-    #     #         {
-    #     #             reason
-    #     #             for phase in affected_phases
-    #     #             for reason in phase.get("confidence", {}).get("reasons", [])
-    #     #         }
-    #     #     ),
-    #     # },
-    #     "reference_trial_id": reference.get("trial_id"),
-    #     "changed_parameters": changed_parameters,
-    #     "phases": phases,
-    # }
-    # return {
-    #         **{
-    #             phase: result.get("relative_change_pct", {}).get("lower")
-    #             if isinstance(result.get("relative_change_pct"), Mapping)
-    #             else None
-    #             for phase, result in phases.items()
-    #         },
-    #         "note": "Estimated based on the mean of the experimental prompts and responses.",
-    #     }
-    note = (
-        "The central memory prediction is based on the P95 of the average "
-        "token count (prompt + response) across each step of the experiment."
-    )
     if memory_limit_mib is None:
         capacities = [
             float(measurement["gpu_capacity_mb"])
@@ -2555,43 +2558,44 @@ def estimate_phase_memory(
         if capacities:
             memory_limit_mib = 0.92 * min(capacities)
 
-    affected_projections = [
-        projections[phase]
+    compact_phases = {
+        phase: _compact_phase_result(phase, projections[phase])
         for phase in PHASES
-        if projections[phase].get("model")
-        not in {"unchanged_reference_phase", "unaffected_phase"}
-    ]
-    upper_headrooms = []
-    for projection in affected_projections:
-        projected_mb = projection.get("projected_mb")
-        uncertainty_mb = projection.get("uncertainty_mb")
-        if (
-            memory_limit_mib is None
-            or not _is_number(projected_mb)
-            or not _is_number(uncertainty_mb)
-        ):
-            upper_headrooms = []
-            break
-        # This is equivalent to applying relative_change_pct.upper to the
-        # measured reference peak, but keeps the comparison in MiB.
-        absolute_upper_mb = float(projected_mb) + abs(float(uncertainty_mb))
-        upper_headrooms.append(float(memory_limit_mib) - absolute_upper_mb)
-    if upper_headrooms and min(upper_headrooms) > 0:
-        note += (
-            " Every affected phase's predicted absolute memory upper bound "
-            "remains below the configured memory limit. If more throughput is "
-            "needed, consider a larger one-step change instead of repeatedly "
-            "increasing the same parameter in small increments; the short-run "
-            "Resource Gate remains authoritative."
-        )
+    }
+    safety = _memory_safety_status(
+        compact_phases,
+        projections,
+        memory_limit_mib,
+    )
+    note = _capacity_increase_note(
+        changed_parameters,
+        compact_phases,
+        projections,
+        safety,
+    )
+    if note is None:
+        if safety == "exceeds_limit":
+            note = (
+                "At least one modeled phase's internal memory upper bound meets "
+                "or exceeds the configured memory limit; the evaluated candidate "
+                "is not memory-feasible."
+            )
+        elif safety == "unknown":
+            note = (
+                "Memory safety is unknown because at least one affected phase is "
+                "unmodeled or unavailable."
+            )
+        else:
+            note = (
+                "Every modeled affected phase's internal memory upper bound remains "
+                "below the configured memory limit."
+            )
 
     return {
-        **{
-            phase: result.get("relative_change_pct", {}).get("estimate")
-            if isinstance(result.get("relative_change_pct"), Mapping)
-            else None
-            for phase, result in phases.items()
-        },
+        "reference_trial_id": reference.get("trial_id"),
+        "changed_parameters": changed_parameters,
+        "phases": compact_phases,
+        "safety": safety,
         "note": note,
     }
 

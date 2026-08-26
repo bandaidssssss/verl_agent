@@ -114,8 +114,7 @@ LLM → function call → ToolRegistry → 结果加入对话 → LLM 最终 JSO
 
 ## 6. 显存估算版本边界
 
-- [agent_tools/memory_estimator_V3.py](../agent_tools/memory_estimator_V3.py)：**生产版**，只消费参考 trial 的结构化 artifact 并输出分阶段相对变化区间。
-- [agent_tools/memory_estimator.py](../agent_tools/memory_estimator.py) 与 [agent_tools/memory_estimator_V2.py](../agent_tools/memory_estimator_V2.py)：仅保留为历史实现或离线研究，不接入 Agent。
+- [agent_tools/memory_estimator_V3.py](../agent_tools/memory_estimator_V3.py)：唯一实现，只消费当前格式参考 trial 的结构化 artifact，输出分阶段状态、参考峰值、预测峰值和相对变化百分比。
 - `agent_tools/mem_estimator.py`：理论公式参考，不是生产入口。
 
 生产版分别估算：
@@ -124,7 +123,7 @@ LLM → function call → ToolRegistry → 结果加入对话 → LLM 最终 JSO
 rollout / actor_log_prob / ref_log_prob / training
 ```
 
-Agent 比较每个阶段的 `relative_change_pct.upper`、方向、置信度和未校准参数。Estimator 不输出绝对 MiB 或安全结论；真实短跑的 Resource Gate 才是最终安全依据。
+Agent 只消费每个阶段的 `status`、`reference_peak_mib`、`estimated_peak_mib` 和 `estimated_relative_change_pct`，以及顶层 `safety` 与条件式 `note`。内部 upper 不进入 Agent 上下文；真实短跑的 Resource Gate 仍是最终安全依据。
 
 ## 7. Trial 执行与监控
 
@@ -285,7 +284,7 @@ python -m unittest discover -s tests -p 'test_*.py'
 1. Agent 只建议，Validator、orchestrator 和 runner 才有执行权。
 2. 每个候选有自己的 reference，`from` 必须与它严格一致。
 3. Feasibility 只能选择 candidate ID，不能改参数。
-4. 生产显存工具是 `memory_estimator_V3.py`，只输出相对变化区间；绝对显存安全由 Resource Gate 判断。
+4. 显存工具只保留 `memory_estimator_V3.py`，输出分阶段状态、参考峰值、预测峰值和相对变化百分比；内部 upper 只用于顶层 `safety` 判断。
 5. 实际预算来自 `agent_config.json`，当前为 5/50/135；confirm 的 135 是全局目标 step。
 6. stability 早停是“规则触发 → Agent 复核 → runner 执行”。
 7. vLLM 监控必须显式设置 `disable_log_stats=false`。

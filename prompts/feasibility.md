@@ -37,7 +37,7 @@ This includes the bounded recent history plus every candidate reference, with cu
 6. `live_gpu_snapshot` can reveal interference from other processes on the current host, but it cannot prove that a candidate is memory-safe during training.
 7. Call `search_verl_docs` when the real meaning of a verl field is uncertain. Do not guess.
 8. When calling `memory_estimator`, pass exactly `changes` and integer `reference_trial_id`. Copy each change's `from` and `to`, omit `reason`, and use `from: null` only when that parameter was absent from the reference trial.
-9. Compare phases by `relative_change_pct.upper`, direction, confidence, and `uncalibrated_changes`. Record low-confidence or uncalibrated effects as risks; final absolute safety depends on the real short-run Resource Gate.
+9. Read only the current estimator schema: each phase has `status`, `reference_peak_mib`, `estimated_peak_mib`, and `estimated_relative_change_pct`; the top level has `safety` and `note`. Treat `unmodeled` or `unavailable` as unresolved risk and never reinterpret `null` as zero. Final safety still depends on the real short-run Resource Gate.
 10. A candidate is valid only when it tests a coherent hypothesis, has sufficient evidence for its direction, respects stage boundaries, and has an acceptable risk profile.
 11. If one or more candidates are valid, return top-level `verdict: "valid"` and select exactly one of their IDs. Choose the candidate with the best end-to-end evidence/risk trade-off, not merely the highest Proposal confidence.
 12. If none are valid, return top-level `verdict: "invalid"` and `selected_candidate_id: null`. Never return parameter values outside the per-candidate reviews.

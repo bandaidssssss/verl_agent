@@ -583,14 +583,14 @@ class RejectionConversationTest(unittest.TestCase):
                     if self.calls == 1:
                         candidates = [
                             {
-                                "candidate_id": "bad_divisibility",
+                                "candidate_id": "bad_token_limit",
                                 "reference_trial_id": 1,
                                 "reference_reason": "trial 1 is the baseline",
-                                "reason": "invalid micro batch",
+                                "reason": "invalid token limit",
                                 "changes": {
-                                    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": {
-                                        "from": base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"],
-                                        "to": 3,
+                                    "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": {
+                                        "from": base["actor_rollout_ref.actor.ppo_max_token_len_per_gpu"],
+                                        "to": 0,
                                         "reason": "first attempt",
                                     }
                                 },
@@ -614,14 +614,14 @@ class RejectionConversationTest(unittest.TestCase):
                     else:
                         candidates = [
                             {
-                                "candidate_id": "actor_batch",
+                                "candidate_id": "actor_tokens",
                                 "reference_trial_id": 1,
                                 "reference_reason": "trial 1 measured actor behavior",
-                                "reason": "increase actor micro batching",
+                                "reason": "increase actor token batching",
                                 "changes": {
-                                    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": {
-                                        "from": base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"],
-                                        "to": base["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"] * 2,
+                                    "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": {
+                                        "from": base["actor_rollout_ref.actor.ppo_max_token_len_per_gpu"],
+                                        "to": base["actor_rollout_ref.actor.ppo_max_token_len_per_gpu"] * 2,
                                         "reason": "test actor throughput",
                                     }
                                 },
@@ -653,7 +653,7 @@ class RejectionConversationTest(unittest.TestCase):
 
                 def review(self, context):
                     assert [row["candidate_id"] for row in context["candidates"]] == [
-                        "actor_batch",
+                        "actor_tokens",
                         "rollout_memory",
                     ]
                     assert context["candidates"][1]["reference_trial_id"] == 2
@@ -668,7 +668,7 @@ class RejectionConversationTest(unittest.TestCase):
                         "selected_candidate_id": "rollout_memory",
                         "reason": "candidate 2 has the better evidence/risk trade-off",
                         "candidate_reviews": [
-                            {"candidate_id": "actor_batch", "verdict": "valid"},
+                            {"candidate_id": "actor_tokens", "verdict": "valid"},
                             {"candidate_id": "rollout_memory", "verdict": "valid"},
                         ],
                         "risks": [],
@@ -705,8 +705,8 @@ class RejectionConversationTest(unittest.TestCase):
                 0.65,
             )
             self.assertEqual(
-                candidate["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"],
-                alternate["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"],
+                candidate["actor_rollout_ref.actor.ppo_max_token_len_per_gpu"],
+                alternate["actor_rollout_ref.actor.ppo_max_token_len_per_gpu"],
             )
             self.assertEqual(fake.calls, 2)
             self.assertEqual(proposal["candidate_id"], "rollout_memory")

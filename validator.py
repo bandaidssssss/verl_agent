@@ -71,14 +71,35 @@ RANGES = {
     "actor_rollout_ref.actor.kl_loss_coef": (0.0, 0.2),
     "actor_rollout_ref.actor.entropy_coeff": (0.0, 0.2),
     "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": (1, 256),
+    "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": (1, 1048576),
     "actor_rollout_ref.actor.ppo_mini_batch_size": (1, 8192),
     "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": (1, 1024),
+    "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu": (1, 1048576),
     "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": (1, 1024),
+    "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu": (1, 1048576),
     "actor_rollout_ref.rollout.gpu_memory_utilization": (0.1, 0.95),
     "actor_rollout_ref.rollout.max_num_batched_tokens": (1024, 1048576),
     "actor_rollout_ref.rollout.max_num_seqs": (1, 4096),
     "actor_rollout_ref.rollout.n": (1, 64),
 }
+
+BATCHING_AUTHORITIES = (
+    (
+        "actor_rollout_ref.actor.use_dynamic_bsz",
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
+        "actor_rollout_ref.actor.ppo_max_token_len_per_gpu",
+    ),
+    (
+        "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz",
+        "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
+        "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu",
+    ),
+    (
+        "actor_rollout_ref.ref.log_prob_use_dynamic_bsz",
+        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
+        "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu",
+    ),
+)
 
 
 @dataclass
@@ -200,11 +221,16 @@ def validate_candidate(
         "data.train_batch_size",
         "actor_rollout_ref.rollout.n",
         "actor_rollout_ref.actor.ppo_mini_batch_size",
-        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
         "trainer.n_gpus_per_node",
         "trainer.nnodes",
     ]
-    missing = [key for key in required if key not in parameters]
+    for dynamic_key, micro_key, max_tokens_key in BATCHING_AUTHORITIES:
+        required.append(
+            max_tokens_key if bool(parameters.get(dynamic_key, False)) else micro_key
+        )
+    missing = [
+        key for key in required if key not in parameters or parameters.get(key) is None
+    ]
     if missing:
         violations.append("missing required parameters: " + ", ".join(missing))
         return ValidationResult(False, violations)
@@ -212,14 +238,22 @@ def validate_candidate(
     train_batch = int(parameters["data.train_batch_size"])
     rollout_n = int(parameters["actor_rollout_ref.rollout.n"])
     mini_batch = int(parameters["actor_rollout_ref.actor.ppo_mini_batch_size"])
-    micro_batch = int(parameters["actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"])
     if (train_batch * rollout_n) % mini_batch != 0:
         violations.append("data.train_batch_size * rollout.n must be divisible by ppo_mini_batch_size")
     use_dynamic_bsz = bool(
         parameters.get("actor_rollout_ref.actor.use_dynamic_bsz", False)
     )
-    if not use_dynamic_bsz and mini_batch % micro_batch != 0:
-        violations.append("ppo_mini_batch_size must be divisible by ppo_micro_batch_size_per_gpu")
+    if not use_dynamic_bsz:
+        micro_value = parameters.get(
+            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
+        )
+        if (
+            isinstance(micro_value, int)
+            and not isinstance(micro_value, bool)
+            and micro_value > 0
+            and mini_batch % micro_value != 0
+        ):
+            violations.append("ppo_mini_batch_size must be divisible by ppo_micro_batch_size_per_gpu")
 
     num_gpus = int(parameters["trainer.n_gpus_per_node"]) * int(parameters["trainer.nnodes"])
     parallel_groups = [

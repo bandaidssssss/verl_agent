@@ -60,7 +60,7 @@
       "name": "memory_estimator",
       "handler": "memory_estimator",
       "roles": ["proposal", "feasibility"],
-      "description": "Estimate relative memory change ranges for rollout, actor-log-prob, ref-log-prob, and training from an explicit measured reference trial. Pass only canonical from/to changes and reference_trial_id. The real resource gate remains the authority for absolute memory safety.",
+      "description": "Estimate phase memory effects from an explicit measured reference trial. Each rollout, actor-log-prob, ref-log-prob, and training result reports a status, measured reference peak MiB, estimated candidate peak MiB, and estimated relative change percent. The tool reports memory safety and may conditionally remind callers to evaluate a larger target, but it does not choose the tuning direction. Pass only canonical from/to changes and reference_trial_id. The real resource gate remains authoritative.",
       "parameters": {
         "type": "object",
         "properties": {

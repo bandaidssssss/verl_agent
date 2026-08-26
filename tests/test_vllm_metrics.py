@@ -226,7 +226,7 @@ vllm:generation_tokens_total{engine="0"} 500
         )
         self.assertEqual(
             assessment["knobs"]["actor_rollout_ref.rollout.max_num_seqs"]["status"],
-            "binding_consider_increase_one_step",
+            "binding_increase_if_memory_feasible",
         )
         self.assertEqual(
             assessment["knobs"]["actor_rollout_ref.rollout.max_num_batched_tokens"]["status"],
