@@ -29,7 +29,7 @@ stability_tuning
   冻结硬件参数，调整 lr、warmup、KL、entropy、rollout.n 等训练参数。
 
 confirm
-  冻结最终配置，运行较长实验并记录 reward 收敛。
+  冻结最终配置，从最佳成功 stability trial 的 checkpoint 恢复并记录 reward 收敛。
 ```
 
 状态机在 [orchestrator.py](../orchestrator.py)：
@@ -45,9 +45,9 @@ confirm
 当前实际预算：
 
 ```text
-hardware 10 updates
-stability 80 updates
-confirm 135 updates
+hardware 5 updates
+stability 50 updates
+confirm 训练到全局 step 135（从 stability step 50 恢复时新增 85 updates）
 resource gate 从第 1 个 update 后检查
 ```
 
@@ -138,6 +138,9 @@ Agent 比较每个阶段的 `relative_change_pct.upper`、方向、置信度和�
 6. 条件采集 vLLM 指标；
 7. stability 阶段运行在线健康监控；
 8. 每个 update 原子写入 running `metrics.json`，训练结束后一次解析原始 artifact 并写入 final `metrics.json`。
+9. stability 到达目标 update 时保存 Verl 原生 checkpoint；只有最终结果为 `success` 才登记为 trial artifact，失败或早停产生的残留会清理。
+
+每个 trial 使用独立的 `trials/NNNN/checkpoints`，hardware/stability 禁止 Verl `auto` 恢复。confirm 直接从状态机选中的最佳 stability reference 的 `global_step_*` 目录恢复。
 
 平台：
 
@@ -233,10 +236,11 @@ config/base_parameters.json 第一轮 verl 参数
     ├── vllm_metrics.csv          # 条件开启
     ├── health_events.jsonl
     ├── health_agent_traces.jsonl
+    ├── checkpoints/global_step_N/  # 成功 stability trial 的 Verl checkpoint
     └── trial_report.json
 ```
 
-`trials.jsonl` 是轻量权威索引，状态机和历史初筛只读取它；详细参数、指标与决策按索引中的相对 artifact 路径按需加载。`state.json` 不是完整历史。Agent 指标工具只读 `metrics.json`，不会反复扫描 `train.log`；旧格式实验不兼容。
+`trials.jsonl` 是轻量权威索引，状态机和历史初筛只读取它；详细参数、指标与决策按索引中的相对 artifact 路径按需加载。`state.json` 不是完整历史。Agent 指标工具只读 `metrics.json`，不会反复扫描 `train.log`。
 
 指标分类如下：
 
@@ -282,10 +286,11 @@ python -m unittest discover -s tests -p 'test_*.py'
 2. 每个候选有自己的 reference，`from` 必须与它严格一致。
 3. Feasibility 只能选择 candidate ID，不能改参数。
 4. 生产显存工具是 `memory_estimator_V3.py`，只输出相对变化区间；绝对显存安全由 Resource Gate 判断。
-5. 实际预算来自 `agent_config.json`，当前为 10/80/135 updates。
+5. 实际预算来自 `agent_config.json`，当前为 5/50/135；confirm 的 135 是全局目标 step。
 6. stability 早停是“规则触发 → Agent 复核 → runner 执行”。
 7. vLLM 监控必须显式设置 `disable_log_stats=false`。
 8. `trials.jsonl` 是权威轻量索引，完整事实位于每个 trial 的 artifact 文件中。
+9. stability checkpoint 是 trial artifact；confirm 的 `resume` 元数据记录来源 trial、恢复 step 和本次实际执行 update 数。
 
 排查一次决策时沿这条链即可：
 

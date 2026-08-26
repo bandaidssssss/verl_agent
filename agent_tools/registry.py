@@ -243,11 +243,32 @@ class ToolRegistry:
                 and isinstance(hydrated.get("log_facts"), Mapping)
             ):
                 trials.append(hydrated)
+        structured = reference.get("structured_metrics")
+        resource = (
+            structured.get("resource")
+            if isinstance(structured, Mapping)
+            else None
+        )
+        by_phase = resource.get("by_phase") if isinstance(resource, Mapping) else None
+        capacities = [
+            float(row["max_used_gpu_total_mib"])
+            for row in (by_phase.values() if isinstance(by_phase, Mapping) else [])
+            if isinstance(row, Mapping)
+            and isinstance(row.get("max_used_gpu_total_mib"), (int, float))
+            and not isinstance(row.get("max_used_gpu_total_mib"), bool)
+        ]
+        memory_limit_mib = None
+        if capacities:
+            reserve_mib = float(
+                runtime.agent_config.get("throughput_memory_reserve_mib", 6554)
+            )
+            memory_limit_mib = min(capacities) - reserve_mib
         try:
             result = estimate_phase_memory(
                 reference,
                 candidate,
                 trials,
+                memory_limit_mib=memory_limit_mib,
             )
         except ValueError as exc:
             raise ToolError(str(exc)) from exc

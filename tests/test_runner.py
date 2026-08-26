@@ -13,8 +13,12 @@ from runner import (
     HealthAgentWorker,
     HealthReviewSchedule,
     PhaseTracker,
+    _checkpoint_validation_errors,
+    _cleanup_unpublished_checkpoints,
+    _finalize_stability_checkpoint,
     _resource_gate_enabled,
     build_command,
+    run_trial,
 )
 
 
@@ -24,7 +28,7 @@ class BuildCommandTest(unittest.TestCase):
         self.assertTrue(_resource_gate_enabled("hardware_tuning"))
         self.assertTrue(_resource_gate_enabled("confirm"))
 
-    def test_preserves_base_trainer_runtime_fields_in_stability_stage(self) -> None:
+    def test_stability_uses_isolated_final_checkpoint(self) -> None:
         parameters = {
             "trainer.total_epochs": 2,
             "trainer.logger": ["console", "wandb"],
@@ -40,20 +44,138 @@ class BuildCommandTest(unittest.TestCase):
             "environment_script": None,
         }
 
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            checkpoint_dir = Path(directory) / "checkpoints"
             command, _ = build_command(
                 parameters,
                 agent_config,
                 trial_id=3,
                 updates=80,
                 stage="stability_tuning",
+                checkpoint_dir=checkpoint_dir,
             )
 
         self.assertIn("trainer.total_training_steps=80", command)
         self.assertIn("trainer.experiment_name=base-experiment", command)
-        self.assertIn("trainer.save_freq=-1", command)
+        self.assertIn("trainer.save_freq=80", command)
+        self.assertIn(f"trainer.default_local_dir={checkpoint_dir.resolve()}", command)
+        self.assertIn("trainer.resume_mode=disable", command)
+        self.assertIn("trainer.resume_from_path=null", command)
+        self.assertIn("trainer.max_actor_ckpt_to_keep=1", command)
+        self.assertIn("trainer.max_critic_ckpt_to_keep=1", command)
         self.assertIn("trainer.test_freq=7", command)
         self.assertIn("trainer.val_before_train=True", command)
+
+    def test_confirm_resumes_to_configured_global_target_without_saving(self) -> None:
+        parameters = {
+            "trainer.logger": ["console"],
+            "trainer.save_freq": 5,
+        }
+        agent_config = {
+            "verl_root": "/tmp/verl",
+            "config_path": "config",
+            "config_name": "ppo_megatron_trainer.yaml",
+            "environment_script": None,
+        }
+        checkpoint = Path("/tmp/run/trials/0007/checkpoints/global_step_50")
+        command, _ = build_command(
+            parameters,
+            agent_config,
+            trial_id=9,
+            updates=135,
+            stage="confirm",
+            checkpoint_dir="/tmp/run/trials/0009/checkpoints",
+            resume_checkpoint={
+                "source_trial_id": 7,
+                "global_step": 50,
+                "path": checkpoint,
+            },
+        )
+
+        self.assertIn("trainer.total_training_steps=135", command)
+        self.assertIn("trainer.save_freq=-1", command)
+        self.assertIn("trainer.resume_mode=resume_path", command)
+        self.assertIn(f"trainer.resume_from_path={checkpoint.resolve()}", command)
+        self.assertIn("trainer.del_local_ckpt_after_load=False", command)
+
+    def test_confirm_dry_run_reports_only_new_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            checkpoint = output / "trials" / "0007" / "checkpoints" / "global_step_50"
+            (checkpoint / "actor").mkdir(parents=True)
+            (checkpoint / "data.pt").write_bytes(b"checkpoint")
+            config = {
+                "output_dir": str(output),
+                "verl_root": "/tmp/verl",
+                "config_path": "config",
+                "config_name": "ppo_megatron_trainer.yaml",
+                "environment_script": None,
+                "platform": "C550",
+            }
+            report = run_trial(
+                {"trainer.logger": ["console"]},
+                config,
+                trial_id=9,
+                stage="confirm",
+                updates=135,
+                dry_run=True,
+                resume_checkpoint={
+                    "source_trial_id": 7,
+                    "global_step": 50,
+                    "path": str(checkpoint),
+                },
+            )
+
+        self.assertEqual(report["updates_target"], 135)
+        self.assertEqual(report["resume"]["global_step"], 50)
+        self.assertEqual(report["resume"]["updates_executed"], 85)
+
+    def test_checkpoint_validation_and_failed_trial_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_root = Path(directory) / "checkpoints"
+            checkpoint = checkpoint_root / "global_step_50"
+            (checkpoint / "actor").mkdir(parents=True)
+            self.assertEqual(
+                _checkpoint_validation_errors(checkpoint),
+                [f"dataloader checkpoint is missing: {checkpoint / 'data.pt'}"],
+            )
+            (checkpoint / "data.pt").write_bytes(b"checkpoint")
+            self.assertEqual(_checkpoint_validation_errors(checkpoint), [])
+            _cleanup_unpublished_checkpoints(checkpoint_root)
+            self.assertFalse(checkpoint_root.exists())
+
+    def test_only_successful_stability_checkpoint_is_published(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_root = Path(directory) / "success" / "checkpoints"
+            checkpoint = checkpoint_root / "global_step_50"
+            (checkpoint / "actor").mkdir(parents=True)
+            (checkpoint / "data.pt").write_bytes(b"checkpoint")
+            success = {"result": "success", "error": {}}
+            _finalize_stability_checkpoint(checkpoint_root, 50, success)
+            self.assertEqual(
+                success["checkpoint"],
+                {"global_step": 50, "path": str(checkpoint)},
+            )
+            self.assertTrue(checkpoint_root.exists())
+
+            failed_root = Path(directory) / "failed" / "checkpoints"
+            failed_checkpoint = failed_root / "global_step_50"
+            (failed_checkpoint / "actor").mkdir(parents=True)
+            (failed_checkpoint / "data.pt").write_bytes(b"checkpoint")
+            failed = {"result": "fail", "error": {"type": "OOM"}}
+            _finalize_stability_checkpoint(failed_root, 50, failed)
+            self.assertNotIn("checkpoint", failed)
+            self.assertFalse(failed_root.exists())
+
+    def test_missing_final_checkpoint_turns_success_into_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_root = Path(directory) / "checkpoints"
+            metrics = {"result": "success", "error": {}}
+            _finalize_stability_checkpoint(checkpoint_root, 50, metrics)
+        self.assertEqual(metrics["result"], "fail")
+        self.assertEqual(metrics["error"]["type"], "CHECKPOINT_MISSING")
 
 
 class GPUSamplerTest(unittest.TestCase):

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from config_utils import write_json
-from trial_storage import build_trial_index, hydrate_trial, trial_artifacts
+from trial_storage import (
+    build_trial_index,
+    hydrate_trial,
+    trial_artifacts,
+)
 
 
 class TrialStorageTest(unittest.TestCase):
@@ -63,3 +66,51 @@ class TrialStorageTest(unittest.TestCase):
             hydrated["log_facts"]["megatron"]["resolved_config"]["bf16"]
         )
         self.assertEqual(hydrated["performance"]["throughput"]["mean"], 12.0)
+
+    def test_checkpoint_artifact_round_trips_as_a_safe_relative_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            history = run_dir / "trials.jsonl"
+            checkpoint = (
+                run_dir
+                / "trials"
+                / "0003"
+                / "checkpoints"
+                / "global_step_50"
+            )
+            (checkpoint / "actor").mkdir(parents=True)
+            (checkpoint / "data.pt").write_bytes(b"checkpoint")
+            report = {
+                "trial_id": 3,
+                "stage": "stability_tuning",
+                "result": "success",
+                "updates_target": 50,
+                "updates_completed": 50,
+                "updates_executed": 50,
+                "checkpoint": {"global_step": 50, "path": str(checkpoint)},
+                "proposal": {"reference_trial_id": 2, "changes": {}},
+            }
+            index = build_trial_index(report, stability_healthy=True)
+            hydrated = hydrate_trial(index, history)
+
+        self.assertEqual(
+            index["artifacts"]["checkpoint"],
+            "trials/0003/checkpoints/global_step_50",
+        )
+        self.assertEqual(index["checkpoint"], {"global_step": 50})
+        self.assertEqual(hydrated["checkpoint"]["path"], str(checkpoint.resolve()))
+
+    def test_checkpoint_artifact_cannot_escape_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory) / "trials.jsonl"
+            index = build_trial_index(
+                {
+                    "trial_id": 1,
+                    "stage": "stability_tuning",
+                    "result": "success",
+                    "checkpoint": {"global_step": 50},
+                }
+            )
+            index["artifacts"]["checkpoint"] = "../outside/global_step_50"
+            with self.assertRaisesRegex(ValueError, "outside the configured output"):
+                hydrate_trial(index, history)

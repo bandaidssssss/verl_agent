@@ -11,15 +11,16 @@
    - 前 5 update 是 Resource Gate；出现 OOM/NCCL 或 GPU 显存达到硬上限时提前停止。
    - 通过后继续测量去掉 warmup 后的端到端吞吐和四个训练子阶段耗时。
 2. `stability_tuning`
-   - 默认运行 80 update。
+   - 当前运行 50 update。
    - 冻结硬件参数，只允许修改 lr、warmup、KL、entropy 和 rollout.n。
    - 每个完整 update 检查 reward 趋势恶化、KL 突变和 entropy 骤降；触发后异步交给 Train Health Agent 复核。
    - Agent 只有返回 `unhealthy + stop` 且置信度达到门槛时，才会在下一个完整 update 边界早停；Agent 失败或证据不足时继续训练。
    - Agent 返回 `observe N` 后，runner 会建立独立于规则 cooldown 的复审期限；第 N 个新 update 到期时即使没有规则再次触发，也会读取当前 trial 的固定指标快照并强制复审。
    - Train Health Agent 可通过 `read_current_trial_metrics` 读取当前运行日志中受限的 reward、KL、entropy、gradient 和生成健康指标；路径和最大可见 step 均由 runner 固定，Agent 不能读取任意文件或未来 step。
-   - 主动早停记录为 `early_stopped`，不与 OOM/NCCL 失败混淆；当前基础参数为 `trainer.save_freq=-1`，不会周期保存 checkpoint。
+   - 主动早停记录为 `early_stopped`，不与 OOM/NCCL 失败混淆。
+   - runner 会覆盖基础参数中的 `trainer.save_freq=-1`，在成功 trial 的最后一个 update 保存 Verl 原生 checkpoint；失败或早停 trial 不发布 checkpoint。
 3. `confirm`
-   - 默认运行 300 update。
+   - 从 terminal reward 最好的成功 stability trial 的 checkpoint 恢复，当前训练到全局 step 135；例如从 step 50 恢复时实际再运行 85 update。
    - 配置冻结，记录 reward 到阈值的累计时间、累计 token 和 peak reward。
 
 一次 update 内的监控阶段为 `rollout`、`actor_log_prob`、`ref_log_prob`、`training`。runner 设置 `VERL_LOGGING_LEVEL=DEBUG`，使用 verl 的 `GPUMemoryLogger` 阶段边界，同时调用平台对应的 SMI 每秒采样每张卡。若没有可用 SMI，阶段显存会使用日志观测值；没有可靠数据时输出 `null`。
@@ -66,7 +67,7 @@ vLLM replica 的 `/metrics` 地址，默认每 5 秒采集一次。采集结果�
 PLATFORM=C550 bash run_circle.sh --dry-run --rules-only
 ```
 
-运行一个 trial。第一轮使用 `hardware_trial_updates`（当前为 10）的硬件基线，不需要调用 LLM：
+运行一个 trial。第一轮使用 `hardware_trial_updates`（当前为 5）的硬件基线，不需要调用 LLM：
 
 ```bash
 PLATFORM=C550 MAX_TRIALS=1 bash run_circle.sh

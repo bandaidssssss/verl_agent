@@ -8,7 +8,7 @@ from statistics import mean
 from typing import Any, Mapping
 
 from agents import AgentResponseError, AgentSet
-from config_utils import append_jsonl, apply_changes, load_json, read_jsonl, write_json
+from config_utils import append_jsonl, apply_changes, write_json
 from prompt_context import compact_candidate_for_prompt, compact_reference_history
 from prompting import rejection_feedback
 from runner import run_trial
@@ -17,7 +17,6 @@ from trial_storage import (
     compact_trial_report,
     read_trials,
     read_trial_indexes,
-    trial_artifacts,
 )
 from validator import (
     IGNORED_PARAMETERS,
@@ -175,7 +174,7 @@ def stability_healthy(trial: Mapping[str, Any], config: Mapping[str, Any]) -> bo
     indexed = scores.get("stability_healthy") if isinstance(scores, Mapping) else None
     if isinstance(indexed, bool):
         return indexed
-    #下面的代码是兼容以前的
+    # Fresh reports do not have the compact index score until persistence.
     if trial.get("result") != "success":
         return False
     reward_points = _complete_stability_points(trial, "critic/rewards/mean")
@@ -252,6 +251,9 @@ def _compact_trial(trial: Mapping[str, Any]) -> dict[str, Any]:
         "termination",
         "diagnosis",
         "failure_phase",
+        "checkpoint",
+        "resume",
+        "updates_executed",
         "proposal",
         "feasibility",
         "log_path",
@@ -326,6 +328,7 @@ def _reference_descriptor(trial: Mapping[str, Any] | None, selection_reason: str
         "performance",
         "error",
         "termination",
+        "checkpoint",
     )
     compact = {key: copy.deepcopy(trial[key]) for key in keys if key in trial}
     compact.update(
@@ -694,20 +697,32 @@ class TuningOrchestrator:
             return dict(best["parameters"]), _reference_descriptor(best, reason)
         if stage == "confirm":
             stability = best_stability_trial(trials)
-            best = stability or best_hardware_trial(trials)
-            if not best:
-                raise RuntimeError("confirmation requires a successful candidate")
+            if stability is None:
+                raise RuntimeError("confirmation requires a successful stability trial")
             reason = (
                 "best successful stability trial by terminal reward mean "
                 "selected for confirmation"
-                if stability is not None
-                else "best successful hardware trial selected for confirmation"
             )
-            return dict(best["parameters"]), _reference_descriptor(best, reason)
+            return dict(stability["parameters"]), _reference_descriptor(stability, reason)
         raise RuntimeError(f"unsupported stage: {stage}")
 
     def _starting_parameters(self, stage: str, trials: list[dict[str, Any]]) -> dict[str, Any]:
         return self._starting_point(stage, trials)[0]
+
+    def _confirm_resume_checkpoint(
+        self,
+        reference: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        checkpoint = reference.get("checkpoint")
+        if not isinstance(checkpoint, Mapping):
+            raise RuntimeError(
+                "successful stability trial is missing its required checkpoint artifact"
+            )
+        return {
+            "source_trial_id": reference["trial_id"],
+            "global_step": checkpoint["global_step"],
+            "path": checkpoint["path"],
+        }
 
     def _diagnosis(
         self, trials: list[dict[str, Any]]
@@ -1336,6 +1351,10 @@ class TuningOrchestrator:
 
             history_limit = int(self.config.get("history_prompt_trials", 8))
 
+            resume_checkpoint = None
+            if stage == "confirm":
+                resume_checkpoint = self._confirm_resume_checkpoint(reference)
+
             def decide_train_health(context: Mapping[str, Any]) -> dict[str, Any]:
                 enriched = dict(context)
                 enriched["recent_trials"] = read_trial_indexes(self.history_path)[
@@ -1352,6 +1371,7 @@ class TuningOrchestrator:
                 trial_budget(stage, self.config),
                 dry_run=dry_run,
                 health_decider=decide_train_health,
+                resume_checkpoint=resume_checkpoint,
             )
             report["proposal"] = proposal
             report["feasibility"] = review
@@ -1359,7 +1379,6 @@ class TuningOrchestrator:
                 report["agent_trace"] = agent_trace
             if not dry_run:
                 trial_dir = self.output_dir / "trials" / f"{trial_id:04d}"
-                artifacts = trial_artifacts(trial_id)
                 write_json(
                     trial_dir / "decision.json",
                     {
@@ -1386,7 +1405,7 @@ class TuningOrchestrator:
                     ),
                 )
                 compact_report = compact_trial_report(report, index)
-                compact_report["artifacts"] = artifacts
+                compact_report["artifacts"] = copy.deepcopy(index["artifacts"])
                 write_json(trial_dir / "trial_report.json", compact_report)
                 append_jsonl(self.history_path, index)
                 if stage == "confirm":

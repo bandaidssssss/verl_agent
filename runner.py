@@ -332,6 +332,9 @@ def build_command(
     trial_id: int,
     updates: int,
     stage: str | None = None,
+    *,
+    checkpoint_dir: str | Path | None = None,
+    resume_checkpoint: Mapping[str, Any] | None = None,
 ) -> tuple[list[str], Path]:
     verl_root = Path(os.getenv("VERL_ROOT", str(agent_config["verl_root"]))).expanduser().resolve()
     run_parameters = dict(parameters)
@@ -342,6 +345,34 @@ def build_command(
             "trainer.logger": parameters.get("trainer.logger", ["console"]),
         }
     )
+    if checkpoint_dir is not None:
+        local_checkpoint_dir = Path(checkpoint_dir).expanduser().resolve()
+        run_parameters.update(
+            {
+                "trainer.default_local_dir": str(local_checkpoint_dir),
+                "trainer.max_actor_ckpt_to_keep": 1,
+                "trainer.max_critic_ckpt_to_keep": 1,
+                # Checkpoint lifecycle is owned by the stage runner, not by
+                # candidate parameters inherited from the base config.
+                "trainer.save_freq": updates if stage == "stability_tuning" else -1,
+            }
+        )
+        if stage == "confirm":
+            checkpoint = _validated_resume_checkpoint(resume_checkpoint)
+            run_parameters.update(
+                {
+                    "trainer.resume_mode": "resume_path",
+                    "trainer.resume_from_path": str(checkpoint["path"]),
+                    "trainer.del_local_ckpt_after_load": False,
+                }
+            )
+        else:
+            run_parameters.update(
+                {
+                    "trainer.resume_mode": "disable",
+                    "trainer.resume_from_path": None,
+                }
+            )
     command = [
         "python3",
         "-m",
@@ -355,6 +386,73 @@ def build_command(
         script = str(Path(str(environment_script)).expanduser().resolve())
         command = ["bash", "-lc", 'source "$1"; shift; exec "$@"', "verl-agent", script, *command]
     return command, verl_root
+
+
+def _validated_resume_checkpoint(
+    checkpoint: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(checkpoint, Mapping):
+        raise ValueError("confirm requires a reference stability checkpoint")
+    path_value = checkpoint.get("path")
+    step_value = checkpoint.get("global_step")
+    source_trial_id = checkpoint.get("source_trial_id")
+    if not isinstance(path_value, (str, Path)):
+        raise ValueError("resume checkpoint path must be provided")
+    if not isinstance(step_value, int) or isinstance(step_value, bool) or step_value < 1:
+        raise ValueError("resume checkpoint global_step must be a positive integer")
+    path = Path(path_value).expanduser().resolve()
+    if path.name != f"global_step_{step_value}":
+        raise ValueError(
+            "resume checkpoint path must end with "
+            f"global_step_{step_value}, got {path.name!r}"
+        )
+    if not isinstance(source_trial_id, int) or isinstance(source_trial_id, bool):
+        raise ValueError("resume checkpoint source_trial_id must be an integer")
+    return {
+        **dict(checkpoint),
+        "path": path,
+        "global_step": step_value,
+        "source_trial_id": source_trial_id,
+    }
+
+
+def _checkpoint_validation_errors(path: Path) -> list[str]:
+    errors: list[str] = []
+    if not path.is_dir():
+        return [f"checkpoint directory is missing: {path}"]
+    if not (path / "actor").is_dir():
+        errors.append(f"actor checkpoint directory is missing: {path / 'actor'}")
+    if not (path / "data.pt").is_file():
+        errors.append(f"dataloader checkpoint is missing: {path / 'data.pt'}")
+    return errors
+
+
+def _cleanup_unpublished_checkpoints(checkpoint_root: Path) -> None:
+    if checkpoint_root.is_dir():
+        shutil.rmtree(checkpoint_root)
+
+
+def _finalize_stability_checkpoint(
+    checkpoint_root: Path,
+    updates: int,
+    metrics: dict[str, Any],
+) -> None:
+    expected_checkpoint = checkpoint_root / f"global_step_{updates}"
+    if metrics.get("result") == "success":
+        checkpoint_errors = _checkpoint_validation_errors(expected_checkpoint)
+        if checkpoint_errors:
+            metrics["error"] = {
+                "type": "CHECKPOINT_MISSING",
+                "evidence": checkpoint_errors,
+            }
+            metrics["result"] = "fail"
+        else:
+            metrics["checkpoint"] = {
+                "global_step": updates,
+                "path": str(expected_checkpoint),
+            }
+    if metrics.get("result") != "success":
+        _cleanup_unpublished_checkpoints(checkpoint_root)
 
 
 def _terminate(process: subprocess.Popen[str]) -> None:
@@ -383,9 +481,11 @@ def run_trial(
     updates: int,
     dry_run: bool = False,
     health_decider: HealthDecider | None = None,
+    resume_checkpoint: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     output_root = Path(os.getenv("OUTPUT_PATH", str(agent_config["output_dir"]))).expanduser().resolve()
     trial_dir = output_root / "trials" / f"{trial_id:04d}"
+    checkpoint_root = trial_dir / "checkpoints"
     trial_dir.mkdir(parents=True, exist_ok=True)
     log_path = trial_dir / "train.log"
     samples_path = trial_dir / "gpu_samples.csv"
@@ -397,10 +497,34 @@ def run_trial(
     write_json(trial_dir / "parameters.json", dict(parameters))
     write_json(trial_dir / "parameter_groups.json", parameter_groups(parameters, stage))
 
-    command, cwd = build_command(parameters, agent_config, trial_id, updates, stage)
+    normalized_resume = (
+        _validated_resume_checkpoint(resume_checkpoint)
+        if stage == "confirm"
+        else None
+    )
+    if normalized_resume is not None:
+        resume_step = int(normalized_resume["global_step"])
+        if resume_step >= updates:
+            raise ValueError(
+                "confirm total_training_steps must be greater than the resume "
+                f"checkpoint step: target={updates}, checkpoint={resume_step}"
+            )
+        checkpoint_errors = _checkpoint_validation_errors(normalized_resume["path"])
+        if checkpoint_errors:
+            raise ValueError("invalid resume checkpoint: " + "; ".join(checkpoint_errors))
+
+    command, cwd = build_command(
+        parameters,
+        agent_config,
+        trial_id,
+        updates,
+        stage,
+        checkpoint_dir=checkpoint_root,
+        resume_checkpoint=normalized_resume,
+    )
     write_json(trial_dir / "command.json", {"cwd": str(cwd), "argv": command})
     if dry_run:
-        return {
+        report = {
             "trial_id": trial_id,
             "stage": stage,
             "platform": platform,
@@ -410,6 +534,14 @@ def run_trial(
             "command": command,
             "cwd": str(cwd),
         }
+        if normalized_resume is not None:
+            report["resume"] = {
+                "source_trial_id": normalized_resume["source_trial_id"],
+                "global_step": normalized_resume["global_step"],
+                "path": str(normalized_resume["path"]),
+                "updates_executed": updates - int(normalized_resume["global_step"]),
+            }
+        return report
     if not cwd.exists():
         raise FileNotFoundError(f"verl_root does not exist: {cwd}")
 
@@ -730,6 +862,10 @@ def run_trial(
                                 },
                             )
         return_code = process.wait()
+    except BaseException:
+        if stage == "stability_tuning":
+            _cleanup_unpublished_checkpoints(checkpoint_root)
+        raise
     finally:
         sampler.stop()
         sampler.join(timeout=5)
@@ -738,18 +874,23 @@ def run_trial(
             vllm_sampler.join(timeout=5)
         _terminate(process)
 
-    vllm_summary = summarize_vllm_metrics(
-        vllm_metrics_path if collect_vllm_metrics else None
-    )
-    structured_metrics = extract_trial_metrics(
-        trial_dir,
-        agent_config,
-        parameters=parameters,
-        expected_gpu_count=int(parameters.get("trainer.n_gpus_per_node", 1)),
-        vllm_summary=vllm_summary,
-        monitor=sampler.snapshot(),
-        write_metrics=False,
-    )
+    try:
+        vllm_summary = summarize_vllm_metrics(
+            vllm_metrics_path if collect_vllm_metrics else None
+        )
+        structured_metrics = extract_trial_metrics(
+            trial_dir,
+            agent_config,
+            parameters=parameters,
+            expected_gpu_count=int(parameters.get("trainer.n_gpus_per_node", 1)),
+            vllm_summary=vllm_summary,
+            monitor=sampler.snapshot(),
+            write_metrics=False,
+        )
+    except BaseException:
+        if stage == "stability_tuning":
+            _cleanup_unpublished_checkpoints(checkpoint_root)
+        raise
     metrics = legacy_metrics_from_structured(structured_metrics)
     metrics.update(
         {
@@ -790,6 +931,18 @@ def run_trial(
             "health_decisions": health_decisions,
         }
     )
+    if normalized_resume is not None:
+        metrics["resume"] = {
+            "source_trial_id": normalized_resume["source_trial_id"],
+            "global_step": normalized_resume["global_step"],
+            "path": str(normalized_resume["path"]),
+        }
+        metrics["updates_executed"] = max(
+            0,
+            metrics["updates_completed"] - int(normalized_resume["global_step"]),
+        )
+    else:
+        metrics["updates_executed"] = metrics["updates_completed"]
     health_early_stopped = stop_reason == "health_agent_early_stop"
     if metrics["updates_completed"] < updates and not health_early_stopped and not metrics["error"].get("type"):
         metrics["error"] = {
@@ -835,10 +988,19 @@ def run_trial(
         }
     elif return_code != 0 or stop_reason or metrics["updates_completed"] < updates:
         metrics["result"] = "fail"
+
+    if stage == "stability_tuning":
+        _finalize_stability_checkpoint(checkpoint_root, updates, metrics)
+
     structured_metrics["result"] = metrics["result"]
     structured_metrics["error"] = dict(metrics.get("error", {}))
     structured_metrics["stop_reason"] = stop_reason
     structured_metrics["updates_target"] = updates
+    structured_metrics["updates_executed"] = metrics["updates_executed"]
+    if "checkpoint" in metrics:
+        structured_metrics["checkpoint"] = dict(metrics["checkpoint"])
+    if "resume" in metrics:
+        structured_metrics["resume"] = dict(metrics["resume"])
     write_json_atomic(metrics_path, structured_metrics)
     write_json(trial_dir / "trial_report.json", metrics)
     return metrics

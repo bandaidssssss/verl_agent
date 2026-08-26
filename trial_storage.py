@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -9,9 +8,12 @@ from config_utils import load_json, read_jsonl
 from metrics import legacy_metrics_from_structured
 
 
-def trial_artifacts(trial_id: int) -> dict[str, str]:
+def trial_artifacts(
+    trial_id: int,
+    checkpoint_step: int | None = None,
+) -> dict[str, str]:
     prefix = f"trials/{trial_id:04d}"
-    return {
+    artifacts = {
         "report": f"{prefix}/trial_report.json",
         "parameters": f"{prefix}/parameters.json",
         "parameter_groups": f"{prefix}/parameter_groups.json",
@@ -26,6 +28,11 @@ def trial_artifacts(trial_id: int) -> dict[str, str]:
         "health_events": f"{prefix}/health_events.jsonl",
         "health_agent_traces": f"{prefix}/health_agent_traces.jsonl",
     }
+    if checkpoint_step is not None:
+        artifacts["checkpoint"] = (
+            f"{prefix}/checkpoints/global_step_{checkpoint_step}"
+        )
+    return artifacts
 
 
 def resolve_artifact(history_path: str | Path, relative_path: str) -> Path:
@@ -77,13 +84,21 @@ def build_trial_index(
     resource = resource if isinstance(resource, Mapping) else {}
     error = report.get("error")
     error = error if isinstance(error, Mapping) else {}
-    artifacts = trial_artifacts(trial_id)
-    return {
+    checkpoint = report.get("checkpoint")
+    checkpoint = checkpoint if isinstance(checkpoint, Mapping) else {}
+    checkpoint_step = checkpoint.get("global_step")
+    if not isinstance(checkpoint_step, int) or isinstance(checkpoint_step, bool):
+        checkpoint_step = None
+    artifacts = trial_artifacts(trial_id, checkpoint_step)
+    resume = report.get("resume")
+    resume = resume if isinstance(resume, Mapping) else {}
+    index = {
         "trial_id": trial_id,
         "stage": report.get("stage"),
         "result": report.get("result"),
         "updates_target": report.get("updates_target"),
         "updates_completed": report.get("updates_completed"),
+        "updates_executed": report.get("updates_executed"),
         "reference_trial_id": proposal.get("reference_trial_id"),
         "changes": copy.deepcopy(proposal.get("changes", {})),
         "scores": {
@@ -108,19 +123,28 @@ def build_trial_index(
         },
         "artifacts": artifacts,
     }
+    if checkpoint_step is not None:
+        index["checkpoint"] = {"global_step": checkpoint_step}
+    if resume:
+        index["resume"] = {
+            "source_trial_id": resume["source_trial_id"],
+            "global_step": resume["global_step"],
+        }
+    return index
 
 
 def compact_trial_report(
     report: Mapping[str, Any], index: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Keep one human-readable summary without duplicating detailed artifacts."""
-    return {
+    compact = {
         "trial_id": report.get("trial_id"),
         "stage": report.get("stage"),
         "platform": report.get("platform"),
         "result": report.get("result"),
         "updates_target": report.get("updates_target"),
         "updates_completed": report.get("updates_completed"),
+        "updates_executed": report.get("updates_executed"),
         "return_code": report.get("return_code"),
         "stop_reason": report.get("stop_reason"),
         "failure_phase": report.get("failure_phase"),
@@ -138,6 +162,11 @@ def compact_trial_report(
         },
         "artifacts": copy.deepcopy(index.get("artifacts", {})),
     }
+    if "checkpoint" in index:
+        compact["checkpoint"] = copy.deepcopy(index["checkpoint"])
+    if "resume" in index:
+        compact["resume"] = copy.deepcopy(index["resume"])
+    return compact
 
 
 def hydrate_trial(row: Mapping[str, Any], history_path: str | Path) -> dict[str, Any]:
@@ -185,6 +214,13 @@ def hydrate_trial(row: Mapping[str, Any], history_path: str | Path) -> dict[str,
     ):
         path = artifact(name)
         result[field] = str(path) if path is not None and path.exists() else None
+    checkpoint_path = artifact("checkpoint")
+    checkpoint = result.get("checkpoint")
+    if checkpoint_path is not None and isinstance(checkpoint, Mapping):
+        result["checkpoint"] = {
+            **dict(checkpoint),
+            "path": str(checkpoint_path),
+        }
     return result
 
 

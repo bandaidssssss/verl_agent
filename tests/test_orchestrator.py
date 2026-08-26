@@ -180,6 +180,62 @@ class DirectStabilityRunTest(unittest.TestCase):
         self.assertEqual(run_trial.call_args.args[3], "stability_tuning")
 
 
+class ConfirmCheckpointRunTest(unittest.TestCase):
+    @staticmethod
+    def _trial(trial_id: int, reward: float, parameters, checkpoint: Path) -> dict:
+        trial = stability_trial(trial_id, reward)
+        trial.update(
+            {
+                "parameters": parameters,
+                "checkpoint": {
+                    "global_step": 50,
+                    "path": str(checkpoint),
+                },
+            }
+        )
+        return trial
+
+    def test_confirm_resumes_the_best_stability_reference_checkpoint(self) -> None:
+        base = load_json(ROOT / "config" / "base_parameters.json")
+        config = load_json(ROOT / "config" / "agent_config.json")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir)
+            checkpoint_1 = output / "trials/0001/checkpoints/global_step_50"
+            checkpoint_2 = output / "trials/0002/checkpoints/global_step_50"
+            for checkpoint in (checkpoint_1, checkpoint_2):
+                (checkpoint / "actor").mkdir(parents=True)
+                (checkpoint / "data.pt").write_bytes(b"checkpoint")
+            config.update(
+                {
+                    "output_dir": str(output),
+                    "start_stage": "stability_tuning",
+                    "min_stability_trials": 2,
+                    "stream_agent_events": False,
+                }
+            )
+            trials = [
+                self._trial(1, 0.1, base, checkpoint_1),
+                self._trial(2, 0.4, base, checkpoint_2),
+            ]
+            orchestrator = TuningOrchestrator(ROOT, base, config)
+            orchestrator.trials = lambda: trials
+            orchestrator.trial_indexes = lambda: trials
+            with mock.patch("orchestrator.run_trial", return_value={}) as run_trial:
+                reports = orchestrator.run(max_trials=1, dry_run=True)
+
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(run_trial.call_args.args[3], "confirm")
+        self.assertEqual(run_trial.call_args.args[4], 135)
+        self.assertEqual(
+            run_trial.call_args.kwargs["resume_checkpoint"],
+            {
+                "source_trial_id": 2,
+                "global_step": 50,
+                "path": str(checkpoint_2),
+            },
+        )
+        self.assertEqual(reports[0]["proposal"]["reference_trial_id"], 2)
+
 class ProposalProvenanceTest(unittest.TestCase):
     def test_structured_change_is_converted_to_executable_target(self) -> None:
         current = {"actor_rollout_ref.rollout.n": 3}

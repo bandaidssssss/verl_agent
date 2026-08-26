@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import statistics
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -204,26 +203,6 @@ def _candidate_length_profile(
         "source": "reference_effective_length_scaled_by_configured_bound",
         "sampled_steps": reference_profile.get("sampled_steps", 0),
     }
-
-
-def _phase_percentage_peaks(trial: Mapping[str, Any]) -> dict[str, float]:
-    result: dict[str, float] = {}
-    structured = trial.get("structured_metrics")
-    resource = structured.get("resource") if isinstance(structured, Mapping) else None
-    by_phase = resource.get("by_phase") if isinstance(resource, Mapping) else None
-    if not isinstance(by_phase, Mapping):
-        return result
-    for phase in PHASES:
-        value = by_phase.get(phase)
-        used = value.get("max_used_mib") if isinstance(value, Mapping) else None
-        total = (
-            value.get("max_used_gpu_total_mib")
-            if isinstance(value, Mapping)
-            else None
-        )
-        if _is_number(used) and _is_number(total) and float(total) > 0:
-            result[phase] = 100.0 * float(used) / float(total)
-    return result
 
 
 def _phase_measurements(trial: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1243,7 +1222,9 @@ def _training_activation_bytes(
     pp = int(runtime["pipeline_model_parallel_size"])
     vpp = runtime["virtual_pipeline_model_parallel_size"]
     num_microbatches = int(runtime["num_microbatches"])
-    act_bytes = int(architecture.get("activation_dtype_bytes", 2))
+    #megatron core里面最后一步有一个tofp32的操作
+    # act_bytes = int(architecture.get("activation_dtype_bytes", 2))
+    act_bytes=4
     layer_counts = _stage_layer_counts(
         layers,
         pp,
@@ -1304,15 +1285,14 @@ def _training_activation_bytes(
     stage_peak_bytes[0] += embedding_bytes
 
     # Last stage owns final norm and, unless fused, TP-sharded vocabulary logits.
-    final_norm_bytes = tokens * hidden * act_bytes
+    final_norm_bytes = tokens * architecture["padded_vocab_size"] * act_bytes
     logits_one_copy = 0.0
     logits_copies = 0
     if not runtime["use_fused_kernels"]:
         logits_one_copy = (
-            tokens * float(architecture["padded_vocab_size"]) / tp * 4
+            tokens * float(architecture["padded_vocab_size"]) / tp * act_bytes
         )
         logits_copies = 3 if runtime.get("calculate_entropy") else 1
-    #跟log_prob_activation_bytes()类似，最后的输出有 to_fp32的操作，所以使用4字节
     stage_peak_bytes[-1] += final_norm_bytes + logits_one_copy * logits_copies
 
     peak = max(stage_peak_bytes)
@@ -1371,28 +1351,28 @@ def _log_prob_activation_bytes(
     hidden = float(architecture["hidden_size"])
     tp = int(runtime["tensor_model_parallel_size"])
     pp = int(runtime["pipeline_model_parallel_size"])
+
+    #megatron core里面最后一步有一个tofp32的操作
     act_bytes = int(architecture.get("activation_dtype_bytes", 2))
+    # act_bytes=4
+
 
     # This is a one-live-layer proxy.  Forward-only log-prob must not retain
     # one copy for every transformer layer as training does.
     body_live_bytes = _dense_selective_layer_bytes(architecture, runtime, tokens)
-    #pp之间的通信消耗,当sp为True时，pp之间的通信消耗会减少
-    pp_tokens = tokens
-    if runtime["sequence_parallel"]:
-        pp_tokens *= 1.0 / tp
-    pipeline_buffer_bytes = pp_tokens * hidden * act_bytes if pp > 1 else 0.0
+    pipeline_buffer_bytes=0
+    # pipeline_buffer_bytes = tokens * architecture["padded_vocab_size"]* act_bytes / tp
     non_last_stage_bytes = body_live_bytes + pipeline_buffer_bytes
 
     logits_one_copy = 0.0
     logits_copies = 0
     if not runtime["use_fused_kernels"]:
         logits_one_copy = (
-            tokens * float(architecture["padded_vocab_size"]) / tp * 4
+            tokens * float(architecture["padded_vocab_size"]) / tp * act_bytes
         )
         logits_copies = 3 if phase == "actor_log_prob" else 1
-    #logit一份，logit.clone()和softmax（）约三份,megatron里面最后的输出有 to_fp32的操作，所以使用4字节
+    #logit一份，logit.clone()和softmax（）约三份
     vocab_bytes = logits_one_copy * logits_copies
-    # actor_logprob 需要计算log_prob和entropy，所以需要两份输出，ref_log_prob只需要一份输出
     output_fields = 2 if phase == "actor_log_prob" else 1
     result_accumulation_bytes = (
         2.0
@@ -1773,116 +1753,6 @@ def _component_values(
     return values, details
 
 
-def _activation_calibration(
-    phase: str,
-    reference_parameters: Mapping[str, Any],
-    reference_architecture: Mapping[str, Any],
-    reference_runtime: Mapping[str, Any],
-    reference_activation_mb: float,
-    reference_measurement: Mapping[str, Any],
-    reference_context: Mapping[str, Any],
-    reference_length: Mapping[str, Any],
-    trials: Sequence[Mapping[str, Any]],
-) -> tuple[float | None, float, list[dict[str, Any]]]:
-    """Calibrate analytical activation deltas with earlier comparable trials."""
-
-    reference_mb = reference_measurement.get("memory_mb")
-    reference_capacity_mb = reference_measurement.get("gpu_capacity_mb")
-    if reference_mb is None:
-        return None, 0.0, []
-
-    dependencies = _component_dependencies(phase)
-    calibration_keys = {
-        _phase_keys(phase)["micro"],
-        PROMPT_LENGTH_KEY,
-        RESPONSE_LENGTH_KEY,
-    }
-    observations: list[dict[str, Any]] = []
-    slopes: list[float] = []
-    for trial in trials:
-        if not isinstance(trial, Mapping):
-            continue
-        parameters = trial.get("parameters")
-        if not isinstance(parameters, Mapping):
-            continue
-        if trial.get("trial_id") == reference_context.get("trial_id"):
-            continue
-        all_changed = _changed_keys(reference_parameters, parameters)
-        memory_regime_changes = {
-            key for key in all_changed if _looks_memory_sensitive(key)
-        }
-        if memory_regime_changes - calibration_keys:
-            continue
-        relevant = all_changed & dependencies["all"]
-        if not relevant or relevant - calibration_keys:
-            continue
-        if relevant & dependencies["uncalibrated"]:
-            continue
-
-        trial_facts = _extract_log_context(trial, parameters)
-        trial_length = trial_facts["length"]
-        if trial_length.get("source") == "configured_maximum" and not any(
-            reference_parameters.get(key) != parameters.get(key)
-            for key in (PROMPT_LENGTH_KEY, RESPONSE_LENGTH_KEY)
-        ):
-            # An OOM may happen before a step metric is emitted.  It still
-            # supplies a valid phase peak; use the reference workload length
-            # rather than incorrectly switching this one observation to the
-            # configured maximum.
-            trial_length = dict(reference_length)
-        trial_runtime = _runtime_args(phase, parameters, trial_facts, trial_length)
-        trial_activation, _ = _activation_bytes(
-            reference_architecture, trial_runtime, upper_sequence=False
-        )
-        theoretical_delta_mb = trial_activation / MIB - reference_activation_mb
-        if abs(theoretical_delta_mb) < 1e-6:
-            continue
-
-        measurement = _phase_measurements(trial)[phase]
-        actual_mb = measurement.get("memory_mb")
-        if actual_mb is None and measurement.get("memory_pct") is not None:
-            capacity = measurement.get("gpu_capacity_mb") or reference_capacity_mb
-            if capacity is not None:
-                actual_mb = float(capacity) * float(measurement["memory_pct"]) / 100.0
-        if actual_mb is None:
-            continue
-        actual_delta_mb = float(actual_mb) - float(reference_mb)
-        slope = actual_delta_mb / theoretical_delta_mb
-        if not math.isfinite(slope) or slope <= 0:
-            continue
-        slopes.append(slope)
-        observations.append(
-            {
-                "trial_id": trial.get("trial_id"),
-                "changed_parameters": sorted(relevant),
-                "theoretical_activation_delta_mb": theoretical_delta_mb,
-                "observed_phase_delta_mb": actual_delta_mb,
-                "delta_multiplier": slope,
-                "result": trial.get("result"),
-                "error_type": (
-                    trial.get("error", {}).get("type")
-                    if isinstance(trial.get("error"), Mapping)
-                    else None
-                ),
-            }
-        )
-
-    if not slopes:
-        return None, 0.0, observations
-    multiplier = statistics.median(slopes)
-    residual = max(
-        (
-            abs(
-                float(item["observed_phase_delta_mb"])
-                - multiplier * float(item["theoretical_activation_delta_mb"])
-            )
-            for item in observations
-        ),
-        default=0.0,
-    )
-    return multiplier, residual, observations
-
-
 def _compute_projection(
     phase: str,
     measurement: Mapping[str, Any],
@@ -1892,7 +1762,6 @@ def _compute_projection(
     candidate_context: Mapping[str, Any],
     reference_length: Mapping[str, Any],
     candidate_length: Mapping[str, Any],
-    trials: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     changed = _changed_keys(reference_parameters, candidate_parameters)
     dependencies = _component_dependencies(phase)
@@ -2001,27 +1870,6 @@ def _compute_projection(
         ) - reference_components.get(name, 0.0)
     delta_components = dict(raw_delta_components)
 
-    activation_multiplier = None
-    calibration_residual_mb = 0.0
-    calibration_observations: list[dict[str, Any]] = []
-    if "activation" in affected:
-        activation_multiplier, calibration_residual_mb, calibration_observations = (
-            _activation_calibration(
-                phase,
-                reference_parameters,
-                reference_architecture,
-                reference_runtime,
-                reference_components["activation_mb"],
-                measurement,
-                {**reference_context, "trial_id": None},
-                reference_length,
-                trials,
-            )
-        )
-        if activation_multiplier is not None:
-            delta_components["activation_mb"] = (
-                raw_delta_components.get("activation_mb", 0.0) * activation_multiplier
-            )
     delta_mb = sum(delta_components.values())
 
     reference_activation_upper = reference_components.get(
@@ -2030,7 +1878,6 @@ def _compute_projection(
     candidate_activation_upper = candidate_components.get(
         "activation_upper_sequence_mb"
     )
-    #upper按照prompt和response——length的最大值计算，可能比实际的activation_mb大很多。activation_mb是按照prompt+response 长度mean计算的。相差较多
     sequence_delta_gap = 0.0
     if (
         reference_activation_upper is not None
@@ -2040,14 +1887,13 @@ def _compute_projection(
         sequence_delta_gap = max(
             0.0, upper_delta - delta_components.get("activation_mb", 0.0)
         )
-    #delta_components 这个根据真实的实验校准activation_mb
+
     topology_changed = bool(
         relevant_changes
         & (dependencies["model"] | {ACTOR_CP_KEY, REF_CP_KEY, ACTOR_SP_KEY, REF_SP_KEY})
     )
     base_uncertainty = max(
         256.0,
-        calibration_residual_mb,
         abs(delta_mb) * (0.20 if topology_changed else 0.12),
     )
     uncertainty_mb = base_uncertainty + sequence_delta_gap
@@ -2074,8 +1920,7 @@ def _compute_projection(
     # With only one anchor, a large activation increase can trigger allocator,
     # workspace, and kernel-regime jumps that the analytical tensor formula
     # misses.  Scaling the whole observed peak by the analytical activation
-    # ratio is deliberately an upper bound, not the point estimate.  Once a
-    # comparable trial exists its observed multiplier calibrates the point.
+    # ratio is deliberately an upper bound, not the point estimate.
     reference_activation = reference_components.get("activation_mb")
     candidate_activation = candidate_components.get("activation_mb")
     conservative_upper_mb = None
@@ -2103,7 +1948,7 @@ def _compute_projection(
             if uncalibrated or structural_uncertainties
             else (
                 "medium"
-                if topology_changed or activation_multiplier is not None
+                if topology_changed
                 else "low"
             )
         ),
@@ -2129,11 +1974,6 @@ def _compute_projection(
             "candidate_details": candidate_details,
             "sequence_upper_delta_gap_mb": sequence_delta_gap,
             "conservative_activation_upper_mb": conservative_upper_mb,
-            "activation_delta_calibration": {
-                "multiplier": activation_multiplier,
-                "residual_mb": calibration_residual_mb,
-                "observations": calibration_observations,
-            },
             "structural_uncertainties": structural_uncertainties,
             "architecture": reference_architecture,
         },
@@ -2141,99 +1981,10 @@ def _compute_projection(
     }
 
 
-def _same_values(
-    left: Mapping[str, Any], right: Mapping[str, Any], keys: Sequence[str]
-) -> bool:
-    return all(left.get(key) == right.get(key) for key in keys)
-
-
-def _usable_calibration_trial(trial: Mapping[str, Any], phase: str) -> bool:
-    if trial.get("result") not in (None, "success", "early_stopped"):
-        return False
-    return phase in _phase_percentage_peaks(trial)
-
-
-def _rollout_regime_keys() -> tuple[str, ...]:
-    return (
-        MODEL_KEY,
-        "actor_rollout_ref.rollout.tensor_model_parallel_size",
-        "actor_rollout_ref.rollout.enable_prefix_caching",
-        "actor_rollout_ref.rollout.enable_chunked_prefill",
-        "actor_rollout_ref.rollout.free_cache_engine",
-        "actor_rollout_ref.rollout.enforce_eager",
-    )
-
-
-def _rollout_observations(
-    reference_parameters: Mapping[str, Any],
-    trials: Sequence[Mapping[str, Any]],
-) -> list[dict[str, float | int | None]]:
-    result: list[dict[str, float | int | None]] = []
-    for trial in trials:
-        if not isinstance(trial, Mapping) or not _usable_calibration_trial(
-            trial, "rollout"
-        ):
-            continue
-        parameters = trial.get("parameters")
-        if not isinstance(parameters, Mapping) or not _same_values(
-            reference_parameters, parameters, _rollout_regime_keys()
-        ):
-            continue
-        result.append(
-            {
-                "trial_id": trial.get("trial_id"),
-                "gpu_memory_utilization": _number(
-                    parameters, ROLLOUT_UTILIZATION_KEY, 0.6
-                ),
-                "observed_pct": _phase_percentage_peaks(trial)["rollout"],
-            }
-        )
-    return result
-
-
-def _rollout_utilization_slope(
-    observations: Sequence[Mapping[str, float | int | None]],
-) -> tuple[float, float, bool]:
-    slopes: list[float] = []
-    for index, left in enumerate(observations):
-        x_left = float(left["gpu_memory_utilization"])
-        y_left = float(left["observed_pct"])
-        for right in observations[index + 1 :]:
-            x_right = float(right["gpu_memory_utilization"])
-            y_right = float(right["observed_pct"])
-            dx = 100.0 * (x_right - x_left)
-            if abs(dx) < 1e-9:
-                continue
-            slope = (y_right - y_left) / dx
-            if math.isfinite(slope) and slope >= 0:
-                slopes.append(slope)
-    if not slopes:
-        return 1.0, 0.0, False
-    slope = statistics.median(slopes)
-    intercepts = [
-        float(item["observed_pct"])
-        - slope * 100.0 * float(item["gpu_memory_utilization"])
-        for item in observations
-    ]
-    intercept = statistics.median(intercepts)
-    residual = max(
-        (
-            abs(
-                float(item["observed_pct"])
-                - (intercept + slope * 100.0 * float(item["gpu_memory_utilization"]))
-            )
-            for item in observations
-        ),
-        default=0.0,
-    )
-    return slope, residual, True
-
-
 def _rollout_projection(
     measurement: Mapping[str, Any],
     reference_parameters: Mapping[str, Any],
     candidate_parameters: Mapping[str, Any],
-    trials: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     relevant = {
         MODEL_KEY,
@@ -2268,9 +2019,7 @@ def _rollout_projection(
     candidate_util = _number(candidate_parameters, ROLLOUT_UTILIZATION_KEY, 0.6)
     if not 0 < reference_util <= 1 or not 0 < candidate_util <= 1:
         raise ValueError(f"{ROLLOUT_UTILIZATION_KEY} must be in (0, 1]")
-    observations = _rollout_observations(reference_parameters, trials)
-    slope, residual_pct, calibrated = _rollout_utilization_slope(observations)
-    delta_capacity_fraction = slope * (candidate_util - reference_util)
+    delta_capacity_fraction = candidate_util - reference_util
     delta_mb = (
         float(capacity_mb) * delta_capacity_fraction
         if capacity_mb is not None
@@ -2282,7 +2031,7 @@ def _rollout_projection(
         else None
     )
     uncalibrated = sorted(changed - {ROLLOUT_UTILIZATION_KEY})
-    uncertainty_pct = max(2.0 if calibrated else 3.0, residual_pct + 1.0)
+    uncertainty_pct = 3.0
     uncertainty_pct += 2.5 * len(uncalibrated)
     uncertainty_mb = (
         float(capacity_mb) * uncertainty_pct / 100.0
@@ -2294,23 +2043,15 @@ def _rollout_projection(
         "projected_mb": projected_mb,
         "delta_mb": delta_mb,
         "uncertainty_mb": uncertainty_mb,
-        "confidence": "low" if uncalibrated else ("high" if calibrated else "medium"),
+        "confidence": "low" if uncalibrated else "medium",
         "model": "reference_peak_plus_vllm_utilization_capacity_delta",
         "drivers": {
             "affected_components": ["vllm_memory_budget"],
             "gpu_memory_utilization": {
                 "from": reference_util,
                 "to": candidate_util,
-                "calibrated_slope": slope,
                 "delta_gpu_capacity_fraction": delta_capacity_fraction,
             },
-            "calibration": (
-                "matched_trial_pairwise_median_slope"
-                if calibrated
-                else "one_capacity_pct_per_utilization_pct_prior"
-            ),
-            "calibration_observations": observations,
-            "calibration_residual_pct": residual_pct,
         },
         "uncalibrated_changes": uncalibrated,
     }
@@ -2327,8 +2068,6 @@ def _relative_drivers(projection: Mapping[str, Any]) -> dict[str, Any]:
     utilization = source.get("gpu_memory_utilization")
     if isinstance(utilization, Mapping):
         result["gpu_memory_utilization"] = dict(utilization)
-    if source.get("calibration") is not None:
-        result["calibration"] = source.get("calibration")
     candidate_runtime = source.get("candidate_runtime")
     if isinstance(candidate_runtime, Mapping):
         result["candidate_runtime"] = {
@@ -2403,11 +2142,7 @@ def _format_phase_result(
             if confidence_level == "high":
                 confidence_level = "medium"
         if not reasons:
-            reasons.append(
-                "matched empirical calibration is available"
-                if confidence_level == "high"
-                else "estimate uses an analytical delta anchored to one measured trial"
-            )
+            reasons.append("estimate uses an analytical delta anchored to one measured trial")
     if estimate > 1e-9:
         direction = "increase"
     elif estimate < -1e-9:
@@ -2431,9 +2166,7 @@ def _format_phase_result(
 def estimate_phase_memory(
     reference: Mapping[str, Any],
     candidate_parameters: Mapping[str, Any],
-    trials: Sequence[Mapping[str, Any]] = (),
-    *,
-    memory_limit_mib: float | None = None,
+    history: None ,
 ) -> dict[str, Any]:
     """Estimate per-phase relative change from one structured reference trial.
 
@@ -2465,7 +2198,6 @@ def estimate_phase_memory(
 
     measurements = _phase_measurements(reference)
     phases: dict[str, Any] = {}
-    projections: dict[str, Mapping[str, Any]] = {}
     for phase in PHASES:
         measurement = measurements[phase]
         if phase == "rollout":
@@ -2473,7 +2205,6 @@ def estimate_phase_memory(
                 measurement,
                 reference_parameters,
                 candidate_parameters,
-                trials,
             )
         else:
             projection = _compute_projection(
@@ -2485,12 +2216,10 @@ def estimate_phase_memory(
                 candidate_context,
                 reference_length,
                 candidate_length,
-                trials,
             )
         phases[phase] = _format_phase_result(
             measurement, projection, reference_context
         )
-        projections[phase] = projection
 
     affected_phases = []
     for phase_result in phases.values():
@@ -2516,84 +2245,13 @@ def estimate_phase_memory(
             else "medium"
         )
     )
-    # return {
-    #     "method": "measured_reference_relative_component_delta",
-    #     "version": 3,
-    #     # "confidence": {
-    #     #     "level": confidence,
-    #     #     "reasons": sorted(
-    #     #         {
-    #     #             reason
-    #     #             for phase in affected_phases
-    #     #             for reason in phase.get("confidence", {}).get("reasons", [])
-    #     #         }
-    #     #     ),
-    #     # },
-    #     "reference_trial_id": reference.get("trial_id"),
-    #     "changed_parameters": changed_parameters,
-    #     "phases": phases,
-    # }
-    # return {
-    #         **{
-    #             phase: result.get("relative_change_pct", {}).get("lower")
-    #             if isinstance(result.get("relative_change_pct"), Mapping)
-    #             else None
-    #             for phase, result in phases.items()
-    #         },
-    #         "note": "Estimated based on the mean of the experimental prompts and responses.",
-    #     }
-    note = (
-        "The central memory prediction is based on the P95 of the average "
-        "token count (prompt + response) across each step of the experiment."
-    )
-    if memory_limit_mib is None:
-        capacities = [
-            float(measurement["gpu_capacity_mb"])
-            for measurement in measurements.values()
-            if _is_number(measurement.get("gpu_capacity_mb"))
-        ]
-        if capacities:
-            memory_limit_mib = 0.92 * min(capacities)
-
-    affected_projections = [
-        projections[phase]
-        for phase in PHASES
-        if projections[phase].get("model")
-        not in {"unchanged_reference_phase", "unaffected_phase"}
-    ]
-    upper_headrooms = []
-    for projection in affected_projections:
-        projected_mb = projection.get("projected_mb")
-        uncertainty_mb = projection.get("uncertainty_mb")
-        if (
-            memory_limit_mib is None
-            or not _is_number(projected_mb)
-            or not _is_number(uncertainty_mb)
-        ):
-            upper_headrooms = []
-            break
-        # This is equivalent to applying relative_change_pct.upper to the
-        # measured reference peak, but keeps the comparison in MiB.
-        absolute_upper_mb = float(projected_mb) + abs(float(uncertainty_mb))
-        upper_headrooms.append(float(memory_limit_mib) - absolute_upper_mb)
-    if upper_headrooms and min(upper_headrooms) > 0:
-        note += (
-            " Every affected phase's predicted absolute memory upper bound "
-            "remains below the configured memory limit. If more throughput is "
-            "needed, consider a larger one-step change instead of repeatedly "
-            "increasing the same parameter in small increments; the short-run "
-            "Resource Gate remains authoritative."
-        )
-
     return {
-        **{
-            phase: result.get("relative_change_pct", {}).get("estimate")
-            if isinstance(result.get("relative_change_pct"), Mapping)
-            else None
-            for phase, result in phases.items()
-        },
-        "note": note,
+        phase: result.get("relative_change_pct", {}).get("estimate")
+        if isinstance(result.get("relative_change_pct"), Mapping)
+        else None
+        for phase, result in phases.items()
     }
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -2607,25 +2265,15 @@ def main() -> int:
     parser.add_argument(
         "--candidate", required=True, help="Fully assembled candidate parameter JSON"
     )
-    parser.add_argument("--trials", help="Optional JSON array or JSONL trial history")
     args = parser.parse_args()
 
     reference = json.loads(Path(args.reference_trial).read_text(encoding="utf-8"))
     candidate = json.loads(Path(args.candidate).read_text(encoding="utf-8"))
-    trials: list[dict[str, Any]] = []
-    if args.trials:
-        text = Path(args.trials).read_text(encoding="utf-8").strip()
-        trials = (
-            json.loads(text)
-            if text.startswith("[")
-            else [json.loads(line) for line in text.splitlines() if line]
-        )
     print(
         json.dumps(
             estimate_phase_memory(
                 reference,
                 candidate,
-                trials,
             ),
             indent=2,
             ensure_ascii=False,
