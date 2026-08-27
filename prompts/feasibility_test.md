@@ -32,15 +32,15 @@ This includes the bounded recent history plus every candidate reference, with cu
 1. Review every listed candidate independently. Verify every changed parameter's semantics and direction against that candidate's own reference experiment.
 2. For each hardware-stage candidate with an empirical reference, call `memory_estimator` using only the candidate's integer `reference_trial_id` and a `changes` object containing its canonical `from`/`to` values. Inspect rollout, actor log-probability, reference log-probability, and training separately.
 3. Review cross-phase effects of tensor parallelism, pipeline parallelism, offload, recompute, micro batching, and KV-cache behavior when actor, rollout, and reference workloads are colocated.
-4. Reject a candidate that may improve one local phase while likely reducing end-to-end throughput or exhausting memory in another phase.
-5. Mark any stability-stage candidate that changes a hardware parameter as `invalid`.
-6. `live_gpu_snapshot` can reveal interference from other processes on the current host, but it cannot prove that a candidate is memory-safe during training.
-7. Call `search_verl_docs` when the real meaning of a verl field is uncertain. Do not guess.
-8. When calling `memory_estimator`, pass exactly `changes` and integer `reference_trial_id`. Copy each change's `from` and `to`, omit `reason`, and use `from: null` only when that parameter was absent from the reference trial.
-9. Read only the current estimator schema: each phase has `status`, `reference_peak_mib`, `estimated_peak_mib`, and `estimated_relative_change_pct`; the top level has `safety` and `note`. Treat `unmodeled` or `unavailable` as unresolved risk and never reinterpret `null` as zero. Final safety still depends on the real short-run Resource Gate.
-10. A candidate is valid only when it tests a coherent hypothesis, has sufficient evidence for its direction, respects stage boundaries, and has an acceptable risk profile.
-11. If one or more candidates are valid, return top-level `verdict: "valid"` and select exactly one of their IDs. Choose the candidate with the best end-to-end evidence/risk trade-off, not merely the highest Proposal confidence.
-12. If none are valid, return top-level `verdict: "invalid"` and `selected_candidate_id: null`. Never return parameter values outside the per-candidate reviews.
+
+4. Mark any stability-stage candidate that changes a hardware parameter as `invalid`.
+
+
+5. When calling `memory_estimator`, pass exactly `changes` and integer `reference_trial_id`. Copy each change's `from` and `to`, omit `reason`, and use `from: null` only when that parameter was absent from the reference trial.
+6. Read only the current estimator schema: each phase has `status`, `reference_peak_mib`, `estimated_peak_mib`, and `estimated_relative_change_pct`; the top level has `safety` and `note`. Treat `unmodeled` or `unavailable` as unresolved risk and never reinterpret `null` as zero. Final safety still depends on the real short-run Resource Gate.
+7. A candidate is valid only when it tests a coherent hypothesis, has sufficient evidence for its direction, respects stage boundaries, and has an acceptable risk profile.
+8. If one or more candidates are valid, return top-level `verdict: "valid"` and select exactly one of their IDs. Choose the candidate with the best end-to-end evidence/risk trade-off, not merely the highest Proposal confidence.
+9. If none are valid, return top-level `verdict: "invalid"` and `selected_candidate_id: null`. Never return parameter values outside the per-candidate reviews.
 
 After all tool calls, output exactly one JSON object and no Markdown or additional explanation:
 

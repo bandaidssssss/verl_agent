@@ -39,9 +39,7 @@ STABILITY_PARAMETERS = {
     "actor_rollout_ref.actor.optim.lr_warmup_steps",
     "actor_rollout_ref.actor.use_kl_loss",
     "actor_rollout_ref.actor.kl_loss_coef",
-    "actor_rollout_ref.actor.kl_loss_type",
     "actor_rollout_ref.actor.entropy_coeff",
-    "actor_rollout_ref.rollout.n",
 }
 
 IGNORED_PARAMETERS = {
