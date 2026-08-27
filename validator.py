@@ -4,6 +4,11 @@ import json
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from runtime_parameters import (
+    BATCHING_PHASE_KEYS,
+    resolve_batching_parameters,
+)
+
 
 HARDWARE_PARAMETERS = {
     # Actor training batching.
@@ -21,12 +26,11 @@ HARDWARE_PARAMETERS = {
     "actor_rollout_ref.rollout.gpu_memory_utilization",
     "actor_rollout_ref.rollout.max_num_batched_tokens",
     "actor_rollout_ref.rollout.max_num_seqs",
-
-    # Actor old-log-prob.
-    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
     "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu",
     "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz",
-    
+    # Actor old-log-prob.
+    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
+
     # Reference log-prob owns batching only. Its colocated Megatron model
     # follows the actor model-parallel topology in verl 0.7.
     "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
@@ -39,7 +43,9 @@ STABILITY_PARAMETERS = {
     "actor_rollout_ref.actor.optim.lr_warmup_steps",
     "actor_rollout_ref.actor.use_kl_loss",
     "actor_rollout_ref.actor.kl_loss_coef",
+    "actor_rollout_ref.actor.kl_loss_type",
     "actor_rollout_ref.actor.entropy_coeff",
+    "actor_rollout_ref.rollout.n",
 }
 
 IGNORED_PARAMETERS = {
@@ -81,25 +87,6 @@ RANGES = {
     "actor_rollout_ref.rollout.max_num_seqs": (1, 4096),
     "actor_rollout_ref.rollout.n": (1, 64),
 }
-
-BATCHING_AUTHORITIES = (
-    (
-        "actor_rollout_ref.actor.use_dynamic_bsz",
-        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
-        "actor_rollout_ref.actor.ppo_max_token_len_per_gpu",
-    ),
-    (
-        "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz",
-        "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
-        "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu",
-    ),
-    (
-        "actor_rollout_ref.ref.log_prob_use_dynamic_bsz",
-        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
-        "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu",
-    ),
-)
-
 
 @dataclass
 class ValidationResult:
@@ -158,13 +145,25 @@ def hardware_token_budget(parameters: Mapping[str, Any]) -> int:
     )
 
 
-def effective_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
+def effective_parameters(
+    parameters: Mapping[str, Any],
+    *,
+    reference_runtime_parameters: Mapping[str, Any] | None = None,
+    changed_keys: Sequence[str] = (),
+) -> dict[str, Any]:
     """Return the runtime-effective configuration used for duplicate checks."""
-    return {
+    result = {
         key: value
         for key, value in parameters.items()
         if key not in IGNORED_PARAMETERS
     }
+    resolved = resolve_batching_parameters(
+        parameters,
+        reference_runtime_parameters,
+        changed_keys=changed_keys,
+    )
+    result.update(resolved["values"])
+    return result
 
 
 def validate_candidate(
@@ -175,6 +174,7 @@ def validate_candidate(
     base_parameters: Mapping[str, Any],
     history: Sequence[Mapping[str, Any]],
     locked_parameters: Mapping[str, Any] | None = None,
+    reference_runtime_parameters: Mapping[str, Any] | None = None,
 ) -> ValidationResult:
     violations: list[str] = []
     editable = set(editable_parameters(stage))
@@ -223,15 +223,36 @@ def validate_candidate(
         "trainer.n_gpus_per_node",
         "trainer.nnodes",
     ]
-    for dynamic_key, micro_key, max_tokens_key in BATCHING_AUTHORITIES:
-        required.append(
-            max_tokens_key if bool(parameters.get(dynamic_key, False)) else micro_key
-        )
     missing = [
         key for key in required if key not in parameters or parameters.get(key) is None
     ]
-    if missing:
-        violations.append("missing required parameters: " + ", ".join(missing))
+    resolved = resolve_batching_parameters(
+        parameters,
+        reference_runtime_parameters,
+        changed_keys=changes,
+    )
+
+    for phase, keys in BATCHING_PHASE_KEYS.items():
+        phase_values = resolved["phases"][phase]
+        dynamic = phase_values["dynamic"]
+        if not isinstance(dynamic, bool):
+            violations.append(
+                f"effective {keys['dynamic']} must be a known bool for {phase}"
+            )
+            continue
+        control_name = (
+            "max_token_len_per_gpu" if dynamic else "micro_batch_size_per_gpu"
+        )
+        control_key = keys["max_tokens"] if dynamic else keys["micro"]
+        control_value = phase_values[control_name]
+        if control_value is None:
+            violations.append(
+                f"effective {control_key} is required when {keys['dynamic']}={dynamic}"
+            )
+
+    if missing or violations:
+        if missing:
+            violations.append("missing required parameters: " + ", ".join(missing))
         return ValidationResult(False, violations)
 
     train_batch = int(parameters["data.train_batch_size"])
@@ -239,13 +260,11 @@ def validate_candidate(
     mini_batch = int(parameters["actor_rollout_ref.actor.ppo_mini_batch_size"])
     if (train_batch * rollout_n) % mini_batch != 0:
         violations.append("data.train_batch_size * rollout.n must be divisible by ppo_mini_batch_size")
-    use_dynamic_bsz = bool(
-        parameters.get("actor_rollout_ref.actor.use_dynamic_bsz", False)
-    )
+    use_dynamic_bsz = resolved["phases"]["training"]["dynamic"]
     if not use_dynamic_bsz:
-        micro_value = parameters.get(
-            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu"
-        )
+        micro_value = resolved["phases"]["training"][
+            "micro_batch_size_per_gpu"
+        ]
         if (
             isinstance(micro_value, int)
             and not isinstance(micro_value, bool)
@@ -272,14 +291,26 @@ def validate_candidate(
         if baseline and abs(candidate - baseline) / baseline > tolerance:
             violations.append(f"hardware token budget must remain {baseline}, got {candidate}")
 
-    canonical = json.dumps(
-        effective_parameters(parameters), sort_keys=True, separators=(",", ":")
+    configured_candidate = json.dumps(
+        {
+            key: value
+            for key, value in parameters.items()
+            if key not in IGNORED_PARAMETERS
+        },
+        sort_keys=True,
+        separators=(",", ":"),
     )
     for trial in history:
         previous = trial.get("parameters")
         if previous and json.dumps(
-            effective_parameters(previous), sort_keys=True, separators=(",", ":")
-        ) == canonical:
+            {
+                key: value
+                for key, value in previous.items()
+                if key not in IGNORED_PARAMETERS
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ) == configured_candidate:
             violations.append(f"configuration duplicates trial {trial.get('trial_id', '?')}")
             break
 

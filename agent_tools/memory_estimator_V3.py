@@ -7,6 +7,8 @@ import statistics
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from runtime_parameters import resolve_batching_parameters, runtime_parameter_values
+
 
 PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
 
@@ -139,6 +141,12 @@ def _extract_log_context(
     workload = facts.get("workload")
     if not isinstance(megatron, Mapping) or not isinstance(workload, Mapping):
         raise ValueError("log_facts.json is missing megatron or workload facts")
+    runtime_parameters = runtime_parameter_values(facts)
+    if not runtime_parameters:
+        raise ValueError(
+            "log_facts.json is missing resolved runtime_parameters; "
+            "re-extract the reference trial's train.log"
+        )
     summary = megatron.get("parameter_summary")
     ranks = megatron.get("rank_parameter_counts")
     parameter_profile = dict(summary) if isinstance(summary, Mapping) else {}
@@ -164,6 +172,7 @@ def _extract_log_context(
             if isinstance(megatron.get("resolved_config"), Mapping)
             else {}
         ),
+        "runtime_parameters": runtime_parameters,
         "parameter_profile": parameter_profile,
         "length": dict(length),
         "warnings": (
@@ -669,6 +678,11 @@ def _runtime_args(
     resolved = context.get("resolved", {})
     if not isinstance(resolved, Mapping):
         resolved = {}
+    runtime_parameters = context.get("runtime_parameters", {})
+    if not isinstance(runtime_parameters, Mapping):
+        runtime_parameters = {}
+    batching = resolve_batching_parameters(parameters, runtime_parameters)
+    batching_phase = batching["phases"][phase]
     sources: dict[str, str] = {}
 
     def read(name: str, key: str, resolved_name: str, default: Any) -> Any:
@@ -678,7 +692,27 @@ def _runtime_args(
         sources[name] = source
         return value
 
-    micro = float(read("micro_batch_size", keys["micro"], "micro_batch_size", 1))
+    micro_raw = batching_phase["micro_batch_size_per_gpu"]
+    dynamic_raw = batching_phase["dynamic"]
+    max_tokens_raw = batching_phase["max_token_len_per_gpu"]
+    if not isinstance(dynamic_raw, bool):
+        raise ValueError(
+            f"effective {keys['dynamic_batch']} is unavailable for {phase}"
+        )
+    if dynamic_raw and not _is_number(max_tokens_raw):
+        raise ValueError(f"effective {keys['max_tokens']} is unavailable for {phase}")
+    if not dynamic_raw and not _is_number(micro_raw):
+        raise ValueError(f"effective {keys['micro']} is unavailable for {phase}")
+    micro = float(micro_raw) if _is_number(micro_raw) else 1.0
+    max_tokens = float(max_tokens_raw) if _is_number(max_tokens_raw) else 1.0
+    dynamic_batch = dynamic_raw
+    sources["micro_batch_size"] = batching_phase["sources"][
+        "micro_batch_size_per_gpu"
+    ]
+    sources["dynamic_batch"] = batching_phase["sources"]["dynamic"]
+    sources["max_token_len_per_gpu"] = batching_phase["sources"][
+        "max_token_len_per_gpu"
+    ]
     tp = int(
         read("tensor_model_parallel_size", keys["tp"], "tensor_model_parallel_size", 1)
     )
@@ -731,22 +765,6 @@ def _runtime_args(
         sources["sequence_parallel"] = "framework_forced_false_at_tp1"
     param_offload = bool(
         read("param_offload", keys["param_offload"], "param_offload", False)
-    )
-    dynamic_batch = bool(
-        read(
-            "dynamic_batch",
-            keys["dynamic_batch"],
-            "use_dynamic_bsz",
-            False,
-        )
-    )
-    max_tokens = float(
-        read(
-            "max_token_len_per_gpu",
-            keys["max_tokens"],
-            "max_token_len_per_gpu",
-            16384,
-        )
     )
     remove_padding = bool(
         read(
@@ -2517,6 +2535,24 @@ def estimate_phase_memory(
     }
 
     reference_context = _extract_log_context(reference, reference_parameters)
+    runtime_values = reference_context.get("runtime_parameters", {})
+    reference_batching = resolve_batching_parameters(
+        reference_parameters,
+        runtime_values if isinstance(runtime_values, Mapping) else {},
+    )
+    candidate_batching = resolve_batching_parameters(
+        candidate_parameters,
+        runtime_values if isinstance(runtime_values, Mapping) else {},
+        changed_keys=changed,
+    )
+    reference_effective_parameters = {
+        **dict(reference_parameters),
+        **reference_batching["values"],
+    }
+    candidate_effective_parameters = {
+        **dict(candidate_parameters),
+        **candidate_batching["values"],
+    }
     reference_length = reference_context["length"]
     candidate_length = _candidate_length_profile(
         reference_length, reference_parameters, candidate_parameters
@@ -2531,16 +2567,16 @@ def estimate_phase_memory(
         if phase == "rollout":
             projection = _rollout_projection(
                 measurement,
-                reference_parameters,
-                candidate_parameters,
+                reference_effective_parameters,
+                candidate_effective_parameters,
                 trials,
             )
         else:
             projection = _compute_projection(
                 phase,
                 measurement,
-                reference_parameters,
-                candidate_parameters,
+                reference_effective_parameters,
+                candidate_effective_parameters,
                 reference_context,
                 candidate_context,
                 reference_length,
@@ -2561,7 +2597,6 @@ def estimate_phase_memory(
     compact_phases = {
         phase: _compact_phase_result(phase, projections[phase])
         for phase in PHASES
-
     }
     safety = _memory_safety_status(
         compact_phases,
@@ -2595,6 +2630,10 @@ def estimate_phase_memory(
     return {
         "reference_trial_id": reference.get("trial_id"),
         "changed_parameters": changed_parameters,
+        "resolved_batching": {
+            "reference": reference_batching["phases"],
+            "candidate": candidate_batching["phases"],
+        },
         "phases": compact_phases,
         "safety": safety,
         "note": note,

@@ -110,8 +110,8 @@ Proposal 返回由 `min_proposal_candidates` / `max_proposal_candidates` 限制�
 - `output/trials/NNNN/health_events.jsonl`：健康规则触发、Agent 决策及停止动作。
 - `output/trials/NNNN/health_agent_traces.jsonl`：Train Health Agent 的完整对话、工具和 token trace。
 - `output/trials/NNNN/metrics.json`：一次解析得到的 throughput、stability、resource 分类指标；运行中原子更新，结束后标为 `final`。
-- `output/trials/NNNN/log_facts.json`：统一提取器在同一次日志扫描中提取的模型配置、Megatron resolved runtime、去重后的 rank 参数量和有效序列长度；不属于 memory estimator 输出。
-- `output/trials/NNNN/parameters.json` / `parameter_groups.json`：实际完整参数，以及 fixed/throughput/stability/ignored 分类。
+- `output/trials/NNNN/log_facts.json`：统一提取器在同一次日志扫描中提取的完整 Hydra runtime 参数、模型配置、Megatron resolved runtime、去重后的 rank 参数量和有效序列长度；不属于 memory estimator 输出。
+- `output/trials/NNNN/parameters.json` / `parameter_groups.json`：实际传给 Hydra 的显式参数，以及 fixed/throughput/stability/ignored 分类。框架默认值不会补写进 `parameters.json`。
 - `output/trials/NNNN/decision.json` / `agent_trace.json`：决策摘要与完整 Agent trace 分开保存。
 - `output/trials/NNNN/trial_report.json`：不含逐 step 数组和 trace 的单轮结果摘要。
 
@@ -147,3 +147,7 @@ python tools/extract_trial_metrics.py --trial-dir output/trials/0001 \
 PLATFORM=C550 bash train/run_verl.sh \
   parameters.json hardware_tuning 1 20
 ```
+
+Agent、Validator 和 Memory Estimator 要求 reference trial 的 `log_facts.json`
+包含 `runtime_parameters`。缺少这一层的 trial 不做旧格式兼容，必须用上面的
+`extract_trial_metrics.py` 从其 `train.log` 重新提取后才能作为 reference。

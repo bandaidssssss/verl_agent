@@ -33,7 +33,7 @@ Each entry contains only the recorded changes, actual values for parameters edit
 {EDITABLE_PARAMETERS}
 
 ### Current Values of Editable Parameters
-An absent override is shown with `explicitly_configured: false` and `value: null`.
+`configured_value` is the explicit Hydra override and is the authority for `changes.from`; use `null` when it is absent. `effective_value` is the resolved value observed in that trial and is the authority for runtime reasoning. `effective_source: unavailable` means the runtime value must not be guessed.
 {EDITABLE_PARAMETER_VALUES}
 
 ### Hard-Constraint Summary

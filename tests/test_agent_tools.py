@@ -8,6 +8,7 @@ from unittest import mock
 
 from agent_tools import ToolRegistry
 from config_utils import load_json, write_json
+from runtime_parameters import resolve_batching_parameters
 from trial_storage import trial_artifacts
 
 
@@ -34,6 +35,7 @@ class AgentToolsTest(unittest.TestCase):
         *,
         trial_id: int = 1,
         phase_peaks: dict[str, float] | None = None,
+        runtime_overrides: dict[str, object] | None = None,
     ) -> None:
         peaks = phase_peaks or {
             "rollout": 46000.0,
@@ -65,6 +67,11 @@ class AgentToolsTest(unittest.TestCase):
                 "error": {"type": None, "evidence": []},
             },
         )
+        runtime_values = {
+            **parameters,
+            **resolve_batching_parameters(parameters)["values"],
+            **(runtime_overrides or {}),
+        }
         write_json(
             trial_dir / "log_facts.json",
             {
@@ -82,6 +89,11 @@ class AgentToolsTest(unittest.TestCase):
                     "intermediate_size": 192,
                     "vocab_size": 1024,
                     "torch_dtype": "bfloat16",
+                },
+                "runtime_parameters": {
+                    "available": True,
+                    "source": "train.log:resolved_hydra_config",
+                    "values": runtime_values,
                 },
                 "megatron": {
                     "resolved_config": {
@@ -417,15 +429,14 @@ class AgentToolsTest(unittest.TestCase):
     def test_dynamic_batch_and_remove_padding_use_modeled_activation_deltas(self) -> None:
         dynamic_key = "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz"
         padding_key = "actor_rollout_ref.actor.megatron.use_remove_padding"
-        reference = {**self.base, padding_key: True}
-        reference.pop(dynamic_key, None)
+        reference = {**self.base, padding_key: True, dynamic_key: False}
         self.write_memory_trial(reference)
         result = self.registry().execute(
             "proposal",
             "memory_estimator",
             {
                 "changes": {
-                    dynamic_key: {"from": None, "to": True},
+                    dynamic_key: {"from": False, "to": True},
                     padding_key: {"from": True, "to": False},
                 },
                 "reference_trial_id": 1,
@@ -438,6 +449,73 @@ class AgentToolsTest(unittest.TestCase):
         self.assertGreater(
             actor_log_prob["estimated_relative_change_pct"], 0.0
         )
+
+    def test_explicit_actor_switch_uses_observed_reference_controls(self) -> None:
+        actor_dynamic = "actor_rollout_ref.actor.use_dynamic_bsz"
+        actor_cap = "actor_rollout_ref.actor.ppo_max_token_len_per_gpu"
+        rollout_dynamic = (
+            "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz"
+        )
+        ref_dynamic = "actor_rollout_ref.ref.log_prob_use_dynamic_bsz"
+        reference = {
+            **self.base,
+            actor_dynamic: False,
+            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 8,
+        }
+        for key in (actor_cap, rollout_dynamic, ref_dynamic):
+            reference.pop(key, None)
+        runtime = {
+            actor_dynamic: False,
+            actor_cap: 16384,
+            rollout_dynamic: False,
+            "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu": 16384,
+            ref_dynamic: False,
+            "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu": 16384,
+        }
+        self.write_memory_trial(reference, runtime_overrides=runtime)
+        result = self.registry().execute(
+            "proposal",
+            "memory_estimator",
+            {
+                "changes": {
+                    actor_dynamic: {"from": False, "to": True},
+                    actor_cap: {"from": None, "to": 6400},
+                    rollout_dynamic: {"from": None, "to": False},
+                    ref_dynamic: {"from": None, "to": False},
+                },
+                "reference_trial_id": 1,
+            },
+            self.registry().runtime({}),
+        )
+
+        candidate_batching = result["resolved_batching"]["candidate"]
+        self.assertTrue(candidate_batching["training"]["dynamic"])
+        self.assertEqual(
+            candidate_batching["training"]["max_token_len_per_gpu"], 6400
+        )
+        self.assertFalse(candidate_batching["actor_log_prob"]["dynamic"])
+        self.assertFalse(candidate_batching["ref_log_prob"]["dynamic"])
+        self.assertEqual(result["phases"]["training"]["status"], "estimated")
+
+    def test_memory_estimator_rejects_log_facts_without_runtime_snapshot(self) -> None:
+        key = "actor_rollout_ref.rollout.gpu_memory_utilization"
+        reference = {**self.base, key: 0.6}
+        self.write_memory_trial(reference)
+        facts_path = self.history_path.parent / "trials" / "0001" / "log_facts.json"
+        facts = load_json(facts_path)
+        facts.pop("runtime_parameters")
+        write_json(facts_path, facts)
+
+        with self.assertRaisesRegex(Exception, "re-extract"):
+            self.registry().execute(
+                "proposal",
+                "memory_estimator",
+                {
+                    "changes": {key: {"from": 0.6, "to": 0.7}},
+                    "reference_trial_id": 1,
+                },
+                self.registry().runtime({}),
+            )
 
     def test_entropy_zero_disables_training_workspace_only(self) -> None:
         key = "actor_rollout_ref.actor.entropy_coeff"
@@ -649,6 +727,16 @@ class AgentToolsTest(unittest.TestCase):
                 {parameter_key: trial_id * 128, "data.train_batch_size": 64},
             )
             write_json(
+                trial_dir / "log_facts.json",
+                {
+                    "runtime_parameters": {
+                        "available": True,
+                        "source": "train.log:resolved_hydra_config",
+                        "values": {parameter_key: trial_id * 128},
+                    }
+                },
+            )
+            write_json(
                 trial_dir / "metrics.json",
                 {
                     "resource": {
@@ -696,7 +784,12 @@ class AgentToolsTest(unittest.TestCase):
         self.assertEqual([row["trial_id"] for row in references], [2, 99, 1])
         self.assertEqual(
             references[0]["parameters"][parameter_key],
-            {"value": 256, "explicitly_configured": True},
+            {
+                "configured_value": 256,
+                "explicitly_configured": True,
+                "effective_value": 256,
+                "effective_source": "train.log:resolved_hydra_config",
+            },
         )
         self.assertNotIn("data.train_batch_size", references[0]["parameters"])
         self.assertEqual(
@@ -742,6 +835,16 @@ class AgentToolsTest(unittest.TestCase):
             },
         )
         write_json(
+            trial_dir / "log_facts.json",
+            {
+                "runtime_parameters": {
+                    "available": True,
+                    "source": "train.log:resolved_hydra_config",
+                    "values": {learning_rate: 3e-6},
+                }
+            },
+        )
+        write_json(
             trial_dir / "metrics.json",
             {
                 "stability": {
@@ -784,7 +887,12 @@ class AgentToolsTest(unittest.TestCase):
         reference = result["reference_trials"][0]
         self.assertEqual(
             reference["parameters"][learning_rate],
-            {"value": 3e-6, "explicitly_configured": True},
+            {
+                "configured_value": 3e-6,
+                "explicitly_configured": True,
+                "effective_value": 3e-6,
+                "effective_source": "train.log:resolved_hydra_config",
+            },
         )
         self.assertNotIn(
             "actor_rollout_ref.rollout.max_num_seqs", reference["parameters"]

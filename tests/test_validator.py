@@ -61,7 +61,7 @@ class ValidatorTest(unittest.TestCase):
             any("ppo_micro_batch_size_per_gpu" in row for row in result.violations)
         )
 
-    def test_dynamic_batching_requires_max_token_controls(self) -> None:
+    def test_ref_dynamic_batching_requires_its_own_effective_control(self) -> None:
         candidate = dict(self.base)
         candidate.pop("actor_rollout_ref.ref.log_prob_max_token_len_per_gpu")
         result = validate_candidate(
@@ -74,8 +74,87 @@ class ValidatorTest(unittest.TestCase):
         )
         self.assertFalse(result.valid)
         self.assertTrue(
-            any("ref.log_prob_max_token_len_per_gpu" in row for row in result.violations)
+            any(
+                "ref.log_prob_max_token_len_per_gpu" in row
+                for row in result.violations
+            )
         )
+
+    def test_ref_control_can_come_from_observed_runtime(self) -> None:
+        key = "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu"
+        candidate = dict(self.base)
+        candidate.pop(key)
+        result = validate_candidate(
+            candidate,
+            {},
+            "hardware_tuning",
+            self.config,
+            self.base,
+            [],
+            reference_runtime_parameters={key: 16384},
+        )
+        self.assertTrue(result.valid, result.violations)
+
+    def test_actor_dynamic_batching_requires_effective_max_token_control(self) -> None:
+        candidate = dict(self.base)
+        candidate.pop("actor_rollout_ref.actor.ppo_max_token_len_per_gpu")
+        result = validate_candidate(
+            candidate,
+            {},
+            "hardware_tuning",
+            self.config,
+            self.base,
+            [],
+        )
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any("ppo_max_token_len_per_gpu" in row for row in result.violations)
+        )
+
+    def test_explicit_actor_switch_keeps_log_prob_phases_fixed(self) -> None:
+        actor_dynamic = "actor_rollout_ref.actor.use_dynamic_bsz"
+        actor_cap = "actor_rollout_ref.actor.ppo_max_token_len_per_gpu"
+        rollout_dynamic = (
+            "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz"
+        )
+        ref_dynamic = "actor_rollout_ref.ref.log_prob_use_dynamic_bsz"
+        reference = {
+            **self.base,
+            actor_dynamic: False,
+            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 8,
+        }
+        for key in (actor_cap, rollout_dynamic, ref_dynamic):
+            reference.pop(key, None)
+        candidate = {
+            **reference,
+            actor_dynamic: True,
+            actor_cap: 6400,
+            rollout_dynamic: False,
+            ref_dynamic: False,
+        }
+        runtime = {
+            actor_dynamic: False,
+            actor_cap: 16384,
+            rollout_dynamic: False,
+            "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu": 16384,
+            ref_dynamic: False,
+            "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu": 16384,
+        }
+        result = validate_candidate(
+            candidate,
+            {
+                actor_dynamic: True,
+                actor_cap: 6400,
+                rollout_dynamic: False,
+                ref_dynamic: False,
+            },
+            "hardware_tuning",
+            self.config,
+            self.base,
+            [],
+            reference_runtime_parameters=runtime,
+        )
+        self.assertTrue(result.valid, result.violations)
 
     def test_rejects_stability_hardware_change(self) -> None:
         candidate = dict(self.base)

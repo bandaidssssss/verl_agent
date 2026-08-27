@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from prompt_context import (
+from prompt_context import (  # noqa: E402
     compact_candidate_for_prompt,
     compact_reference_history,
     compact_trial_for_prompt,
@@ -25,6 +25,13 @@ class PromptContextTest(unittest.TestCase):
             "updates_completed": 20,
             "changes": {"rollout.max_num_seqs": {"from": 128, "to": 256}},
             "parameters": {"rollout.max_num_seqs": 256},
+            "log_facts": {
+                "runtime_parameters": {
+                    "available": True,
+                    "source": "train.log:resolved_hydra_config",
+                    "values": {"rollout.max_num_seqs": 256},
+                }
+            },
             "structured_metrics": {
                 "resource": {
                     "by_phase": {
@@ -74,11 +81,21 @@ class PromptContextTest(unittest.TestCase):
         )
         self.assertEqual(
             compact["editable_parameter_values"]["rollout.max_num_seqs"],
-            {"value": 256, "explicitly_configured": True},
+            {
+                "configured_value": 256,
+                "explicitly_configured": True,
+                "effective_value": 256,
+                "effective_source": "train.log:resolved_hydra_config",
+            },
         )
         self.assertEqual(
             compact["editable_parameter_values"]["rollout.gpu_memory_utilization"],
-            {"value": None, "explicitly_configured": False},
+            {
+                "configured_value": None,
+                "explicitly_configured": False,
+                "effective_value": None,
+                "effective_source": "unavailable",
+            },
         )
         self.assertNotIn("missing_metrics", compact)
 
@@ -119,6 +136,38 @@ class PromptContextTest(unittest.TestCase):
                 "stability.window_metrics.actor/ppo_kl",
                 "stability.terminal_metrics.actor/ppo_kl",
             ],
+        )
+
+    def test_missing_override_uses_observed_effective_value(self) -> None:
+        key = "actor_rollout_ref.actor.ppo_max_token_len_per_gpu"
+        compact = compact_trial_for_prompt(
+            {
+                "trial_id": 2,
+                "stage": "hardware_tuning",
+                "result": "success",
+                "parameters": {},
+                "log_facts": {
+                    "runtime_parameters": {
+                        "available": True,
+                        "source": "train.log:resolved_hydra_config",
+                        "values": {key: 16384},
+                    }
+                },
+                "structured_metrics": {},
+            },
+            "hardware_tuning",
+            [key],
+            hardware_summary_metrics={},
+        )
+
+        self.assertEqual(
+            compact["editable_parameter_values"][key],
+            {
+                "configured_value": None,
+                "explicitly_configured": False,
+                "effective_value": 16384,
+                "effective_source": "train.log:resolved_hydra_config",
+            },
         )
 
     def test_history_keeps_required_reference_outside_recent_limit(self) -> None:

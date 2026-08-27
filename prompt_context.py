@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping, Sequence
 
+from runtime_parameters import parameter_value_views
+
 
 PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
 PHASE_MEMORY_FIELDS = ("mean_used_mib", "p95_used_mib", "max_used_mib")
@@ -139,6 +141,8 @@ def compact_trial_for_prompt(
 ) -> dict[str, Any]:
     parameters = trial.get("parameters")
     parameters = parameters if isinstance(parameters, Mapping) else {}
+    log_facts = trial.get("log_facts")
+    log_facts = log_facts if isinstance(log_facts, Mapping) else {}
     structured = trial.get("structured_metrics")
     structured = structured if isinstance(structured, Mapping) else {}
 
@@ -148,13 +152,9 @@ def compact_trial_for_prompt(
         "result": trial.get("result"),
         "updates_completed": trial.get("updates_completed"),
         "changes": copy.deepcopy(trial.get("changes", {})),
-        "editable_parameter_values": {
-            key: {
-                "value": copy.deepcopy(parameters.get(key)),
-                "explicitly_configured": key in parameters,
-            }
-            for key in editable_keys
-        },
+        "editable_parameter_values": parameter_value_views(
+            parameters, log_facts, editable_keys
+        ),
     }
 
     metrics, missing = select_stage_metrics(

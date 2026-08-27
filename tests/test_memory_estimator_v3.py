@@ -47,6 +47,11 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
                         "warnings": [],
                     },
                     "model_config": {"hidden_size": 64},
+                    "runtime_parameters": {
+                        "available": True,
+                        "source": "train.log:resolved_hydra_config",
+                        "values": self._parameters(),
+                    },
                     "megatron": {
                         "resolved_config": {"bf16": True},
                         "rank_parameter_counts": [],
@@ -105,10 +110,13 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
             "actor_rollout_ref.actor.megatron.expert_model_parallel_size": 1,
             "actor_rollout_ref.actor.megatron.expert_tensor_parallel_size": 2,
             ACTOR_SP_KEY: True,
+            "actor_rollout_ref.actor.use_dynamic_bsz": False,
             "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 2,
             "actor_rollout_ref.actor.ppo_mini_batch_size": 16,
             "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": 2,
+            ACTOR_LOG_PROB_DYNAMIC_KEY: False,
             "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 2,
+            REF_LOG_PROB_DYNAMIC_KEY: False,
         }
         parameters.update(updates)
         return parameters
@@ -255,6 +263,8 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
             "actor_rollout_ref.ref.megatron.pipeline_model_parallel_size": 1,
             REF_SP_KEY: True,
             "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 16,
+            REF_LOG_PROB_DYNAMIC_KEY: False,
+            "actor_rollout_ref.actor.use_dynamic_bsz": False,
             "actor_rollout_ref.actor.megatron.param_offload": True,
             "actor_rollout_ref.ref.megatron.param_offload": False,
         }
@@ -359,7 +369,7 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
         self.assertEqual(runtime["tokens_per_cp_rank"], 100)
         self.assertEqual(
             runtime["sources"]["dynamic_batch"],
-            f"parameters:{ACTOR_LOG_PROB_DYNAMIC_KEY}",
+            "reference_override",
         )
 
     def test_ref_dynamic_batch_uses_ref_keys(self) -> None:
@@ -376,22 +386,20 @@ class MemoryEstimatorV3Tests(unittest.TestCase):
         self.assertEqual(runtime["max_token_len_per_gpu"], 80)
         self.assertEqual(runtime["tokens_per_cp_rank"], 80)
 
-    def test_log_prob_runtime_does_not_fallback_to_training_batch_fields(self) -> None:
+    def test_log_prob_runtime_does_not_inherit_training_batch_fields(self) -> None:
         parameters = self._parameters(
             **{
                 "actor_rollout_ref.actor.use_dynamic_bsz": True,
                 "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": 32,
             }
         )
+        parameters.pop(ACTOR_LOG_PROB_DYNAMIC_KEY)
+        parameters.pop(REF_LOG_PROB_DYNAMIC_KEY)
 
         for phase in ("actor_log_prob", "ref_log_prob"):
-            runtime = self._runtime(phase, parameters)
-            self.assertFalse(runtime["dynamic_batch"])
-            self.assertEqual(runtime["max_token_len_per_gpu"], 16384)
-            self.assertEqual(runtime["sources"]["dynamic_batch"], "framework_default")
-            self.assertEqual(
-                runtime["sources"]["max_token_len_per_gpu"], "framework_default"
-            )
+            with self.subTest(phase=phase):
+                with self.assertRaisesRegex(ValueError, "is unavailable"):
+                    self._runtime(phase, parameters)
 
     def test_cp_reduces_fixed_workload_log_prob_activation(self) -> None:
         cp1 = self._parameters()

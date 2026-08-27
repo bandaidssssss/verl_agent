@@ -9,7 +9,7 @@
   "data.truncation": "error",
   "actor_rollout_ref.model.path": "/mnt/gxnbdrw-2/gxnbdrw-2/model/Qwen3-8B",
   "actor_rollout_ref.model.use_remove_padding": true,
-  "actor_rollout_ref.actor.optim.lr": 1e-6,
+  "actor_rollout_ref.actor.optim.lr": 1e-06,
   "actor_rollout_ref.actor.optim.lr_warmup_steps": 0,
   "actor_rollout_ref.actor.ppo_mini_batch_size": 256,
   "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": 16384,
@@ -42,7 +42,10 @@
   "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu": 8,
   "algorithm.use_kl_in_reward": false,
   "trainer.critic_warmup": 0,
-  "trainer.logger": ["console", "wandb"],
+  "trainer.logger": [
+    "console",
+    "wandb"
+  ],
   "trainer.project_name": "verl_math_tuner",
   "trainer.experiment_name": "qwen3_8b_agent",
   "trainer.n_gpus_per_node": 8,

@@ -11,6 +11,11 @@ from agents import AgentResponseError, AgentSet
 from config_utils import append_jsonl, apply_changes, write_json
 from prompt_context import compact_candidate_for_prompt, compact_reference_history
 from prompting import rejection_feedback
+from runtime_parameters import (
+    effective_from_value,
+    parameter_value_views,
+    runtime_parameter_values,
+)
 from runner import run_trial
 from trial_storage import (
     build_trial_index,
@@ -472,6 +477,7 @@ def _normalize_proposal_changes(
     proposal: Mapping[str, Any],
     reference_parameters: Mapping[str, Any],
     reference: Mapping[str, Any],
+    reference_runtime_values: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[str]]:
     """Validate the Agent's provenance and derive executable target values."""
     violations: list[str] = []
@@ -531,6 +537,9 @@ def _normalize_proposal_changes(
         targets[parameter] = target
         details[parameter] = {
             "from": actual_from,
+            "effective_from": effective_from_value(
+                parameter, reference_runtime_values
+            ),
             "to": target,
             "reason": reason.strip() if isinstance(reason, str) else reason,
         }
@@ -542,7 +551,12 @@ def _resolve_candidate_reference(
     reference_reason: Any,
     trials: list[dict[str, Any]],
     base_parameters: Mapping[str, Any],
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
+) -> tuple[
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    dict[str, Any],
+    list[str],
+]:
     """Resolve one Proposal candidate's independently selected parameter source."""
     if reference_trial_id is None:
         return (
@@ -553,19 +567,35 @@ def _resolve_candidate_reference(
                 if isinstance(reference_reason, str) and reference_reason.strip()
                 else "initial base parameters selected by Proposal",
             ),
+            {},
             [],
         )
     if not isinstance(reference_trial_id, int) or isinstance(reference_trial_id, bool):
-        return None, None, ["reference_trial_id must be an integer trial ID or null"]
+        return None, None, {}, ["reference_trial_id must be an integer trial ID or null"]
     trial = next(
         (row for row in trials if row.get("trial_id") == reference_trial_id),
         None,
     )
     if trial is None:
-        return None, None, [f"reference trial {reference_trial_id} does not exist"]
+        return None, None, {}, [f"reference trial {reference_trial_id} does not exist"]
     parameters = trial.get("parameters")
     if not isinstance(parameters, Mapping):
-        return None, None, [f"reference trial {reference_trial_id} has no parameter map"]
+        return None, None, {}, [f"reference trial {reference_trial_id} has no parameter map"]
+    observed_runtime = runtime_parameter_values(
+        trial.get("log_facts")
+        if isinstance(trial.get("log_facts"), Mapping)
+        else None
+    )
+    if not observed_runtime:
+        return (
+            None,
+            None,
+            {},
+            [
+                f"reference trial {reference_trial_id} has no resolved runtime_parameters; "
+                "re-extract its train.log before using it as a reference"
+            ],
+        )
     return (
         dict(parameters),
         _reference_descriptor(
@@ -574,6 +604,7 @@ def _resolve_candidate_reference(
             if isinstance(reference_reason, str) and reference_reason.strip()
             else "recorded trial selected by Proposal",
         ),
+        observed_runtime,
         [],
     )
 
@@ -830,12 +861,13 @@ class TuningOrchestrator:
                 for key, value in current.items()
                 if key not in set(editable) | IGNORED_PARAMETERS
             },
-            "editable_parameter_values": {
-                key: {
-                    "value": current.get(key),
-                }
-                for key in editable
-            },
+            "editable_parameter_values": parameter_value_views(
+                current,
+                reference_log_facts
+                if isinstance(reference_log_facts, Mapping)
+                else None,
+                editable,
+            ),
             "immutable_context": {
                 "model": {
                     **_immutable_model_context(
@@ -1017,7 +1049,12 @@ class TuningOrchestrator:
                         "candidate reason must be a non-empty causal explanation"
                     )
 
-                reference_parameters, candidate_reference, reference_violations = (
+                (
+                    reference_parameters,
+                    candidate_reference,
+                    reference_runtime_values,
+                    reference_violations,
+                ) = (
                     _resolve_candidate_reference(
                         raw_candidate.get("reference_trial_id"),
                         raw_candidate.get("reference_reason"),
@@ -1038,6 +1075,7 @@ class TuningOrchestrator:
                             normalized_proposal,
                             reference_parameters,
                             candidate_reference,
+                            reference_runtime_values,
                         )
                     )
                     violations.extend(provenance_violations)
@@ -1055,12 +1093,17 @@ class TuningOrchestrator:
                         self.base_parameters,
                         trials,
                         locked_parameters=current,
+                        reference_runtime_parameters=reference_runtime_values,
                     )
                     if not deterministic.valid:
                         violations.extend(deterministic.violations)
                     else:
                         canonical = json.dumps(
-                            effective_parameters(executable_parameters),
+                            effective_parameters(
+                                executable_parameters,
+                                reference_runtime_parameters=reference_runtime_values,
+                                changed_keys=target_changes,
+                            ),
                             sort_keys=True,
                             separators=(",", ":"),
                             default=str,

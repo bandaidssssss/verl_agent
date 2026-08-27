@@ -26,6 +26,7 @@ from trial_storage import (
 )
 from vllm_metrics import assess_rollout_metrics, summarize_vllm_metrics
 from validator import IGNORED_PARAMETERS, editable_parameters
+from runtime_parameters import parameter_value_views
 
 
 @dataclass(frozen=True)
@@ -586,13 +587,13 @@ class ToolRegistry:
                     "recorded_stage": trial.get("stage"),
                     "result": trial.get("result"),
                     "changes": trial.get("changes", {}),
-                    "parameters": {
-                        key: {
-                            "value": parameters.get(key),
-                            "explicitly_configured": key in parameters,
-                        }
-                        for key in editable
-                    },
+                    "parameters": parameter_value_views(
+                        parameters,
+                        trial.get("log_facts")
+                        if isinstance(trial.get("log_facts"), Mapping)
+                        else {},
+                        editable,
+                    ),
                     "metrics": metrics,
                     "missing_metrics": missing_metrics,
                 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import math
 import re
 import statistics
@@ -8,6 +9,10 @@ from typing import Any, Mapping, Sequence
 
 NUMBER = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+TASK_RUNNER_PREFIX_RE = re.compile(r"^.*?\(TaskRunner pid=\d+\)\s*")
+RESOLVED_CONFIG_START = "{'actor_rollout_ref':"
+MAX_RESOLVED_CONFIG_LINES = 5000
+MAX_RESOLVED_CONFIG_CHARS = 2_000_000
 PARAMETER_COUNT_RE = re.compile(
     r"number of parameters on \(tensor, pipeline\) model parallel rank "
     r"\((?P<tp_rank>\d+),\s*(?P<pp_rank>\d+)\):\s*(?P<count>\d+)"
@@ -137,6 +142,52 @@ def _parse_scalar(raw: str) -> Any:
     if re.fullmatch(NUMBER, value):
         return float(value)
     return value
+
+
+def _flatten_mapping(
+    value: Mapping[str, Any], prefix: str = ""
+) -> dict[str, Any]:
+    flattened: dict[str, Any] = {}
+    for name, item in value.items():
+        key = f"{prefix}.{name}" if prefix else str(name)
+        if isinstance(item, Mapping):
+            flattened.update(_flatten_mapping(item, key))
+        else:
+            flattened[key] = item
+    return flattened
+
+
+def _resolved_runtime_parameters(
+    lines: Sequence[str], warnings: list[str]
+) -> dict[str, Any]:
+    if not lines:
+        warnings.append("resolved Hydra configuration was not found in train.log")
+        return {
+            "available": False,
+            "source": "train.log:resolved_hydra_config",
+            "values": {},
+        }
+    try:
+        config = ast.literal_eval("\n".join(lines))
+    except (SyntaxError, ValueError) as exc:
+        warnings.append(f"resolved Hydra configuration could not be parsed: {exc}")
+        return {
+            "available": False,
+            "source": "train.log:resolved_hydra_config",
+            "values": {},
+        }
+    if not isinstance(config, Mapping):
+        warnings.append("resolved Hydra configuration was not a mapping")
+        return {
+            "available": False,
+            "source": "train.log:resolved_hydra_config",
+            "values": {},
+        }
+    return {
+        "available": True,
+        "source": "train.log:resolved_hydra_config",
+        "values": _flatten_mapping(config),
+    }
 
 
 def _percentile(values: Sequence[float], percentile: float) -> float | None:
@@ -333,6 +384,7 @@ def build_log_facts(
     records: Mapping[int, Mapping[str, float]],
     parameters: Mapping[str, Any],
     log_path: str | Path,
+    resolved_config_lines: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Build the estimator-neutral log-facts artifact from one parser pass."""
     text = "\n".join(fact_lines)
@@ -373,6 +425,9 @@ def build_log_facts(
             "warnings": warnings,
         },
         "model_config": model_config,
+        "runtime_parameters": _resolved_runtime_parameters(
+            resolved_config_lines, warnings
+        ),
         "megatron": {
             "resolved_config": resolved,
             "rank_parameter_counts": ranks,
@@ -391,9 +446,53 @@ class LogFactsAccumulator:
         self.parameters = dict(parameters)
         self.log_path = Path(log_path)
         self._fact_lines: list[str] = []
+        self._resolved_config_lines: list[str] = []
+        self._resolved_config_started = False
+        self._resolved_config_complete = False
+        self._resolved_config_chars = 0
+        self._resolved_config_depth = 0
+        self._resolved_config_quote: str | None = None
+        self._resolved_config_escaped = False
+
+    def _update_resolved_config_depth(self, line: str) -> None:
+        for character in line:
+            if self._resolved_config_escaped:
+                self._resolved_config_escaped = False
+                continue
+            if character == "\\" and self._resolved_config_quote is not None:
+                self._resolved_config_escaped = True
+                continue
+            if self._resolved_config_quote is not None:
+                if character == self._resolved_config_quote:
+                    self._resolved_config_quote = None
+                continue
+            if character in {"'", '"'}:
+                self._resolved_config_quote = character
+            elif character in "{[(":
+                self._resolved_config_depth += 1
+            elif character in "}])":
+                self._resolved_config_depth -= 1
 
     def consume(self, line: str) -> None:
         clean = ANSI_RE.sub("", line)
+        config_line = TASK_RUNNER_PREFIX_RE.sub("", clean).rstrip("\n")
+        if not self._resolved_config_started and config_line.startswith(
+            RESOLVED_CONFIG_START
+        ):
+            self._resolved_config_started = True
+        if self._resolved_config_started and not self._resolved_config_complete:
+            if (
+                len(self._resolved_config_lines) < MAX_RESOLVED_CONFIG_LINES
+                and self._resolved_config_chars + len(config_line)
+                <= MAX_RESOLVED_CONFIG_CHARS
+            ):
+                self._resolved_config_lines.append(config_line)
+                self._resolved_config_chars += len(config_line)
+                self._update_resolved_config_depth(config_line)
+                if self._resolved_config_depth == 0:
+                    self._resolved_config_complete = True
+            else:
+                self._resolved_config_complete = True
         if (
             "TransformerConfig(" in clean
             or PARAMETER_COUNT_RE.search(clean)
@@ -403,5 +502,9 @@ class LogFactsAccumulator:
 
     def finalize(self, records: Mapping[int, Mapping[str, float]]) -> dict[str, Any]:
         return build_log_facts(
-            self._fact_lines, records, self.parameters, self.log_path
+            self._fact_lines,
+            records,
+            self.parameters,
+            self.log_path,
+            self._resolved_config_lines,
         )

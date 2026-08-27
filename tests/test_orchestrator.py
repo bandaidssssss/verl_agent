@@ -21,6 +21,16 @@ from orchestrator import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def runtime_facts(parameters: dict) -> dict:
+    return {
+        "runtime_parameters": {
+            "available": True,
+            "source": "train.log:resolved_hydra_config",
+            "values": dict(parameters),
+        }
+    }
+
+
 def hardware_trial(trial_id: int, throughput: float, result: str = "success") -> dict:
     return {
         "trial_id": trial_id,
@@ -301,6 +311,9 @@ class ProposalProvenanceTest(unittest.TestCase):
             proposal,
             {"actor_rollout_ref.rollout.gpu_memory_utilization": 0.5},
             {"source": "trial", "trial_id": 7},
+            {
+                "actor_rollout_ref.rollout.max_num_batched_tokens": 16384
+            },
         )
         self.assertEqual(violations, [])
         self.assertEqual(
@@ -309,6 +322,12 @@ class ProposalProvenanceTest(unittest.TestCase):
         )
         self.assertIsNone(
             details["actor_rollout_ref.rollout.max_num_batched_tokens"]["from"]
+        )
+        self.assertEqual(
+            details["actor_rollout_ref.rollout.max_num_batched_tokens"][
+                "effective_from"
+            ],
+            16384,
         )
 
 
@@ -384,6 +403,7 @@ class ProposalContextTest(unittest.TestCase):
                     "stage": "hardware_tuning",
                     "result": "success",
                     "parameters": base,
+                    "log_facts": runtime_facts(base),
                     "performance": {"throughput": {"mean": 1.0}},
                     "structured_metrics": {
                         "resource": {
@@ -434,6 +454,7 @@ class ProposalContextTest(unittest.TestCase):
                     "stage": "hardware_tuning",
                     "result": "success",
                     "parameters": base,
+                    "log_facts": runtime_facts(base),
                     "performance": {"throughput": {"mean": 1.0}},
                     "stability": {
                         "window_size": 5,
@@ -687,6 +708,7 @@ class RejectionConversationTest(unittest.TestCase):
                     "stage": "hardware_tuning",
                     "result": "success",
                     "parameters": base,
+                    "log_facts": runtime_facts(base),
                     "performance": {"throughput": {"mean": 1.0}},
                 },
                 {
@@ -694,6 +716,7 @@ class RejectionConversationTest(unittest.TestCase):
                     "stage": "hardware_tuning",
                     "result": "success",
                     "parameters": alternate,
+                    "log_facts": runtime_facts(alternate),
                     "performance": {"throughput": {"mean": 0.9}},
                 },
             ]
@@ -763,6 +786,7 @@ class RejectionConversationTest(unittest.TestCase):
                     "stage": "hardware_tuning",
                     "result": "success",
                     "parameters": base,
+                    "log_facts": runtime_facts(base),
                     "performance": {"throughput": {"mean": 1.0}},
                 }
             ]
@@ -791,6 +815,7 @@ class RejectionConversationTest(unittest.TestCase):
                     "stage": "hardware_tuning",
                     "result": "success",
                     "parameters": base,
+                    "log_facts": runtime_facts(base),
                     "performance": {"throughput": {"mean": 1.0}},
                 }
             ]

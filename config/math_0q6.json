@@ -47,7 +47,7 @@
     "wandb"
   ],
   "trainer.project_name": "verl_math_tuner",
-  "trainer.experiment_name": "qwen3_8b_agent",
+  "trainer.experiment_name": "qwen3_0q6_agent",
   "trainer.n_gpus_per_node": 8,
   "trainer.nnodes": 1,
   "trainer.val_before_train": false,

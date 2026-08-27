@@ -56,14 +56,10 @@
   ],
   "data": {
     "actor_rollout_ref.actor.use_dynamic_bsz": {
-      "runtime_authority": "Controls PPO training batching: true selects actor_rollout_ref.actor.ppo_max_token_len_per_gpu; false selects actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu.",
-      "non_obvious_effects": [
-        "actor_rollout_ref.ref.log_prob_use_dynamic_bsz inherits this value when the ref option is not explicitly set; an explicit ref value overrides the inheritance."
-      ],
+      "runtime_authority": "Controls PPO training batching only: true selects actor_rollout_ref.actor.ppo_max_token_len_per_gpu; false selects actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu.",
       "critical_couplings": [
         "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
-        "actor_rollout_ref.actor.ppo_max_token_len_per_gpu",
-        "actor_rollout_ref.ref.log_prob_use_dynamic_bsz"
+        "actor_rollout_ref.actor.ppo_max_token_len_per_gpu"
       ]
     },
     "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": {
@@ -169,14 +165,21 @@
       ]
     },
     "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu": {
-      "non_obvious_effects": ["Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is false."],
+      "non_obvious_effects": ["Only authoritative when the effective actor_rollout_ref.rollout.log_prob_use_dynamic_bsz value is false."],
       "hard_constraints": ["Validate installed backend local-batching semantics."],
-      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
+      "critical_couplings": ["actor_rollout_ref.rollout.log_prob_use_dynamic_bsz"]
     },
     "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu": {
-      "non_obvious_effects": ["This parameter controls the maximum number of tokens that can be processed per GPU in the log-probability computation."],
+      "non_obvious_effects": ["Only authoritative when the effective actor_rollout_ref.rollout.log_prob_use_dynamic_bsz value is true; it then limits tokens processed per GPU in actor log-probability computation."],
       "hard_constraints": ["Validate installed backend token-length support."],
-      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
+      "critical_couplings": ["actor_rollout_ref.rollout.log_prob_use_dynamic_bsz"]
+    },
+    "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz": {
+      "runtime_authority": "Controls actor log-probability batching: true selects actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu; false selects actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu.",
+      "critical_couplings": [
+        "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu",
+        "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu"
+      ]
     },
     "actor_rollout_ref.rollout.gpu_memory_utilization": {
       "non_obvious_effects": ["This is a rollout-engine memory-budget control, not a direct GPU-utilization target."],
@@ -241,9 +244,7 @@
     },
     "actor_rollout_ref.ref.log_prob_use_dynamic_bsz": {
       "runtime_authority": "Controls reference log-probability batching: true selects actor_rollout_ref.ref.log_prob_max_token_len_per_gpu; false selects actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu.",
-      "non_obvious_effects": ["When this option is omitted from the launch arguments, its effective value inherits actor_rollout_ref.actor.use_dynamic_bsz; when explicitly set, the ref value takes precedence."],
       "critical_couplings": [
-        "actor_rollout_ref.actor.use_dynamic_bsz",
         "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu",
         "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu"
       ]

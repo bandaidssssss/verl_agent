@@ -10,12 +10,51 @@ from metrics import (
     build_running_metrics,
     build_structured_metrics,
     compute_threshold_stats,
-    parse_step_records,
 )
 from tools.extract_trial_metrics import extract_trial_metrics
 
 
 class MetricsTest(unittest.TestCase):
+    def test_resolved_hydra_config_is_flattened_without_cross_scope_matches(self) -> None:
+        text = "\n".join(
+            (
+                "\x1b[32m2026-08-19 (TaskRunner pid=42) {'actor_rollout_ref': {\x1b[0m",
+                "2026-08-19 (TaskRunner pid=42) 'actor': {'use_dynamic_bsz': False, "
+                "'ppo_max_token_len_per_gpu': 16384},",
+                "2026-08-19 (TaskRunner pid=42) 'rollout': {"
+                "'log_prob_use_dynamic_bsz': False, "
+                "'log_prob_max_token_len_per_gpu': 16384},",
+                "2026-08-19 (TaskRunner pid=42) 'ref': {"
+                "'log_prob_use_dynamic_bsz': False, "
+                "'log_prob_max_token_len_per_gpu': 16384}},",
+                "2026-08-19 (TaskRunner pid=42) 'critic': {"
+                "'ppo_max_token_len_per_gpu': 32768}}",
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "train.log"
+            log.write_text(text, encoding="utf-8")
+            metrics = build_structured_metrics(log, None, parameters={})
+
+        runtime = metrics["log_facts"]["runtime_parameters"]
+        values = runtime["values"]
+        self.assertTrue(runtime["available"])
+        self.assertEqual(
+            values["actor_rollout_ref.actor.ppo_max_token_len_per_gpu"],
+            16384,
+        )
+        self.assertEqual(
+            values[
+                "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu"
+            ],
+            16384,
+        )
+        self.assertEqual(
+            values["actor_rollout_ref.ref.log_prob_max_token_len_per_gpu"],
+            16384,
+        )
+        self.assertEqual(values["critic.ppo_max_token_len_per_gpu"], 32768)
+
     def test_unified_extractor_reads_train_log_once_and_writes_log_facts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             trial_dir = Path(directory)
