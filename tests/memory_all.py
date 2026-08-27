@@ -9,11 +9,11 @@ processed and the complete terminal report is also saved as Markdown.
 
 Typical use after editing the defaults near the top of this file:
 
-    python tests/test_memory.py
+    python tests/memory_all.py
 
 To replay only one target trial:
 
-    python tests/test_memory.py \
+    python tests/memory_all.py \
       --run-dir output/0807_1110_2026 \
       --target-trial 2
 """
@@ -21,7 +21,6 @@ To replay only one target trial:
 from __future__ import annotations
 
 import argparse
-import csv
 import io
 import json
 import math
@@ -50,9 +49,9 @@ DEFAULT_RUN_DIR = ROOT / "output" / "0827_1018_2026"
 # 其他参数一般不需要修改
 # =============================================================================
 
-# None 表示优先读取目标 trial 当时 Agent context 中的 throughput 显存限制，
-# 其次读取 config/agent_config.json，最后使用 92%。
-DEFAULT_MEMORY_LIMIT_PCT: float | None = None
+# None 表示优先读取目标 trial 当时 Agent context 中的 throughput 显存限制
+# 或 reserve，其次读取 config/agent_config.json，最后使用 92%。
+DEFAULT_MEMORY_LIMIT_MIB: float | None = None
 
 # None 表示只打印结果，不写文件。也可以设置成一个 JSON 文件路径。
 DEFAULT_OUTPUT_JSON: Path | None = None
@@ -125,8 +124,40 @@ def _load_trials(run_dir: Path) -> list[dict[str, Any]]:
                 hydrated.append(hydrate_trial(trial, history_path))
             else:
                 hydrated.append(trial)
-        return hydrated
-    return trials
+        trials = hydrated
+
+    # ``hydrate_trial`` intentionally keeps agent traces out of the normal
+    # in-memory trial shape. Replay needs the recorded constraint snapshot,
+    # however, so load just that artifact here instead of silently applying the
+    # current agent_config.json policy to an older proposal.
+    with_traces: list[dict[str, Any]] = []
+    for trial in trials:
+        row = dict(trial)
+        trial_id = row.get("trial_id")
+        artifacts = row.get("artifacts")
+        relative_trace = (
+            artifacts.get("agent_trace")
+            if isinstance(artifacts, Mapping)
+            else None
+        )
+        candidates: list[Path] = []
+        if isinstance(relative_trace, str):
+            candidate = (run_dir / relative_trace).resolve()
+            try:
+                candidate.relative_to(run_dir)
+            except ValueError:
+                pass
+            else:
+                candidates.append(candidate)
+        if isinstance(trial_id, int) and not isinstance(trial_id, bool):
+            candidates.append(
+                run_dir / "trials" / f"{trial_id:04d}" / "agent_trace.json"
+            )
+        trace_path = next((path for path in candidates if path.is_file()), None)
+        if trace_path is not None:
+            row["agent_trace"] = _load_json(trace_path)
+        with_traces.append(row)
+    return with_traces
 
 
 def _target_report(
@@ -194,10 +225,22 @@ def _reference_id(proposal: Mapping[str, Any]) -> int:
 
 
 def _memory_limit_from_report(
-    report: Mapping[str, Any], explicit_limit: float | None
+    report: Mapping[str, Any],
+    reference_measurements: Mapping[str, Mapping[str, Any]],
+    explicit_limit_mib: float | None,
 ) -> tuple[float, str]:
-    if explicit_limit is not None:
-        return explicit_limit, "command/default override"
+    capacities_mib = [
+        float(row["gpu_capacity_mib"])
+        for row in reference_measurements.values()
+        if isinstance(row.get("gpu_capacity_mib"), (int, float))
+        and not isinstance(row.get("gpu_capacity_mib"), bool)
+    ]
+    if not capacities_mib:
+        raise ValueError("reference trial has no GPU capacity")
+    capacity_mib = min(capacities_mib)
+
+    if explicit_limit_mib is not None:
+        return explicit_limit_mib, "command/default override"
 
     trace = report.get("agent_trace")
     proposal_conversation = (
@@ -216,7 +259,22 @@ def _memory_limit_from_report(
         ):
             value = constraints.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return float(value), f"recorded proposal context: {key}"
+                limit_pct = float(value)
+                return (
+                    capacity_mib * limit_pct / 100.0,
+                    f"recorded proposal context: {key}",
+                )
+        for key in (
+            "throughput_memory_reserve_mib",
+            "resource_memory_reserve_mib",
+        ):
+            value = constraints.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                limit_mib = capacity_mib - float(value)
+                return (
+                    limit_mib,
+                    f"recorded proposal context: {key}",
+                )
 
     config_path = ROOT / "config" / "agent_config.json"
     if config_path.is_file():
@@ -227,91 +285,55 @@ def _memory_limit_from_report(
         ):
             value = config.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return float(value), f"{config_path}: {key}"
-    return 92.0, "fallback"
-
-
-def _phase_actual_peaks_pct(report: Mapping[str, Any]) -> dict[str, float]:
-    memory = report.get("memory_by_phase_pct")
-    if not isinstance(memory, Mapping):
-        return {}
-    result: dict[str, float] = {}
-    for phase in PHASES:
-        value = memory.get(phase)
-        if isinstance(value, Mapping):
-            value = value.get("max")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            result[phase] = float(value)
-    return result
+                limit_pct = float(value)
+                return (
+                    capacity_mib * limit_pct / 100.0,
+                    f"{config_path}: {key}",
+                )
+        for key in (
+            "throughput_memory_reserve_mib",
+            "resource_memory_reserve_mib",
+        ):
+            value = config.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                limit_mib = capacity_mib - float(value)
+                return (
+                    limit_mib,
+                    f"{config_path}: {key}",
+                )
+    return capacity_mib * 0.92, "fallback: 92% of GPU capacity"
 
 
 def _actual_phase_measurements(
-    run_dir: Path,
-    target_trial_id: int,
     report: Mapping[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    """Read target-trial peaks in both GiB and percent.
+    """Read the persisted per-phase peaks in the estimator's native MiB unit."""
 
-    ``memory_by_phase_pct`` in trial.jsonl is the authoritative phase summary.
-    The raw CSV supplies GPU capacity so that percentage peaks can be converted
-    to GiB; its per-phase used values are fallback data only.
-    """
-
-    pct_peaks = _phase_actual_peaks_pct(report)
-    sample_candidates = [
-        run_dir / "trials" / f"{target_trial_id:04d}" / "gpu_samples.csv"
-    ]
-    recorded = report.get("gpu_samples_path")
-    if isinstance(recorded, str) and recorded:
-        recorded_path = Path(recorded).expanduser()
-        if recorded_path.is_file():
-            sample_candidates.insert(0, recorded_path)
-    samples_path = next((path for path in sample_candidates if path.is_file()), None)
-
-    used_by_phase: dict[str, list[float]] = {phase: [] for phase in PHASES}
-    totals: list[float] = []
-    if samples_path is not None:
-        with samples_path.open("r", encoding="utf-8", errors="replace") as handle:
-            for row in csv.DictReader(handle):
-                phase = row.get("phase")
-                if phase not in used_by_phase:
-                    continue
-                try:
-                    used_mb = float(row["memory_used_mb"])
-                    total_mb = float(row["memory_total_mb"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if used_mb >= 0 and total_mb > 0:
-                    used_by_phase[phase].append(used_mb)
-                    totals.append(total_mb)
-
-    capacity_mb = sorted(totals)[len(totals) // 2] if totals else None
+    structured = report.get("structured_metrics")
+    resource = structured.get("resource") if isinstance(structured, Mapping) else None
+    by_phase = resource.get("by_phase") if isinstance(resource, Mapping) else None
+    if not isinstance(by_phase, Mapping):
+        raise ValueError("trial has no metrics resource.by_phase")
     result: dict[str, dict[str, Any]] = {}
     for phase in PHASES:
-        pct = pct_peaks.get(phase)
-        raw_csv_peak_mb = (
-            max(used_by_phase[phase]) if used_by_phase[phase] else None
-        )
-        if pct is not None and capacity_mb is not None:
-            used_mb = capacity_mb * pct / 100.0
-            source = "trial.memory_by_phase_pct.max * gpu_samples.capacity"
-        else:
-            used_mb = raw_csv_peak_mb
-            source = (
-                "gpu_samples.raw_phase_peak_fallback"
-                if raw_csv_peak_mb is not None
-                else "trial_pct_without_capacity"
-            )
-        if pct is None and used_mb is not None and capacity_mb is not None:
-            pct = 100.0 * used_mb / capacity_mb
+        row = by_phase.get(phase)
+        row = row if isinstance(row, Mapping) else {}
+        used_mib = row.get("max_used_mib")
+        capacity_mib = row.get("max_used_gpu_total_mib")
         result[phase] = {
-            "memory_mb": used_mb,
-            "memory_gib": used_mb / 1024.0 if used_mb is not None else None,
-            "memory_pct": pct,
-            "gpu_capacity_gib": (
-                capacity_mb / 1024.0 if capacity_mb is not None else None
+            "memory_mib": (
+                float(used_mib)
+                if isinstance(used_mib, (int, float))
+                and not isinstance(used_mib, bool)
+                else None
             ),
-            "source": source,
+            "gpu_capacity_mib": (
+                float(capacity_mib)
+                if isinstance(capacity_mib, (int, float))
+                and not isinstance(capacity_mib, bool)
+                else None
+            ),
+            "source": row.get("source"),
         }
     return result
 
@@ -375,60 +397,10 @@ def _parameter_comparison(
     }
 
 
-def _absolute_v3_estimate(
-    estimate: Mapping[str, Any],
-    reference_measurements: Mapping[str, Mapping[str, Any]],
-    memory_limit_pct: float,
-) -> dict[str, Any]:
-    """Add absolute values to V3's compact per-phase center estimate output."""
-    result = dict(estimate)
-    phases: dict[str, Any] = {}
-    for phase in PHASES:
-        measurement = reference_measurements[phase]
-        reference_gib = measurement.get("memory_gib")
-        reference_pct = measurement.get("memory_pct")
-        center_change_pct = estimate.get(phase)
-
-        def projected(reference_value: Any) -> float | None:
-            if not isinstance(reference_value, (int, float)) or not isinstance(
-                center_change_pct, (int, float)
-            ):
-                return None
-            return float(reference_value) * (1.0 + float(center_change_pct) / 100.0)
-
-        projected_gib = projected(reference_gib)
-        projected_pct = projected(reference_pct)
-        phases[phase] = {
-            "center_change_pct": center_change_pct,
-            "reference_memory_gib": reference_gib,
-            "delta_memory_gib": (
-                projected_gib - float(reference_gib)
-                if projected_gib is not None and isinstance(reference_gib, (int, float))
-                else None
-            ),
-            "projected_memory_gib": projected_gib,
-            "upper_bound_memory_gib": None,
-            "gpu_capacity_gib": measurement.get("gpu_capacity_gib"),
-            "reference_pct": reference_pct,
-            "delta_pct": (
-                projected_pct - float(reference_pct)
-                if projected_pct is not None and isinstance(reference_pct, (int, float))
-                else None
-            ),
-            "projected_pct": projected_pct,
-            "upper_bound_pct": None,
-            "risk": None,
-            "confidence": None,
-            "model": "v3_compact_center_estimate",
-        }
-    result["phases"] = phases
-    return result
-
-
 def replay_memory_estimate(
     run_dir: Path,
     target_trial_id: int,
-    memory_limit_pct: float | None = None,
+    memory_limit_mib: float | None = None,
 ) -> dict[str, Any]:
     trials = _load_trials(run_dir)
     target = _target_report(run_dir, trials, target_trial_id)
@@ -461,134 +433,80 @@ def replay_memory_estimate(
     candidate, change_details = _candidate_from_proposal(
         reference_parameters, proposal
     )
-    limit, limit_source = _memory_limit_from_report(target, memory_limit_pct)
-    relative_estimate = estimate_phase_memory(
+    reference_measurements = _actual_phase_measurements(reference)
+    limit_mib, limit_source = _memory_limit_from_report(
+        target,
+        reference_measurements,
+        memory_limit_mib,
+    )
+    estimate = estimate_phase_memory(
         reference,
         candidate,
         history,
+        memory_limit_mib=limit_mib,
     )
-    reference_measurements = _actual_phase_measurements(
-        run_dir, reference_trial_id, reference
-    )
-    estimate = _absolute_v3_estimate(relative_estimate, reference_measurements, limit)
-    actual_measurements = _actual_phase_measurements(
-        run_dir, target_trial_id, target
-    )
+    estimate_phases = estimate.get("phases")
+    if not isinstance(estimate_phases, Mapping):
+        raise ValueError("memory_estimator returned no phases object")
+    actual_measurements = _actual_phase_measurements(target)
     comparison: dict[str, Any] = {}
-    absolute_errors_pct: list[float] = []
-    signed_errors_pct: list[float] = []
-    absolute_errors_gib: list[float] = []
-    signed_errors_gib: list[float] = []
-    false_safe_phases: list[str] = []
-    upper_bound_misses: list[str] = []
+    absolute_errors_mib: list[float] = []
+    signed_errors_mib: list[float] = []
+    actual_exceeds_limit_phases: list[str] = []
     for phase in PHASES:
-        phase_estimate = estimate["phases"][phase]
-        predicted_pct = phase_estimate.get("projected_pct")
-        upper_pct = phase_estimate.get("upper_bound_pct")
-        predicted_gib = phase_estimate.get("projected_memory_gib")
-        upper_gib = phase_estimate.get("upper_bound_memory_gib")
-        actual_pct = actual_measurements[phase]["memory_pct"]
-        actual_gib = actual_measurements[phase]["memory_gib"]
-        if (
-            actual_gib is None
-            and actual_pct is not None
-            and isinstance(phase_estimate.get("gpu_capacity_gib"), (int, float))
-        ):
-            actual_gib = (
-                float(phase_estimate["gpu_capacity_gib"])
-                * float(actual_pct)
-                / 100.0
-            )
-            actual_measurements[phase]["source"] = (
-                "target_pct_times_reference_gpu_capacity"
-            )
-        signed_error_pct = (
-            float(predicted_pct) - actual_pct
-            if isinstance(predicted_pct, (int, float)) and actual_pct is not None
+        phase_estimate = estimate_phases.get(phase)
+        if not isinstance(phase_estimate, Mapping):
+            raise ValueError(f"memory_estimator returned no {phase} phase object")
+        reference_mib = phase_estimate.get("reference_peak_mib")
+        estimated_mib = phase_estimate.get("estimated_peak_mib")
+        reference_mib = (
+            float(reference_mib)
+            if isinstance(reference_mib, (int, float))
+            and not isinstance(reference_mib, bool)
             else None
         )
-        absolute_error_pct = (
-            abs(signed_error_pct) if signed_error_pct is not None else None
-        )
-        signed_error_gib = (
-            float(predicted_gib) - actual_gib
-            if isinstance(predicted_gib, (int, float)) and actual_gib is not None
+        predicted_mib = (
+            float(estimated_mib)
+            if isinstance(estimated_mib, (int, float))
+            and not isinstance(estimated_mib, bool)
             else None
         )
-        absolute_error_gib = (
-            abs(signed_error_gib) if signed_error_gib is not None else None
-        )
-        within_upper = (
-            actual_gib <= float(upper_gib)
-            if isinstance(upper_gib, (int, float)) and actual_gib is not None
-            else (
-                actual_pct <= float(upper_pct)
-                if isinstance(upper_pct, (int, float)) and actual_pct is not None
-                else None
-            )
-        )
-        if absolute_error_pct is not None:
-            absolute_errors_pct.append(absolute_error_pct)
-            signed_errors_pct.append(signed_error_pct)
-        if absolute_error_gib is not None:
-            absolute_errors_gib.append(absolute_error_gib)
-            signed_errors_gib.append(signed_error_gib)
-        if within_upper is False:
-            upper_bound_misses.append(phase)
-        if (
-            actual_pct is not None
-            and actual_pct >= limit
-            and isinstance(upper_pct, (int, float))
-            and float(upper_pct) < limit
-        ):
-            false_safe_phases.append(phase)
-        drivers = phase_estimate.get("drivers", {})
-        affected_components = (
-            drivers.get("affected_components")
-            if isinstance(drivers, Mapping)
+        actual_mib = actual_measurements[phase]["memory_mib"]
+        signed_error_mib = (
+            predicted_mib - actual_mib
+            if predicted_mib is not None and actual_mib is not None
             else None
         )
+        absolute_error_mib = (
+            abs(signed_error_mib) if signed_error_mib is not None else None
+        )
+        if absolute_error_mib is not None:
+            absolute_errors_mib.append(absolute_error_mib)
+            signed_errors_mib.append(signed_error_mib)
+        if actual_mib is not None and actual_mib >= limit_mib:
+            actual_exceeds_limit_phases.append(phase)
         comparison[phase] = {
-            "reference_gib": phase_estimate.get("reference_memory_gib"),
-            "delta_gib": phase_estimate.get("delta_memory_gib"),
-            "predicted_gib": predicted_gib,
-            "upper_bound_gib": upper_gib,
-            "actual_gib": round(actual_gib, 2) if actual_gib is not None else None,
-            "signed_error_gib": (
-                round(signed_error_gib, 2)
-                if signed_error_gib is not None
+            "status": phase_estimate.get("status"),
+            "reference_mib": reference_mib,
+            "delta_mib": (
+                predicted_mib - reference_mib
+                if predicted_mib is not None and reference_mib is not None
                 else None
             ),
-            "absolute_error_gib": (
-                round(absolute_error_gib, 2)
-                if absolute_error_gib is not None
+            "predicted_mib": predicted_mib,
+            "actual_mib": round(actual_mib, 2) if actual_mib is not None else None,
+            "signed_error_mib": (
+                round(signed_error_mib, 2)
+                if signed_error_mib is not None
                 else None
             ),
-            "gpu_capacity_gib": phase_estimate.get("gpu_capacity_gib"),
-            "reference_pct": phase_estimate.get("reference_pct"),
-            "delta_pct": phase_estimate.get("delta_pct"),
-            "predicted_pct": predicted_pct,
-            "upper_bound_pct": upper_pct,
-            "actual_pct": round(actual_pct, 2) if actual_pct is not None else None,
-            "signed_error_pct": (
-                round(signed_error_pct, 2)
-                if signed_error_pct is not None
+            "absolute_error_mib": (
+                round(absolute_error_mib, 2)
+                if absolute_error_mib is not None
                 else None
             ),
-            "absolute_error_pct": (
-                round(absolute_error_pct, 2)
-                if absolute_error_pct is not None
-                else None
-            ),
-            "actual_within_upper_bound": within_upper,
-            "predicted_risk": phase_estimate.get("risk"),
-            "confidence": phase_estimate.get("confidence"),
-            "model": phase_estimate.get("model"),
-            "affected_components": affected_components or [],
-            "calibration": (
-                drivers.get("calibration")
-                if isinstance(drivers, Mapping)
-                else None
+            "gpu_capacity_mib": reference_measurements[phase].get(
+                "gpu_capacity_mib"
             ),
             "actual_source": actual_measurements[phase]["source"],
         }
@@ -606,7 +524,7 @@ def replay_memory_estimate(
             "history_trial_ids_exposed_to_estimator": [
                 row.get("trial_id") for row in history
             ],
-            "memory_limit_pct": limit,
+            "memory_limit_mib": limit_mib,
             "memory_limit_source": limit_source,
             "target_result": target.get("result"),
             "target_failure_phase": target.get("failure_phase"),
@@ -622,40 +540,32 @@ def replay_memory_estimate(
         "estimate": estimate,
         "comparison": comparison,
         "summary": {
-            "compared_phase_count": len(absolute_errors_pct),
-            "mae_pct": (
-                round(sum(absolute_errors_pct) / len(absolute_errors_pct), 2)
-                if absolute_errors_pct
+            "compared_phase_count": len(absolute_errors_mib),
+            "mae_mib": (
+                round(sum(absolute_errors_mib) / len(absolute_errors_mib), 2)
+                if absolute_errors_mib
                 else None
             ),
-            "mean_signed_error_pct": (
-                round(sum(signed_errors_pct) / len(signed_errors_pct), 2)
-                if signed_errors_pct
+            "mean_signed_error_mib": (
+                round(sum(signed_errors_mib) / len(signed_errors_mib), 2)
+                if signed_errors_mib
                 else None
             ),
-            "max_underestimate_pct": (
-                round(max([0.0, *(-value for value in signed_errors_pct)]), 2)
-                if signed_errors_pct
+            "max_underestimate_mib": (
+                round(max([0.0, *(-value for value in signed_errors_mib)]), 2)
+                if signed_errors_mib
                 else None
             ),
-            "mae_gib": (
-                round(sum(absolute_errors_gib) / len(absolute_errors_gib), 2)
-                if absolute_errors_gib
-                else None
+            "actual_exceeds_limit_phases": actual_exceeds_limit_phases,
+            "safety_decision_correct": (
+                not actual_exceeds_limit_phases
+                if estimate.get("safety") == "within_limit"
+                else (
+                    bool(actual_exceeds_limit_phases)
+                    if estimate.get("safety") == "exceeds_limit"
+                    else None
+                )
             ),
-            "mean_signed_error_gib": (
-                round(sum(signed_errors_gib) / len(signed_errors_gib), 2)
-                if signed_errors_gib
-                else None
-            ),
-            "max_underestimate_gib": (
-                round(max([0.0, *(-value for value in signed_errors_gib)]), 2)
-                if signed_errors_gib
-                else None
-            ),
-            "upper_bound_miss_phases": upper_bound_misses,
-            "false_safe_phases": false_safe_phases,
-            "safe_decision_correct": not false_safe_phases,
         },
     }
 
@@ -700,7 +610,7 @@ def print_report(report: Mapping[str, Any]) -> None:
     )
     print(
         f"Estimator history: {case['history_trial_ids_exposed_to_estimator']} | "
-        f"limit: {case['memory_limit_pct']:.2f}% "
+        f"limit: {case['memory_limit_mib']:.2f} MiB "
         f"({case['memory_limit_source']})"
     )
     print(
@@ -734,34 +644,31 @@ def print_report(report: Mapping[str, Any]) -> None:
             f"tokens ({reference_sequence.get('source')})"
         )
 
-    print("\nCenter prediction versus observation (GiB; percent in parentheses)")
+    print("\nCenter prediction versus observation (MiB)")
     comparison_rows = []
     for phase in PHASES:
         item = report["comparison"][phase]
         comparison_rows.append(
             [
                 phase,
-                _format_value(item["reference_gib"]),
-                _format_value(item["delta_gib"]),
-                _format_value(item["predicted_gib"]),
-                _format_value(item["actual_gib"]),
-                _format_value(item["signed_error_gib"]),
-                (
-                    f"{_format_value(item['predicted_pct'])}/"
-                    f"{_format_value(item['actual_pct'])}"
-                ),
+                str(item["status"]),
+                _format_value(item["reference_mib"]),
+                _format_value(item["delta_mib"]),
+                _format_value(item["predicted_mib"]),
+                _format_value(item["actual_mib"]),
+                _format_value(item["signed_error_mib"]),
             ]
         )
     _print_table(
         comparison_rows,
         (
             "phase",
+            "status",
             "ref",
             "delta",
             "estimate",
             "actual",
             "estimate-actual",
-            "estimate%/actual%",
         ),
     )
 
@@ -776,30 +683,22 @@ def print_report(report: Mapping[str, Any]) -> None:
         "  full assembled candidate matches actual parameters: "
         f"{parameter_comparison['full_candidate_matches_actual']}"
     )
-    print(f"  phase MAE: {_format_value(summary['mae_gib'])} GiB")
-    print(f"  phase MAE: {_format_value(summary['mae_pct'])} pct-points")
+    print(f"  phase MAE: {_format_value(summary['mae_mib'])} MiB")
     print(
         "  max underestimate: "
-        f"{_format_value(summary['max_underestimate_gib'])} GiB / "
-        f"{_format_value(summary['max_underestimate_pct'])} pct-points"
+        f"{_format_value(summary['max_underestimate_mib'])} MiB"
     )
     print("  note: compact estimator output contains center predictions only")
 
 
 def _discover_trial_ids(run_dir: Path) -> list[int]:
-    """Return every indexed or artifact-backed trial ID in the run directory."""
-    trial_ids = {
+    """Return complete indexed or report-backed trial IDs."""
+    return sorted(
         int(row["trial_id"])
         for row in _load_trials(run_dir)
         if isinstance(row.get("trial_id"), int)
         and not isinstance(row.get("trial_id"), bool)
-    }
-    trials_dir = run_dir / "trials"
-    if trials_dir.is_dir():
-        for path in trials_dir.iterdir():
-            if path.is_dir() and path.name.isdigit():
-                trial_ids.add(int(path.name))
-    return sorted(trial_ids)
+    )
 
 
 def _render_report(report: Mapping[str, Any]) -> str:
@@ -831,10 +730,9 @@ def _render_batch(
                     [
                         str(case["target_trial_id"]),
                         str(case["reference_trial_id"]),
-                        _format_value(summary["mae_gib"]),
-                        _format_value(summary["mae_pct"]),
-                        _format_value(summary["max_underestimate_gib"]),
-                        _format_value(summary["max_underestimate_pct"]),
+                        str(summary["compared_phase_count"]),
+                        _format_value(summary["mae_mib"]),
+                        _format_value(summary["max_underestimate_mib"]),
                     ]
                 )
             _print_table(
@@ -842,10 +740,9 @@ def _render_batch(
                 (
                     "trial",
                     "reference",
-                    "MAE GiB",
-                    "MAE pct",
-                    "max under GiB",
-                    "max under pct",
+                    "phases",
+                    "MAE MiB",
+                    "max under MiB",
                 ),
             )
 
@@ -887,10 +784,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--memory-limit-pct",
+        "--memory-limit-mib",
         type=float,
-        default=DEFAULT_MEMORY_LIMIT_PCT,
-        help="Override the recorded/configured memory limit",
+        default=DEFAULT_MEMORY_LIMIT_MIB,
+        help="Override the recorded/configured memory limit in MiB",
     )
     parser.add_argument(
         "--output-json",
@@ -932,7 +829,7 @@ def main() -> int:
                     replay_memory_estimate(
                         run_dir,
                         target_trial_id,
-                        args.memory_limit_pct,
+                        args.memory_limit_mib,
                     )
                 )
             except (OSError, ValueError, json.JSONDecodeError) as exc:
