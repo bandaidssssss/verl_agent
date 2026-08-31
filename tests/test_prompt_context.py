@@ -114,7 +114,20 @@ class PromptContextTest(unittest.TestCase):
                     "terminal_metrics": {"critic/rewards/mean": 0.1},
                     "steps": [{"step": 4, "critic/rewards/mean": 0.1}],
                     "health": {"healthy": True},
-                }
+                },
+                "evaluation": {
+                    "steps": [
+                        {
+                            "step": 80,
+                            "metrics": {
+                                "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.375,
+                            },
+                        }
+                    ],
+                    "latest_metrics": {
+                        "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.375,
+                    },
+                },
             },
         }
 
@@ -129,6 +142,15 @@ class PromptContextTest(unittest.TestCase):
         self.assertNotIn("health", compact["metrics"])
         self.assertEqual(
             compact["metrics"]["window_metrics"]["critic/rewards/mean"], [0.1]
+        )
+        self.assertEqual(
+            compact["metrics"]["evaluation"],
+            {
+                "latest_metrics": {
+                    "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.375,
+                },
+                "latest_step": 80,
+            },
         )
         self.assertEqual(
             compact["missing_metrics"],

@@ -9,6 +9,7 @@
   "monitor_interval_seconds": 1.0,
   "vllm_metrics_interval_seconds": 5.0,
   "health_monitor_enabled": true,
+  "evaluate_at_trial_end": true,
   "health_kl_metric": "actor/kl_loss",
   "health_reward_metric": "critic/rewards/mean",
   "health_reward_trend_steps": 5,
@@ -51,5 +52,8 @@
   "token_budget_tolerance": 0.0,
   "reward_window": 5,
   "stability_window_size": 5,
+  "evaluation_metrics": [
+    "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1"
+  ],
   "reward_thresholds": [0.0, 0.1, 0.2, 0.3]
 }

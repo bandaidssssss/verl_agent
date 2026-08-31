@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config_utils import load_json, write_json_atomic
-from metrics import build_structured_metrics
+from metrics import EVALUATION_METRICS, build_structured_metrics
 from vllm_metrics import summarize_vllm_metrics
 
 
@@ -50,6 +50,10 @@ def extract_trial_metrics(
         reward_window=int(config.get("reward_window", 5)),
         reward_thresholds=config.get("reward_thresholds", [0.0, 0.1, 0.2, 0.3]),
         stability_window_size=int(config.get("stability_window_size", 5)),
+        evaluation_metrics=config.get(
+            "evaluation_metrics",
+            EVALUATION_METRICS,
+        ),
         vllm_summary=effective_vllm_summary,
         vllm_metrics_path=vllm_path if vllm_path.exists() else None,
         health_events_path=(

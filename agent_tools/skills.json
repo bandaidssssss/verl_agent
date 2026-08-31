@@ -134,7 +134,7 @@
       "name": "query_trial_history",
       "handler": "query_trial_history",
       "roles": ["proposal", "feasibility", "diagnosis", "train_health"],
-      "description": "Read 1-5 reference trials by ID. Returns current-stage editable parameter values, recorded changes, and compact hardware or stability metrics in the requested order.",
+      "description": "Read 1-5 reference trials by ID. Returns current-stage editable parameter values, recorded changes, and compact hardware or stability metrics in the requested order. Stability results include the latest MATH test accuracy used for cross-trial selection.",
       "parameters": {
         "type": "object",
         "properties": {

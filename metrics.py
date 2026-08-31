@@ -71,6 +71,10 @@ THROUGHPUT_STEP_METRICS = (
     "perf/mfu/actor",
     *TIMING_KEYS.values(),
 )
+MATH_EVALUATION_METRIC = (
+    "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1"
+)
+EVALUATION_METRICS = (MATH_EVALUATION_METRIC,)
 
 
 def parse_step_records(log_path: str | Path) -> dict[int, dict[str, float]]:
@@ -82,7 +86,7 @@ def parse_step_records(log_path: str | Path) -> dict[int, dict[str, float]]:
                 continue
             pairs = {key: float(value) for key, value in PAIR_RE.findall(line)}
             if pairs:
-                records[int(step_match.group(1))] = pairs
+                records.setdefault(int(step_match.group(1)), {}).update(pairs)
     return dict(sorted(records.items()))
 
 
@@ -115,7 +119,10 @@ def parse_train_log(
             parsed = parse_step_line(line)
             if parsed is not None:
                 step, values = parsed
-                records[step] = values
+                # verl may log training and validation metrics on separate lines
+                # with the same global step.  Merge them so a later validation
+                # line does not discard the training metrics already collected.
+                records.setdefault(step, {}).update(values)
             memory_match = MEMORY_RE.search(line)
             if memory_match:
                 used = float(memory_match.group("used")) * 1024.0
@@ -593,6 +600,7 @@ def build_structured_metrics(
     reward_window: int = 5,
     reward_thresholds: Iterable[float] = (0.0, 0.1, 0.2, 0.3),
     stability_window_size: int = 5,
+    evaluation_metrics: Iterable[str] = EVALUATION_METRICS,
     vllm_summary: Mapping[str, Any] | None = None,
     vllm_metrics_path: str | Path | None = None,
     health_events_path: str | Path | None = None,
@@ -663,6 +671,12 @@ def build_structured_metrics(
         for row in records.values()
         if "critic/rewards/mean" in row
     ]
+    evaluation_steps = metric_steps(records, evaluation_metrics)
+    latest_evaluation = (
+        dict(evaluation_steps[-1]["metrics"])
+        if evaluation_steps
+        else {}
+    )
     return {
         "status": status,
         "latest_step": max(records, default=0),
@@ -694,6 +708,10 @@ def build_structured_metrics(
             "vllm": dict(vllm_summary or {}),
         },
         "stability": stability,
+        "evaluation": {
+            "steps": evaluation_steps,
+            "latest_metrics": latest_evaluation,
+        },
         "resource": resource,
         "end_to_end_reward": {
             "thresholds": compute_threshold_stats(records, reward_thresholds, reward_window),
@@ -722,6 +740,7 @@ def build_running_metrics(
         for step, row in records.items()
         if step <= snapshot_step
     }
+    evaluation_steps = metric_steps(visible, EVALUATION_METRICS)
     snapshot = dict(resource_snapshot or {})
     gpu_rows = [row for row in snapshot.get("gpus", []) if isinstance(row, Mapping)]
     devices = [
@@ -806,6 +825,14 @@ def build_running_metrics(
             "window_metrics": {},
             "terminal_window": None,
             "terminal_metrics": {},
+        },
+        "evaluation": {
+            "steps": evaluation_steps,
+            "latest_metrics": (
+                dict(evaluation_steps[-1]["metrics"])
+                if evaluation_steps
+                else {}
+            ),
         },
         "resource": resource,
     }
@@ -909,6 +936,7 @@ def legacy_metrics_from_structured(metrics: Mapping[str, Any]) -> dict[str, Any]
             else {},
         },
         "stability": stability,
+        "evaluation": dict(metrics.get("evaluation", {})),
         "end_to_end_reward": dict(metrics.get("end_to_end_reward", {})),
     }
 

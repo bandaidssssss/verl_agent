@@ -20,7 +20,7 @@
    - 主动早停记录为 `early_stopped`，不与 OOM/NCCL 失败混淆。
    - runner 会覆盖基础参数中的 `trainer.save_freq=-1`，在成功 trial 的最后一个 update 保存 Verl 原生 checkpoint；失败或早停 trial 不发布 checkpoint。
 3. `confirm`
-   - 从 terminal reward 最好的成功 stability trial 的 checkpoint 恢复，当前训练到全局 step 135；例如从 step 50 恢复时实际再运行 85 update。
+   - 从 `val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1` 最高的成功 stability trial 的 checkpoint 恢复，当前训练到全局 step 135；例如从 step 50 恢复时实际再运行 85 update。
    - 配置冻结，记录 reward 到阈值的累计时间、累计 token 和 peak reward。
 
 一次 update 内的监控阶段为 `rollout`、`actor_log_prob`、`ref_log_prob`、`training`。runner 设置 `VERL_LOGGING_LEVEL=DEBUG`，使用 verl 的 `GPUMemoryLogger` 阶段边界，同时调用平台对应的 SMI 每秒采样每张卡。若没有可用 SMI，阶段显存会使用日志观测值；没有可靠数据时输出 `null`。
@@ -109,7 +109,7 @@ Proposal 返回由 `min_proposal_candidates` / `max_proposal_candidates` 限制�
 - `output/trials/NNNN/vllm_metrics.csv`：仅在 vLLM stats 明确启用时生成的紧凑 rollout 调度、KV-cache 和 preemption 采样。
 - `output/trials/NNNN/health_events.jsonl`：健康规则触发、Agent 决策及停止动作。
 - `output/trials/NNNN/health_agent_traces.jsonl`：Train Health Agent 的完整对话、工具和 token trace。
-- `output/trials/NNNN/metrics.json`：一次解析得到的 throughput、stability、resource 分类指标；运行中原子更新，结束后标为 `final`。
+- `output/trials/NNNN/metrics.json`：一次解析得到的 throughput、stability、evaluation、resource 分类指标；运行中原子更新，结束后标为 `final`。`evaluation.latest_metrics` 保存 `config/agent_config.json:evaluation_metrics` 中配置的最新验证/测试分数。`evaluate_at_trial_end=true` 会按当前 stage 的 update 目标设置 `trainer.test_freq`，在正常结束时执行一次验证；提前终止且尚未验证的 trial 不会有该分数。
 - `output/trials/NNNN/log_facts.json`：统一提取器在同一次日志扫描中提取的完整 Hydra runtime 参数、模型配置、Megatron resolved runtime、去重后的 rank 参数量和有效序列长度；不属于 memory estimator 输出。
 - `output/trials/NNNN/parameters.json` / `parameter_groups.json`：实际传给 Hydra 的显式参数，以及 fixed/throughput/stability/ignored 分类。框架默认值不会补写进 `parameters.json`。
 - `output/trials/NNNN/decision.json` / `agent_trace.json`：决策摘要与完整 Agent trace 分开保存。

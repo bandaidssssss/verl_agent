@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 from agents import AgentResponseError, AgentSet
 from config_utils import append_jsonl, apply_changes, write_json
+from metrics import MATH_EVALUATION_METRIC
 from prompt_context import compact_candidate_for_prompt, compact_reference_history
 from prompting import rejection_feedback
 from runtime_parameters import (
@@ -82,9 +83,9 @@ def best_hardware_trial(trials: list[dict[str, Any]]) -> dict[str, Any] | None:
 def best_stability_trial(trials: list[dict[str, Any]]) -> dict[str, Any] | None:
     candidates = []
     for trial in _successful(_stability_trials(trials)):
-        reward = _terminal_stability_value(trial, "critic/rewards/mean")
-        if reward is not None:
-            candidates.append((reward, trial))
+        score = _stability_evaluation_score(trial)
+        if score is not None:
+            candidates.append((score, trial))
     return max(candidates, default=(None, None), key=lambda item: item[0])[1]
 
 
@@ -292,26 +293,28 @@ def _complete_stability_points(trial: Mapping[str, Any], metric: str) -> list[tu
     return []
 
 
-def _terminal_stability_value(
-    trial: Mapping[str, Any], metric: str
-) -> float | None:
-    """Read the trailing metric mean used to compare completed stability trials."""
+def _stability_evaluation_score(trial: Mapping[str, Any]) -> float | None:
+    """Read the persisted MATH test score used to rank stability trials."""
     scores = trial.get("scores")
-    if metric == "critic/rewards/mean" and isinstance(scores, Mapping):
-        indexed = scores.get("terminal_reward")
-        if isinstance(indexed, (int, float)) and not isinstance(indexed, bool):
-            return float(indexed)
-    stability = trial.get("stability")
-    if not isinstance(stability, Mapping):
-        return None
-    terminal_metrics = stability.get("terminal_metrics")
-    if isinstance(terminal_metrics, Mapping):
-        value = terminal_metrics.get(metric)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
+    indexed = scores.get("evaluation_score") if isinstance(scores, Mapping) else None
+    if isinstance(indexed, (int, float)) and not isinstance(indexed, bool):
+        return float(indexed)
 
-    points = _complete_stability_points(trial, metric)
-    return points[-1][1] if points else None
+    evaluation = trial.get("evaluation")
+    if not isinstance(evaluation, Mapping):
+        structured = trial.get("structured_metrics")
+        evaluation = (
+            structured.get("evaluation")
+            if isinstance(structured, Mapping)
+            else None
+        )
+    latest = evaluation.get("latest_metrics") if isinstance(evaluation, Mapping) else None
+    value = latest.get(MATH_EVALUATION_METRIC) if isinstance(latest, Mapping) else None
+    return (
+        float(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
 
 
 def _reference_descriptor(trial: Mapping[str, Any] | None, selection_reason: str) -> dict[str, Any]:
@@ -438,7 +441,7 @@ def _next_stage_baseline(
         selected = best_stability_trial(trials)
         next_stage = "confirm"
         reason = (
-            "best successful stability trial by terminal reward mean "
+            "best successful stability trial by MATH test accuracy "
             "selected for confirmation"
         )
     else:
@@ -721,7 +724,7 @@ class TuningOrchestrator:
                     )
                 raise RuntimeError("stability tuning requires a successful hardware trial")
             reason = (
-                "best successful stability trial by terminal reward mean"
+                "best successful stability trial by MATH test accuracy"
                 if stability is not None
                 else "best successful hardware trial used as stability baseline"
             )
@@ -731,7 +734,7 @@ class TuningOrchestrator:
             if stability is None:
                 raise RuntimeError("confirmation requires a successful stability trial")
             reason = (
-                "best successful stability trial by terminal reward mean "
+                "best successful stability trial by MATH test accuracy "
                 "selected for confirmation"
             )
             return dict(stability["parameters"]), _reference_descriptor(stability, reason)

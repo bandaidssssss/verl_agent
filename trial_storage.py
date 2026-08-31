@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from config_utils import load_json, read_jsonl
-from metrics import legacy_metrics_from_structured
+from metrics import MATH_EVALUATION_METRIC, legacy_metrics_from_structured
 
 
 def trial_artifacts(
@@ -72,6 +72,24 @@ def _terminal_reward(report: Mapping[str, Any]) -> float | None:
     return float(reward) if isinstance(reward, (int, float)) and not isinstance(reward, bool) else None
 
 
+def _evaluation_score(report: Mapping[str, Any]) -> float | None:
+    evaluation = report.get("evaluation")
+    if not isinstance(evaluation, Mapping):
+        structured = report.get("structured_metrics")
+        evaluation = (
+            structured.get("evaluation")
+            if isinstance(structured, Mapping)
+            else None
+        )
+    latest = evaluation.get("latest_metrics") if isinstance(evaluation, Mapping) else None
+    value = latest.get(MATH_EVALUATION_METRIC) if isinstance(latest, Mapping) else None
+    return (
+        float(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
+
+
 def build_trial_index(
     report: Mapping[str, Any],
     *,
@@ -105,6 +123,7 @@ def build_trial_index(
             "throughput_mean": _mean_metric(report, "performance", "throughput"),
             "time_per_step_mean_s": _mean_metric(report, "performance", "time_per_step_s"),
             "terminal_reward": _terminal_reward(report),
+            "evaluation_score": _evaluation_score(report),
             "stability_healthy": stability_healthy,
         },
         "resource": {

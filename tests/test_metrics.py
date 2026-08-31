@@ -175,6 +175,27 @@ class MetricsTest(unittest.TestCase):
             65536 - 3277,
         )
 
+    def test_extracts_math_test_score_without_overwriting_same_step_metrics(self) -> None:
+        metric = "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1"
+        text = "\n".join(
+            (
+                "step:5 - perf/throughput:12 - critic/rewards/mean:0.2",
+                f"step:5 - {metric}:0.375",
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "train.log"
+            log.write_text(text, encoding="utf-8")
+            metrics = build_structured_metrics(log, None, warmup_updates=0)
+
+        self.assertEqual(metrics["throughput"]["steps"][0]["metrics"]["perf/throughput"], 12)
+        self.assertEqual(metrics["stability"]["steps"][0]["metrics"]["critic/rewards/mean"], 0.2)
+        self.assertEqual(metrics["evaluation"]["latest_metrics"][metric], 0.375)
+        self.assertEqual(
+            metrics["evaluation"]["steps"],
+            [{"step": 5, "metrics": {metric: 0.375}}],
+        )
+
     def test_incomplete_monitor_coverage_is_never_marked_safe(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

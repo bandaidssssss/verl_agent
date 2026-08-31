@@ -88,6 +88,11 @@ class TrialStorageTest(unittest.TestCase):
                 "updates_completed": 50,
                 "updates_executed": 50,
                 "checkpoint": {"global_step": 50, "path": str(checkpoint)},
+                "evaluation": {
+                    "latest_metrics": {
+                        "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.375,
+                    }
+                },
                 "proposal": {"reference_trial_id": 2, "changes": {}},
             }
             index = build_trial_index(report, stability_healthy=True)
@@ -98,6 +103,7 @@ class TrialStorageTest(unittest.TestCase):
             "trials/0003/checkpoints/global_step_50",
         )
         self.assertEqual(index["checkpoint"], {"global_step": 50})
+        self.assertEqual(index["scores"]["evaluation_score"], 0.375)
         self.assertEqual(hydrated["checkpoint"]["path"], str(checkpoint.resolve()))
 
     def test_checkpoint_artifact_cannot_escape_output_directory(self) -> None:

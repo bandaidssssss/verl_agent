@@ -40,7 +40,7 @@ confirm
 - stability 达到上限但都不健康：`stopped_unstable`。
 - 已存在 confirm trial：`done`。
 
-默认起点：hardware 用吞吐最高的成功 trial；repair 用最新失败 trial；stability/confirm 优先用 terminal reward 最好的 stability trial。
+默认起点：hardware 用吞吐最高的成功 trial；repair 用最新失败 trial；stability/confirm 优先用 `val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1` 最高的 stability trial。没有该 test 分数的 trial 不参与最优 stability 选择。
 
 当前实际预算：
 
@@ -184,6 +184,7 @@ Agent 结合 reward、KL、entropy、gradient 和生成指标复核。
 - 吞吐和 step 时间；
 - reward、KL、entropy、clip 等窗口序列；
 - terminal reward；
+- MATH test accuracy 及其评测 step；
 - reward 阈值对应的累计时间/token；
 - OOM、NCCL、NaN/Inf 等错误。
 

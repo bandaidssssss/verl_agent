@@ -28,6 +28,27 @@ class BuildCommandTest(unittest.TestCase):
         self.assertTrue(_resource_gate_enabled("hardware_tuning"))
         self.assertTrue(_resource_gate_enabled("confirm"))
 
+    def test_evaluate_at_trial_end_uses_the_stage_update_target(self) -> None:
+        parameters = {
+            "trainer.total_epochs": 1,
+            "trainer.test_freq": -1,
+        }
+        agent_config = {
+            "verl_root": "/tmp/verl",
+            "evaluate_at_trial_end": True,
+        }
+
+        command, _ = build_command(
+            parameters,
+            agent_config,
+            trial_id=1,
+            updates=50,
+            stage="stability_tuning",
+        )
+
+        self.assertIn("trainer.test_freq=50", command)
+        self.assertNotIn("trainer.test_freq=-1", command)
+
     def test_stability_uses_isolated_final_checkpoint(self) -> None:
         parameters = {
             "trainer.total_epochs": 2,

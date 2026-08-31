@@ -859,7 +859,20 @@ class AgentToolsTest(unittest.TestCase):
                         "sample_count": 5,
                     },
                     "terminal_metrics": {"critic/rewards/mean": 0.25},
-                }
+                },
+                "evaluation": {
+                    "steps": [
+                        {
+                            "step": 8,
+                            "metrics": {
+                                "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.375,
+                            },
+                        }
+                    ],
+                    "latest_metrics": {
+                        "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.375,
+                    },
+                },
             },
         )
         self.history_path.write_text(
@@ -901,6 +914,13 @@ class AgentToolsTest(unittest.TestCase):
             reference["metrics"]["terminal_metrics"]["critic/rewards/mean"],
             0.25,
         )
+        self.assertEqual(
+            reference["metrics"]["evaluation"]["latest_metrics"][
+                "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1"
+            ],
+            0.375,
+        )
+        self.assertEqual(reference["metrics"]["evaluation"]["latest_step"], 8)
         self.assertIn(
             "stability.window_metrics.actor/ppo_kl",
             reference["missing_metrics"],

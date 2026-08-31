@@ -40,7 +40,13 @@ def hardware_trial(trial_id: int, throughput: float, result: str = "success") ->
     }
 
 
-def stability_trial(trial_id: int, reward: float, kl: float = 0.02) -> dict:
+def stability_trial(
+    trial_id: int,
+    reward: float,
+    kl: float = 0.02,
+    evaluation_score: float | None = None,
+) -> dict:
+    score = reward if evaluation_score is None else evaluation_score
     return {
         "trial_id": trial_id,
         "stage": "stability_tuning",
@@ -52,6 +58,11 @@ def stability_trial(trial_id: int, reward: float, kl: float = 0.02) -> dict:
                 "critic/rewards/mean": [reward],
                 "actor/ppo_kl": [kl],
             },
+        },
+        "evaluation": {
+            "latest_metrics": {
+                "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": score,
+            }
         },
     }
 
@@ -104,29 +115,21 @@ class OrchestratorStageTest(unittest.TestCase):
         trials.extend([stability_trial(7, 0.1), stability_trial(8, 0.2)])
         self.assertEqual(determine_stage(trials, self.config), "confirm")
 
-    def test_best_stability_uses_terminal_reward_mean(self) -> None:
-        earlier = stability_trial(7, 0.2)
-        earlier["stability"]["terminal_metrics"] = {
-            "critic/rewards/mean": 0.25
-        }
-        later = stability_trial(8, 0.4)
-        later["stability"]["windows"].append({"start_step": 11, "end_step": 15, "sample_count": 5})
-        later["stability"]["metrics"]["critic/rewards/mean"].append(0.5)
-        later["stability"]["metrics"]["actor/ppo_kl"].append(0.02)
-        later["stability"]["terminal_metrics"] = {
-            "critic/rewards/mean": 0.1
-        }
-        self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 7)
+    def test_best_stability_uses_math_test_accuracy_instead_of_reward(self) -> None:
+        higher_reward = stability_trial(7, 0.5, evaluation_score=0.2)
+        higher_test_score = stability_trial(8, 0.1, evaluation_score=0.4)
 
-    def test_best_stability_ignores_incomplete_terminal_window(self) -> None:
+        self.assertEqual(
+            best_stability_trial([higher_reward, higher_test_score])["trial_id"],
+            8,
+        )
+
+    def test_best_stability_ignores_trials_without_test_score(self) -> None:
         earlier = stability_trial(7, 0.2)
         later = stability_trial(8, 0.4)
-        later["stability"]["windows"].append(
-            {"start_step": 11, "end_step": 12, "sample_count": 2}
-        )
-        later["stability"]["metrics"]["critic/rewards/mean"].append(0.1)
-        later["stability"]["metrics"]["actor/ppo_kl"].append(0.02)
-        self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 8)
+        del later["evaluation"]
+
+        self.assertEqual(best_stability_trial([earlier, later])["trial_id"], 7)
 
     def test_single_low_reward_is_not_treated_as_a_fixed_failure_floor(self) -> None:
         low_reward = stability_trial(7, -1.0, kl=0.01)

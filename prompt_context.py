@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping, Sequence
 
+from metrics import MATH_EVALUATION_METRIC
 from runtime_parameters import parameter_value_views
 
 
@@ -114,6 +115,29 @@ def _stability_metrics(
                 selected[metric_name] = copy.deepcopy(value)
         if selected:
             metrics[collection] = selected
+
+    evaluation_path = f"evaluation.latest_metrics.{MATH_EVALUATION_METRIC}"
+    evaluation_value = _read_path(structured, evaluation_path)
+    if evaluation_value is _MISSING:
+        missing.append(evaluation_path)
+    else:
+        evaluation: dict[str, Any] = {
+            "latest_metrics": {
+                MATH_EVALUATION_METRIC: copy.deepcopy(evaluation_value),
+            }
+        }
+        evaluation_steps = _read_path(structured, "evaluation.steps")
+        if isinstance(evaluation_steps, list):
+            for row in reversed(evaluation_steps):
+                row_metrics = row.get("metrics") if isinstance(row, Mapping) else None
+                if (
+                    isinstance(row_metrics, Mapping)
+                    and MATH_EVALUATION_METRIC in row_metrics
+                    and isinstance(row.get("step"), int)
+                ):
+                    evaluation["latest_step"] = row["step"]
+                    break
+        metrics["evaluation"] = evaluation
     return metrics, missing
 
 
