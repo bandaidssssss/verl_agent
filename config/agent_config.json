@@ -26,12 +26,12 @@
   "health_agent_shadow_mode": false,
   "resource_gate_updates": 1,
   "hardware_trial_updates": 5,
-  "stability_trial_updates": 50,
+  "stability_trial_updates": 100,
   "confirm_trial_updates": 135,
   "max_hardware_trials": 6,
-  "max_stability_trials": 4,
+  "max_stability_trials": 10,
   "min_hardware_trials": 2,
-  "min_stability_trials": 2,
+  "min_stability_trials": 8,
   "plateau_rounds": 3,
   "resource_memory_reserve_mib": 4096,
   "throughput_memory_reserve_mib": 8192,
@@ -55,5 +55,5 @@
   "evaluation_metrics": [
     "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1"
   ],
-  "reward_thresholds": [0.0, 0.1, 0.2, 0.3]
+  "reward_thresholds": [0.1, 0.2, 0.3, 0.4]
 }

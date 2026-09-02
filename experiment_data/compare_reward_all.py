@@ -10,16 +10,23 @@ except ImportError:
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-LOG_DIR = SCRIPT_DIR / "logs"
-OUTPUT_FILE = SCRIPT_DIR / "result" / "base_vs_0731_0807_0814_0819.png"
+LOG_DIR = SCRIPT_DIR / ".." / "output" / "0901_1346_2026" / "trials"
+OUTPUT_FILE = SCRIPT_DIR / "0901_1346_2026" / "reward_metrics_all.png"
 MAX_STEP = 134
 
 LOG_FILES = {
-    "base": LOG_DIR / "base_1024_4096_lr_1e-6_n5_2epochs.log",
-    "0731": LOG_DIR / "0731agent.log",
-    "0807": LOG_DIR / "0807agent.log",
-    "0814": LOG_DIR / "0814agent.log",
-    "0819": LOG_DIR / "0819_optimized.log",
+    # "base": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/experiment_data/math_logs/0q6_base.log",
+
+    "0001": LOG_DIR / "0001" / "train.log",
+    # "entropy0001":"experiment_data/logs/entropy0001.log",
+    # "entropy0003":"experiment_data/logs/entropy0003.log",
+    "0002": LOG_DIR / "0002" / "train.log",
+    "0003": LOG_DIR / "0003" / "train.log",
+    "0004": LOG_DIR / "0004" / "train.log",
+    # "0005": LOG_DIR / "0005" / "train.log",
+    # "0006": LOG_DIR / "0006" / "train.log",
+    # "0007": LOG_DIR / "0007" / "train.log",
+    # "0008": LOG_DIR / "0008" / "train.log",
 }
 
 

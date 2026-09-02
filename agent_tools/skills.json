@@ -25,7 +25,7 @@
     {
       "name": "tuning_strategies",
       "handler": "tuning_strategies",
-      "roles": [],
+      "roles": ["proposal"],
       "description": "Query stage-aware strategies for a measured bottleneck or failure scenario.",
       "parameters": {
         "type": "object",
@@ -37,16 +37,7 @@
             "items": {
               "type": "string",
               "enum": [
-                "rollout_memory_pressure",
-                "actor_logprob_memory_pressure",
-                "ref_logprob_memory_pressure",
-                "training_memory_pressure",
-                "low_gpu_utilization",
-                "communication_bottleneck",
-                "end_to_end_throughput",
-                "kl_explosion",
-                "reward_collapse",
-                "platform_portability"
+                "memory_rules"
               ]
             },
             "description": "Scenario names to query"
@@ -111,7 +102,7 @@
     {
       "name": "live_gpu_snapshot",
       "handler": "live_gpu_snapshot",
-      "roles": ["proposal", "feasibility", "diagnosis"],
+      "roles": ["diagnosis"],
       "description": "Read a safe instantaneous GPU snapshot through nvidia-smi, xpu-smi, or GPU_SMI. This is host occupancy evidence, not phase-specific training memory.",
       "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
     },

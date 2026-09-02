@@ -345,10 +345,8 @@ def build_command(
             "trainer.logger": parameters.get("trainer.logger", ["console"]),
         }
     )
-    if bool(agent_config.get("evaluate_at_trial_end", False)):
-        # Each tuning stage has a different update target.  Matching test_freq
-        # to that target runs validation once at the normal end of the trial.
-        run_parameters["trainer.test_freq"] = updates
+    # if bool(agent_config.get("evaluate_at_trial_end", False)):
+    #     run_parameters["trainer.test_freq"] = updates
     if checkpoint_dir is not None:
         local_checkpoint_dir = Path(checkpoint_dir).expanduser().resolve()
         run_parameters.update(
