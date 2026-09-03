@@ -7,8 +7,14 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Mapping
 
-from agents import AgentResponseError, AgentSet
-from config_utils import append_jsonl, apply_changes, write_json
+from agents import AgentError, AgentResponseError, AgentSet
+from config_utils import (
+    append_jsonl,
+    apply_changes,
+    load_json,
+    write_json,
+    write_json_atomic,
+)
 from metrics import MATH_EVALUATION_METRIC
 from prompt_context import compact_candidate_for_prompt, compact_reference_history
 from prompting import rejection_feedback
@@ -18,6 +24,8 @@ from runtime_parameters import (
     runtime_parameter_values,
 )
 from runner import run_trial
+from summary_store import rebuild_summary_index
+from tools.replay_summer_prompt import build_summer_context
 from trial_storage import (
     build_trial_index,
     compact_trial_report,
@@ -896,6 +904,8 @@ class TuningOrchestrator:
                 },
                 "workload": {
                     "algorithm": current.get("algorithm.adv_estimator"),
+                    "train_dataset": current.get("data.train_files"),
+                    "evaluation_dataset": current.get("data.val_files"),
                     "train_batch_size": current.get("data.train_batch_size"),
                     "max_prompt_length": current.get("data.max_prompt_length"),
                     "max_response_length": current.get("data.max_response_length"),
@@ -1304,6 +1314,53 @@ class TuningOrchestrator:
             trace,
         )
 
+    def _summarize_run(self, trial_id: int) -> dict[str, Any] | None:
+        """Summarize all persisted trials after one trial completes."""
+        summary_dir = self.output_dir / "summer"
+        try:
+            context = build_summer_context(self.output_dir)
+            run = self.agents.summarize({"trial": context})
+            raw_result = copy.deepcopy(run.result)
+            raw_result.pop("run_context", None)
+
+            result = {
+                "run_context": copy.deepcopy(context["run_context"]),
+                **raw_result,
+            }
+            trace = run.as_trace()
+            trace["result"] = copy.deepcopy(result)
+            write_json_atomic(summary_dir / "summer_result.json", result)
+
+            trace_path = (
+                self.output_dir / "trials" / f"{trial_id:04d}" / "agent_trace.json"
+            )
+            current_trace = load_json(trace_path) if trace_path.is_file() else {}
+            if not isinstance(current_trace, dict):
+                current_trace = {}
+            current_trace["summer"] = trace
+            write_json_atomic(trace_path, current_trace)
+
+            index_path = rebuild_summary_index(self.output_dir.parent)
+            _stream_orchestrator_event(
+                self.config,
+                "summer_completed",
+                {
+                    "trial_id": trial_id,
+                    "result_path": str(summary_dir / "summer_result.json"),
+                    "index_path": str(index_path),
+                },
+            )
+            return result
+        except (AgentError, OSError, RuntimeError, ValueError) as exc:
+            error = (
+                exc.as_dict()
+                if isinstance(exc, AgentResponseError)
+                else {"error": f"{type(exc).__name__}: {exc}"}
+            )
+            error["trial_id"] = trial_id
+            _stream_orchestrator_event(self.config, "summer_failed", error)
+            return None
+
     def run(self, max_trials: int = 1, dry_run: bool = False) -> list[dict[str, Any]]:
         produced = []
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1456,6 +1513,7 @@ class TuningOrchestrator:
                 append_jsonl(self.history_path, index)
                 if stage == "confirm":
                     write_json(self.output_dir / "final_result.json", compact_report)
+                self._summarize_run(trial_id)
             produced.append(report)
             write_json(
                 self.state_path,

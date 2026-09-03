@@ -34,6 +34,63 @@ TUNING_STAGES = {
 }
 
 
+def _portable_identifier(value: Any, marker: str) -> Any:
+    """Remove host-specific path prefixes while preserving dataset/model identity."""
+    if isinstance(value, list):
+        return [_portable_identifier(item, marker) for item in value]
+    if not isinstance(value, str):
+        return copy.deepcopy(value)
+    normalized = value.replace("\\", "/")
+    path_marker = f"/{marker.strip('/')}/"
+    if path_marker in normalized:
+        return normalized.rsplit(path_marker, 1)[1]
+    if normalized.startswith("/"):
+        return Path(normalized).name
+    return value
+
+
+def _run_context(run_path: Path, trials: list[Mapping[str, Any]]) -> dict[str, Any]:
+    anchor = next(
+        (trial for trial in trials if trial.get("source") == "reference_only"),
+        trials[0] if trials else {},
+    )
+    parameters = anchor.get("parameters")
+    parameters = parameters if isinstance(parameters, Mapping) else {}
+    platform = next(
+        (trial.get("platform") for trial in trials if trial.get("platform") is not None),
+        None,
+    )
+    return {
+        "run_id": run_path.name,
+        "algorithm": copy.deepcopy(parameters.get("algorithm.adv_estimator")),
+        "model": _portable_identifier(
+            parameters.get("actor_rollout_ref.model.path"), "model"
+        ),
+        "train_dataset": _portable_identifier(
+            parameters.get("data.train_files"), "data"
+        ),
+        "evaluation_dataset": _portable_identifier(
+            parameters.get("data.val_files"), "data"
+        ),
+        "platform": copy.deepcopy(platform),
+        "workload": {
+            "train_batch_size": copy.deepcopy(
+                parameters.get("data.train_batch_size")
+            ),
+            "max_prompt_length": copy.deepcopy(
+                parameters.get("data.max_prompt_length")
+            ),
+            "max_response_length": copy.deepcopy(
+                parameters.get("data.max_response_length")
+            ),
+            "n_gpus_per_node": copy.deepcopy(
+                parameters.get("trainer.n_gpus_per_node")
+            ),
+            "nnodes": copy.deepcopy(parameters.get("trainer.nnodes")),
+        },
+    }
+
+
 def _absolute(path: str | Path) -> Path:
     value = Path(path).expanduser()
     if not value.is_absolute():
@@ -106,6 +163,7 @@ def build_summer_context(run_dir: str | Path) -> dict[str, Any]:
     indexes = read_trial_indexes(history_path)
     seen_ids: set[int] = set()
     trials: list[dict[str, Any]] = []
+    hydrated_trials: list[dict[str, Any]] = []
     warnings: list[str] = []
 
     for index in indexes:
@@ -160,6 +218,7 @@ def build_summer_context(run_dir: str | Path) -> dict[str, Any]:
         if isinstance(termination, Mapping) and termination:
             row["termination"] = copy.deepcopy(dict(termination))
         trials.append(row)
+        hydrated_trials.append({**trial, "source": source})
 
     included_ids = {row["trial_id"] for row in trials}
     for row in trials:
@@ -172,6 +231,7 @@ def build_summer_context(run_dir: str | Path) -> dict[str, Any]:
 
     return {
         "run_id": run_path.name,
+        "run_context": _run_context(run_path, hydrated_trials),
         "stage_objectives": {
             "hardware": (
                 "Judge whether the attempted direction improved end-to-end throughput "
@@ -189,75 +249,6 @@ def build_summer_context(run_dir: str | Path) -> dict[str, Any]:
         "trials": trials,
         "warnings": warnings,
     }
-
-
-def validate_summer_result(
-    result: Mapping[str, Any], context: Mapping[str, Any]
-) -> list[str]:
-    """Validate output shape and that every cited trial is an executed Agent attempt."""
-    violations: list[str] = []
-    expected_sections = {"hardware", "stability"}
-    if set(result) != expected_sections:
-        violations.append(
-            f"top-level keys must be exactly {sorted(expected_sections)}"
-        )
-    allowed_ids: dict[str, set[int]] = {"hardware": set(), "stability": set()}
-    for row in context.get("trials", []):
-        if not isinstance(row, Mapping) or row.get("source") != "agent":
-            continue
-        group = row.get("stage_group")
-        trial_id = row.get("trial_id")
-        if group in allowed_ids and isinstance(trial_id, int):
-            allowed_ids[str(group)].add(trial_id)
-
-    for stage in expected_sections:
-        section = result.get(stage)
-        if not isinstance(section, Mapping):
-            violations.append(f"{stage} must be an object")
-            continue
-        expected_lists = {
-            "problems": "problem",
-            "useful_directions": "direction",
-            "ineffective_directions": "direction",
-        }
-        if set(section) != set(expected_lists):
-            violations.append(
-                f"{stage} keys must be exactly {sorted(expected_lists)}"
-            )
-        for list_name, text_key in expected_lists.items():
-            items = section.get(list_name)
-            if not isinstance(items, list):
-                violations.append(f"{stage}.{list_name} must be an array")
-                continue
-            for position, item in enumerate(items):
-                prefix = f"{stage}.{list_name}[{position}]"
-                if not isinstance(item, Mapping):
-                    violations.append(f"{prefix} must be an object")
-                    continue
-                if set(item) != {text_key, "trial_ids"}:
-                    violations.append(
-                        f"{prefix} must contain only {text_key} and trial_ids"
-                    )
-                text_value = item.get(text_key)
-                if not isinstance(text_value, str) or not text_value.strip():
-                    violations.append(f"{prefix}.{text_key} must be non-empty")
-                trial_ids = item.get("trial_ids")
-                if (
-                    not isinstance(trial_ids, list)
-                    or not trial_ids
-                    or any(
-                        not isinstance(trial_id, int) or isinstance(trial_id, bool)
-                        for trial_id in trial_ids
-                    )
-                ):
-                    violations.append(f"{prefix}.trial_ids must contain integers")
-                    continue
-                invalid = sorted(set(trial_ids) - allowed_ids[stage])
-                if invalid:
-                    violations.append(
-                        f"{prefix} cites non-Agent or wrong-stage trial IDs {invalid}"
-                    )
-    return violations
 
 
 def _prompt_digest(path: Path) -> str:
@@ -355,21 +346,23 @@ def main() -> int:
             return 0
 
         run = agent.run(conversation=conversation)
-        result = run.result
-        violations = validate_summer_result(result, context)
+        result = {
+            **copy.deepcopy(run.result),
+            "run_context": copy.deepcopy(context["run_context"]),
+        }
         write_json(result_dir / "summer_result.json", result)
-        write_json(result_dir / "summer_trace.json", run.as_trace())
+        trace = run.as_trace()
+        trace["result"] = copy.deepcopy(result)
+        write_json(result_dir / "summer_trace.json", trace)
         output = {
             "metadata": metadata,
             "mode": "llm",
-            "valid": not violations,
-            "violations": violations,
             "result_path": str(result_dir / "summer_result.json"),
             "trace_path": str(result_dir / "summer_trace.json"),
         }
         write_json(result_dir / "summer_replay.json", output)
         print(json.dumps(output, ensure_ascii=False, indent=2))
-        return 0 if not violations else 2
+        return 0
     except (AgentError, FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

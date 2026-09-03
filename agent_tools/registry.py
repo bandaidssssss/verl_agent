@@ -27,6 +27,7 @@ from trial_storage import (
 from vllm_metrics import assess_rollout_metrics, summarize_vllm_metrics
 from validator import IGNORED_PARAMETERS, editable_parameters
 from runtime_parameters import parameter_value_views
+from summary_store import query_summaries
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,7 @@ class ToolRegistry:
             "live_gpu_snapshot": self._live_gpu_snapshot,
             "search_verl_docs": self._search_verl_docs,
             "query_trial_history": self._query_trial_history,
+            "query_tuning_summaries": self._query_tuning_summaries,
             "read_trial_log_excerpt": self._read_trial_log_excerpt,
             "read_trial_metrics": self._read_trial_metrics,
             "read_current_trial_metrics": self._read_current_trial_metrics,
@@ -599,6 +601,31 @@ class ToolRegistry:
                 }
             )
         return {"stage": stage, "reference_trials": references}
+
+    def _query_tuning_summaries(
+        self, arguments: Mapping[str, Any], runtime: ToolRuntime
+    ) -> dict[str, Any]:
+        stage = arguments.get("stage")
+        if stage not in {"hardware", "stability"}:
+            raise ToolError("stage must be hardware or stability")
+        query = arguments.get("query", "")
+        if not isinstance(query, str) or len(query) > 200:
+            raise ToolError("query must be a string no longer than 200 characters")
+        max_results = arguments.get("max_results", 5)
+        if (
+            not isinstance(max_results, int)
+            or isinstance(max_results, bool)
+            or not 1 <= max_results <= 8
+        ):
+            raise ToolError("max_results must be an integer from 1 to 8")
+        return query_summaries(
+            runtime.history_path.parent.parent,
+            stage=stage,
+            query=query,
+            max_results=max_results,
+            current_context=runtime.context,
+            exclude_run_id=runtime.history_path.parent.name,
+        )
 
     def _read_trial_log_excerpt(self, arguments: Mapping[str, Any], runtime: ToolRuntime) -> dict[str, Any]:
         trial_id = arguments.get("trial_id")

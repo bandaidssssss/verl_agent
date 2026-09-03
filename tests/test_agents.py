@@ -236,6 +236,26 @@ class LLMRoleAgentTest(unittest.TestCase):
 
 
 class TrainHealthRulesAgentTest(unittest.TestCase):
+    def test_summer_uses_its_own_output_token_limit(self) -> None:
+        config = load_json(ROOT / "config" / "agent_config.json")
+        config.update(
+            {
+                "llm_max_output_tokens": 1024,
+                "summer_max_output_tokens": 32768,
+                "stream_agent_events": False,
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            agents = AgentSet(
+                ROOT,
+                "rules",
+                config,
+                Path(directory) / "trials.jsonl",
+            )
+
+        self.assertEqual(agents.proposal.config["llm_max_output_tokens"], 1024)
+        self.assertEqual(agents.summer.config["llm_max_output_tokens"], 32768)
+
     def test_rules_mode_accepts_health_trigger(self) -> None:
         config = load_json(ROOT / "config" / "agent_config.json")
         config["stream_agent_events"] = False

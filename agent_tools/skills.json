@@ -1,5 +1,5 @@
 {
-  "skill_version": "2.1",
+  "skill_version": "2.2",
   "description": "Allowlisted tools for the verl tuning agents",
   "skills": [
     {
@@ -139,6 +139,35 @@
           "stage": {"type": "string", "enum": ["hardware", "stability"]}
         },
         "required": ["reference_trial_ids", "stage"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "query_tuning_summaries",
+      "handler": "query_tuning_summaries",
+      "roles": ["proposal"],
+      "description": "Search bounded Summer summaries from earlier output runs. Returns both useful and ineffective direction evidence with its original run context. These summaries are hypothesis-level priors only; source-run trial IDs must never be used as current-run references.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": ["hardware", "stability"],
+            "description": "Current tuning stage whose historical experience should be searched"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Optional bottleneck, problem, or parameter-family keywords"
+          },
+          "max_results": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "default": 5
+          }
+        },
+        "required": ["stage"],
         "additionalProperties": false
       }
     },

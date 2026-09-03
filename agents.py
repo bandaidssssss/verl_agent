@@ -392,6 +392,16 @@ class AgentSet:
         self.train_health = LLMRoleAgent(
             "train_health", prompt_root / "train_health.md", self.registry, self.config
         )
+        summer_config = dict(self.config)
+        summer_config["llm_max_output_tokens"] = int(
+            self.config.get(
+                "summer_max_output_tokens",
+                self.config.get("llm_max_output_tokens", 4096),
+            )
+        )
+        self.summer = LLMRoleAgent(
+            "summer", prompt_root / "summer.md", self.registry, summer_config
+        )
 
     @staticmethod
     def _rules_run(role: str, context: Mapping[str, Any], result: dict[str, Any]) -> AgentRun:
@@ -511,3 +521,28 @@ class AgentSet:
         if action != "observe" and observe != 0:
             raise AgentError("train_health observe_for_updates must be 0 unless action=observe")
         return run
+
+    def summarize(
+        self,
+        context: Mapping[str, Any] | None = None,
+        conversation: AgentConversation | None = None,
+    ) -> AgentRun:
+        if self.mode == "rules":
+            rule_context = context or (conversation.context if conversation else {})
+            return self._rules_run(
+                "summer",
+                rule_context,
+                {
+                    "hardware": {
+                        "problems": [],
+                        "useful_directions": [],
+                        "ineffective_directions": [],
+                    },
+                    "stability": {
+                        "problems": [],
+                        "useful_directions": [],
+                        "ineffective_directions": [],
+                    },
+                },
+            )
+        return self.summer.run(context, conversation)

@@ -45,6 +45,8 @@ Each entry contains only the recorded changes, actual values for parameters edit
 ## Available Tools
 {AVAILABLE_TOOLS}
 
+Use `query_tuning_summaries` when prior-run experience could help choose or avoid a tuning direction. Treat returned conclusions as hypothesis-level evidence whose applicability depends on their `run_context`. Historical trial IDs are local to their source runs and must never be used as this run's `reference_trial_id`; every candidate must still use and verify a reference from the current run.
+
 
 ## Decision Rules
 

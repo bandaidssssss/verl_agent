@@ -14,10 +14,12 @@
   → Feasibility 选择一个合法候选
   → runner 执行真实 verl 训练
   → 采集显存、吞吐、稳定性和 vLLM 指标
-  → 写回历史，进入下一轮
+  → 写回历史
+  → Summer 汇总当前日期目录内截至本 trial 的已执行尝试并更新历史总结索引
+  → 进入下一轮
 ```
 
-第一轮不调用 LLM，直接运行 `base_parameters.json`，建立真实基线。
+第一轮不调用 Proposal/Feasibility，直接运行 `base_parameters.json` 建立真实基线；trial 落盘后仍会调用 Summer。
 
 ## 2. 三个调优阶段
 
@@ -73,7 +75,7 @@ Feasibility 不能修改、合并或创建候选。
 
 整批被拒绝后，具体原因会追加到原 Proposal 对话中继续重试。轮次耗尽时写 `last_agent_rejection.json`，不启动训练。
 
-## 4. 四个 Agent
+## 4. 五个 Agent
 
 运行时在 [agents.py](../agents.py)，Prompt 在 `prompts/`。
 
@@ -83,6 +85,11 @@ Feasibility 不能修改、合并或创建候选。
 | Feasibility | 从确定性合法候选中选择一个 |
 | Diagnosis | 对失败 trial 做根因归类 |
 | Train Health | 复核正在运行的 stability trial 是否应早停 |
+| Summer | 每个真实 trial 落盘后，根据该日期目录截至当前的真实 trial 总结问题、有效方向和无效方向 |
+
+Summer 不参与候选生成，也没有工具。它只消费脚本构造的去重事实：实际执行的参数修改、Proposal hypothesis、`reference_trial_id`、阶段指标、资源与终止事实。`run_context` 由确定性代码从基线参数提取并注入最终结果，包含算法、模型、训练/评测数据集、平台和关键 workload；Summer 不自行推断这些字段。
+
+Summer 属于非阻塞的 trial 收尾步骤，包括 baseline 在内的每个真实 trial 完成后都会像普通 Agent 一样调用；它没有启停开关，也不增加额外语义校验。`summer_max_output_tokens` 单独控制它较长上下文下的最大输出 token。成功时只发布 `summer/summer_result.json` 并更新全局索引，对话 trace 合并进刚结束 trial 的 `agent_trace.json`；调用失败只发送本次运行事件，不保存错误、状态或调试文件，也不会改写训练状态。
 
 单个 Agent 内部还有一个工具循环：
 
@@ -104,6 +111,7 @@ LLM → function call → ToolRegistry → 结果加入对话 → LLM 最终 JSO
 | `live_gpu_snapshot` | 当前主机 GPU 快照，仅作环境证据 |
 | `search_verl_docs` | 搜索本地 verl 配置、源码和文档 |
 | `query_trial_history` | 查询结构化 trial 历史 |
+| `query_tuning_summaries` | Proposal 按阶段及关键词查询其他 run 的 Summer 总结；返回正反经验及原始运行上下文 |
 | `read_trial_log_excerpt` | 读取受限日志片段 |
 | `read_trial_metrics` | 读取 reward、KL 等 step 窗口 |
 | `read_current_trial_metrics` | Train Health 读取 runner 固定 snapshot step 的当前 trial 指标；不接受任意路径 |
@@ -111,6 +119,8 @@ LLM → function call → ToolRegistry → 结果加入对话 → LLM 最终 JSO
 `tuning_strategies` 有实现，但当前没有授权给任何角色。
 
 日志和指标工具不能读取任意路径，只能访问当前 output 历史中记录的文件。
+
+`query_tuning_summaries` 只授权给 Proposal，并排除当前 run。历史总结是提出或排除调参方向的先验，不是当前实验事实；历史 trial ID 只在来源 run 内有效，不能作为当前候选的 `reference_trial_id`。
 
 ## 6. 显存估算版本边界
 
@@ -223,13 +233,15 @@ config/base_parameters.json 第一轮 verl 参数
 ├── final_result.json             # confirm 结果
 ├── last_agent_rejection.json
 ├── last_agent_error.json
+├── summer/
+│   └── summer_result.json        # 本 run 截至最新 trial 的权威总结
 └── trials/NNNN/
     ├── parameters.json
     ├── parameter_groups.json
     ├── metrics.json
     ├── log_facts.json
     ├── decision.json
-    ├── agent_trace.json
+    ├── agent_trace.json          # 当前 trial 的 Agent trace，含 Summer
     ├── command.json
     ├── train.log
     ├── gpu_samples.csv
@@ -239,6 +251,8 @@ config/base_parameters.json 第一轮 verl 参数
     ├── checkpoints/global_step_N/  # 成功 stability trial 的 Verl checkpoint
     └── trial_report.json
 ```
+
+所有日期目录之外还有 `output/summer_index.json`。它不复制完整总结，只记录 `run_context`、可用阶段和权威结果相对路径；每次当前 run 的 Summer 成功后更新。系统不会自动总结或导入旧的 `summer_replays`；需要把已有 run 变成正式经验时，显式运行 `tools/backfill_summer_experience.py`，它会从真实 trial 重新调用 Summer。查询时没有索引或没有匹配结果就返回 `found: false`，不扫描旧目录或尝试兼容其他格式。
 
 `trials.jsonl` 是轻量权威索引，状态机和历史初筛只读取它；详细参数、指标与决策按索引中的相对 artifact 路径按需加载。`state.json` 不是完整历史。Agent 指标工具只读 `metrics.json`，不会反复扫描 `train.log`。
 
@@ -275,6 +289,12 @@ python replay_agent_prompts.py \
 # 重新提取一个 trial 的分类指标
 python tools/extract_trial_metrics.py --trial-dir output/某次实验/trials/0001 \
   --agent-config config/agent_config.json
+
+# 将 output 中已有 run 逐个总结成下一次启动可查询的正式经验
+python tools/backfill_summer_experience.py --quiet
+
+# 只处理指定日期；已有正式总结默认跳过，显式覆盖时加 --overwrite
+python tools/backfill_summer_experience.py --date 0903_1333 --quiet
 
 # 单元测试
 python -m unittest discover -s tests -p 'test_*.py'

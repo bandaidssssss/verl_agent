@@ -21,7 +21,9 @@ ROOT = Path(__file__).resolve().parent
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run one verl tuning agent role")
     parser.add_argument(
-        "--role", choices=["proposal", "feasibility", "diagnosis", "train_health"], required=True
+        "--role",
+        choices=["proposal", "feasibility", "diagnosis", "train_health", "summer"],
+        required=True,
     )
     parser.add_argument("--context", required=True)
     parser.add_argument("--output")
@@ -47,8 +49,10 @@ def main() -> int:
         run = agents.review(context)
     elif args.role == "diagnosis":
         run = agents.diagnose(context)
-    else:
+    elif args.role == "train_health":
         run = agents.assess_health(context)
+    else:
+        run = agents.summarize(context)
     result = run.result
     if args.output:
         write_json(args.output, result)

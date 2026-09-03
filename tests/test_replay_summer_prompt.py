@@ -8,7 +8,6 @@ from pathlib import Path
 from tools.replay_summer_prompt import (
     build_summer_context,
     resolve_run_dir,
-    validate_summer_result,
 )
 from trial_storage import trial_artifacts
 
@@ -24,6 +23,7 @@ class SummerReplayTests(unittest.TestCase):
         metrics: dict,
         result: str = "success",
         resource: dict | None = None,
+        parameters: dict | None = None,
     ) -> dict:
         trial_dir = run_dir / "trials" / f"{trial_id:04d}"
         trial_dir.mkdir(parents=True, exist_ok=True)
@@ -45,6 +45,10 @@ class SummerReplayTests(unittest.TestCase):
         (trial_dir / "metrics.json").write_text(
             json.dumps(metrics), encoding="utf-8"
         )
+        if parameters is not None:
+            (trial_dir / "parameters.json").write_text(
+                json.dumps(parameters), encoding="utf-8"
+            )
         (trial_dir / "decision.json").write_text(
             json.dumps({"proposal": proposal}), encoding="utf-8"
         )
@@ -116,6 +120,17 @@ class SummerReplayTests(unittest.TestCase):
                 stage="hardware_tuning",
                 proposal={"decision": "baseline", "source": "orchestrator"},
                 metrics=self._hardware_metrics(1.0),
+                parameters={
+                    "algorithm.adv_estimator": "grpo",
+                    "actor_rollout_ref.model.path": "/models/Qwen3-8B",
+                    "data.train_files": "/workspace/data/math/train.parquet",
+                    "data.val_files": "/workspace/data/math/test.parquet",
+                    "data.train_batch_size": 1024,
+                    "data.max_prompt_length": 1024,
+                    "data.max_response_length": 2048,
+                    "trainer.n_gpus_per_node": 8,
+                    "trainer.nnodes": 1,
+                },
             ),
             self._write_trial(
                 run_dir,
@@ -174,6 +189,24 @@ class SummerReplayTests(unittest.TestCase):
 
             context = build_summer_context(run_dir)
 
+            self.assertEqual(
+                context["run_context"],
+                {
+                    "run_id": "0903_1333_2026",
+                    "algorithm": "grpo",
+                    "model": "Qwen3-8B",
+                    "train_dataset": "math/train.parquet",
+                    "evaluation_dataset": "math/test.parquet",
+                    "platform": None,
+                    "workload": {
+                        "train_batch_size": 1024,
+                        "max_prompt_length": 1024,
+                        "max_response_length": 2048,
+                        "n_gpus_per_node": 8,
+                        "nnodes": 1,
+                    },
+                },
+            )
             self.assertEqual([row["trial_id"] for row in context["trials"]], [1, 2, 3, 4])
             hardware = context["trials"][1]
             self.assertEqual(hardware["source"], "agent")
@@ -203,29 +236,6 @@ class SummerReplayTests(unittest.TestCase):
             (second / "trials.jsonl").write_text("", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "ambiguous"):
                 resolve_run_dir(root, "0903_1333")
-
-    def test_validation_rejects_reference_or_wrong_stage_citations(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            context = build_summer_context(self._write_run(Path(directory)))
-            valid = {
-                "hardware": {
-                    "problems": [{"problem": "low throughput", "trial_ids": [2]}],
-                    "useful_directions": [{"direction": "more concurrency", "trial_ids": [2]}],
-                    "ineffective_directions": [],
-                },
-                "stability": {
-                    "problems": [{"problem": "KL drift", "trial_ids": [4]}],
-                    "useful_directions": [{"direction": "stronger regularization", "trial_ids": [4]}],
-                    "ineffective_directions": [],
-                },
-            }
-            self.assertEqual(validate_summer_result(valid, context), [])
-
-            invalid = json.loads(json.dumps(valid))
-            invalid["hardware"]["problems"][0]["trial_ids"] = [1, 4]
-            violations = validate_summer_result(invalid, context)
-            self.assertTrue(any("[1, 4]" in item for item in violations))
-
 
 if __name__ == "__main__":
     unittest.main()
