@@ -863,6 +863,12 @@ class AgentToolsTest(unittest.TestCase):
                 "evaluation": {
                     "steps": [
                         {
+                            "step": 4,
+                            "metrics": {
+                                "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.35,
+                            },
+                        },
+                        {
                             "step": 8,
                             "metrics": {
                                 "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.375,
@@ -915,12 +921,15 @@ class AgentToolsTest(unittest.TestCase):
             0.25,
         )
         self.assertEqual(
-            reference["metrics"]["evaluation"]["latest_metrics"][
-                "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1"
-            ],
-            0.375,
+            reference["metrics"]["evaluation"],
+            {
+                "metric": "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1",
+                "steps": [
+                    {"step": 4, "value": 0.35},
+                    {"step": 8, "value": 0.375},
+                ],
+            },
         )
-        self.assertEqual(reference["metrics"]["evaluation"]["latest_step"], 8)
         self.assertIn(
             "stability.window_metrics.actor/ppo_kl",
             reference["missing_metrics"],
@@ -945,6 +954,17 @@ class AgentToolsTest(unittest.TestCase):
                         for step in range(1, 11)
                     ]
                 },
+                "evaluation": {
+                    "steps": [
+                        {
+                            "step": step,
+                            "metrics": {
+                                "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": value,
+                            },
+                        }
+                        for step, value in ((1, 0.2), (5, 0.3), (10, 0.25))
+                    ]
+                },
             },
         )
         self.history_path.write_text(
@@ -964,13 +984,22 @@ class AgentToolsTest(unittest.TestCase):
             {
                 "trial_id": 1,
                 "metrics": ["critic/rewards/mean", "actor/ppo_kl", "actor/lr"],
+                "start_step": 2,
+                "end_step": 9,
                 "window_size": 5,
             },
             registry.runtime({}),
         )
         self.assertTrue(result["available"])
-        self.assertEqual(result["windows"][0], {"start_step": 1, "end_step": 5, "sample_count": 5})
+        self.assertEqual(result["windows"][0], {"start_step": 2, "end_step": 6, "sample_count": 5})
         self.assertAlmostEqual(result["metrics"]["critic/rewards/mean"][1], 0.8)
+        self.assertEqual(
+            result["evaluation"],
+            {
+                "metric": "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1",
+                "steps": [{"step": 5, "value": 0.3}],
+            },
+        )
 
     def test_v2_trial_metrics_never_reparse_train_log(self) -> None:
         trial_dir = self.history_path.parent / "trials" / "0001"
@@ -1054,6 +1083,17 @@ class AgentToolsTest(unittest.TestCase):
                         for step in range(1, 6)
                     ]
                 },
+                "evaluation": {
+                    "steps": [
+                        {
+                            "step": step,
+                            "metrics": {
+                                "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": value,
+                            },
+                        }
+                        for step, value in ((2, 0.2), (5, 0.3), (6, 0.25))
+                    ]
+                },
             },
         )
         registry = self.registry()
@@ -1080,6 +1120,16 @@ class AgentToolsTest(unittest.TestCase):
         self.assertEqual(result["latest_available_step"], 5)
         self.assertEqual(result["step_range"], [1, 5])
         self.assertEqual(len(result["windows"]), 5)
+        self.assertEqual(
+            result["evaluation"],
+            {
+                "metric": "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1",
+                "steps": [
+                    {"step": 2, "value": 0.2},
+                    {"step": 5, "value": 0.3},
+                ],
+            },
+        )
         with self.assertRaisesRegex(RuntimeError, "snapshot_step 5"):
             registry.execute(
                 "train_health",

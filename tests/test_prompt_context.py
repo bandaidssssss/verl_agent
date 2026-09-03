@@ -118,6 +118,12 @@ class PromptContextTest(unittest.TestCase):
                 "evaluation": {
                     "steps": [
                         {
+                            "step": 40,
+                            "metrics": {
+                                "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.35,
+                            },
+                        },
+                        {
                             "step": 80,
                             "metrics": {
                                 "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.375,
@@ -146,10 +152,11 @@ class PromptContextTest(unittest.TestCase):
         self.assertEqual(
             compact["metrics"]["evaluation"],
             {
-                "latest_metrics": {
-                    "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1": 0.375,
-                },
-                "latest_step": 80,
+                "metric": "val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1",
+                "steps": [
+                    {"step": 40, "value": 0.35},
+                    {"step": 80, "value": 0.375},
+                ],
             },
         )
         self.assertEqual(

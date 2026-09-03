@@ -26,7 +26,7 @@ This identifies the orchestrator's default starting point without duplicating it
 {DEFAULT_REFERENCE}
 
 ### Compact Reference History
-Each entry contains only the recorded changes, actual values for parameters editable in the current stage, and stage-relevant metrics. `missing_metrics` names requested JSON paths that were unavailable; absence is not a zero value. Hardware memory is phase-aggregated and intentionally omits GPU identity. Stability arrays align with `windows`, while `terminal_metrics` align with `terminal_window`; `evaluation.latest_metrics.val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1` is the cross-trial stability objective. Call `query_trial_history` with one or more reference trial IDs and the current metric stage to refresh the same parameter-and-metric view; call `read_trial_metrics` only for custom stability metrics or finer step ranges.
+Each entry contains only the recorded changes, actual values for parameters editable in the current stage, and stage-relevant metrics. `missing_metrics` names requested JSON paths that were unavailable; absence is not a zero value. Hardware memory is phase-aggregated and intentionally omits GPU identity. Stability arrays align with `windows`, while `terminal_metrics` align with `terminal_window`; `evaluation.steps` contains the MATH validation objective as raw `step`/`value` points. Call `query_trial_history` with one or more reference trial IDs and the current metric stage to refresh the same parameter-and-metric view; call `read_trial_metrics` only for custom stability metrics or finer step ranges.
 {COMPACT_REFERENCE_HISTORY}
 
 ### Parameters Editable in This Stage

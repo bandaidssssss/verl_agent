@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping, Sequence
 
-from metrics import MATH_EVALUATION_METRIC
+from metrics import MATH_EVALUATION_METRIC, records_from_metric_steps
 from runtime_parameters import parameter_value_views
 
 
@@ -58,6 +58,29 @@ def _selected_mapping(
         else:
             missing_metrics.append(f"{path}.{field}")
     return selected or None
+
+
+def evaluation_metric_series(
+    structured: Mapping[str, Any],
+    *,
+    start_step: int | None = None,
+    end_step: int | None = None,
+) -> dict[str, Any]:
+    """Return the configured validation metric as raw step/value points."""
+    evaluation = structured.get("evaluation")
+    raw_steps = evaluation.get("steps") if isinstance(evaluation, Mapping) else None
+    records = records_from_metric_steps(raw_steps)
+    points = [
+        {"step": step, "value": row[MATH_EVALUATION_METRIC]}
+        for step, row in records.items()
+        if MATH_EVALUATION_METRIC in row
+        and (start_step is None or step >= start_step)
+        and (end_step is None or step <= end_step)
+    ]
+    return {
+        "metric": MATH_EVALUATION_METRIC,
+        "steps": points,
+    }
 
 
 def _hardware_metrics(
@@ -116,28 +139,10 @@ def _stability_metrics(
         if selected:
             metrics[collection] = selected
 
-    evaluation_path = f"evaluation.latest_metrics.{MATH_EVALUATION_METRIC}"
-    evaluation_value = _read_path(structured, evaluation_path)
-    if evaluation_value is _MISSING:
-        missing.append(evaluation_path)
-    else:
-        evaluation: dict[str, Any] = {
-            "latest_metrics": {
-                MATH_EVALUATION_METRIC: copy.deepcopy(evaluation_value),
-            }
-        }
-        evaluation_steps = _read_path(structured, "evaluation.steps")
-        if isinstance(evaluation_steps, list):
-            for row in reversed(evaluation_steps):
-                row_metrics = row.get("metrics") if isinstance(row, Mapping) else None
-                if (
-                    isinstance(row_metrics, Mapping)
-                    and MATH_EVALUATION_METRIC in row_metrics
-                    and isinstance(row.get("step"), int)
-                ):
-                    evaluation["latest_step"] = row["step"]
-                    break
-        metrics["evaluation"] = evaluation
+    evaluation = evaluation_metric_series(structured)
+    metrics["evaluation"] = evaluation
+    if not evaluation["steps"]:
+        missing.append(f"evaluation.steps.{MATH_EVALUATION_METRIC}")
     return metrics, missing
 
 

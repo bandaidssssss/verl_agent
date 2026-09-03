@@ -16,7 +16,7 @@ from metrics import (
     build_metric_windows,
     records_from_metric_steps,
 )
-from prompt_context import select_stage_metrics
+from prompt_context import evaluation_metric_series, select_stage_metrics
 from trial_storage import (
     hydrate_trial,
     read_metrics_for_trial,
@@ -682,6 +682,7 @@ class ToolRegistry:
         start_step: int | None,
         end_step: int | None,
         window_size: int,
+        evaluation: Mapping[str, Any],
         snapshot_step: int | None = None,
     ) -> dict[str, Any]:
         series = build_metric_windows(
@@ -693,16 +694,20 @@ class ToolRegistry:
         )
         if len(series["windows"]) > 32:
             raise ToolError("query would return more than 32 windows; narrow the step range or increase window_size")
+        missing_metrics = [
+            metric
+            for metric, values in series["metrics"].items()
+            if not any(value is not None for value in values)
+        ]
+        if not evaluation.get("steps"):
+            missing_metrics.append(f"evaluation.steps.{evaluation['metric']}")
         result = {
             "available": True,
             "trial_id": trial_id,
             "metrics_path": str(source_path),
             **series,
-            "missing_metrics": [
-                metric
-                for metric, values in series["metrics"].items()
-                if not any(value is not None for value in values)
-            ],
+            "evaluation": dict(evaluation),
+            "missing_metrics": missing_metrics,
         }
         if snapshot_step is not None:
             result["snapshot_step"] = snapshot_step
@@ -747,6 +752,11 @@ class ToolRegistry:
                 start_step=start_step,
                 end_step=end_step,
                 window_size=window_size,
+                evaluation=evaluation_metric_series(
+                    structured,
+                    start_step=start_step,
+                    end_step=end_step,
+                ),
             )
         return {
             "available": False,
@@ -796,6 +806,11 @@ class ToolRegistry:
                     start_step=start_step,
                     end_step=end_step,
                     window_size=window_size,
+                    evaluation=evaluation_metric_series(
+                        structured,
+                        start_step=start_step,
+                        end_step=end_step,
+                    ),
                     snapshot_step=snapshot_step,
                 )
             return {

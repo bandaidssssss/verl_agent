@@ -15,7 +15,7 @@ Every entry contains its reference ID, rationale, normalized changes, expected e
 {CANDIDATES}
 
 ### Compact Reference History
-This includes the bounded recent history plus every candidate reference, with current-stage editable values and stage-relevant metrics. `missing_metrics` names unavailable JSON paths. In stability tuning, compare candidates against `evaluation.latest_metrics.val-core/DigitalLearningGmbH/MATH-lighteval/acc/mean@1`; use reward, KL, entropy, and related signals to judge health and causal plausibility, not as substitutes for a missing test score. Use one `query_trial_history` call with all candidate reference IDs and the current metric stage when the reference evidence must be refreshed.
+This includes the bounded recent history plus every candidate reference, with current-stage editable values and stage-relevant metrics. `missing_metrics` names unavailable JSON paths. In stability tuning, compare candidates using the MATH validation `evaluation.steps` trajectory; use reward, KL, entropy, and related signals to judge health and causal plausibility, not as substitutes for missing validation points. Use one `query_trial_history` call with all candidate reference IDs and the current metric stage when the reference evidence must be refreshed.
 {COMPACT_REFERENCE_HISTORY}
 
 ### Diagnosis

@@ -125,7 +125,7 @@
       "name": "query_trial_history",
       "handler": "query_trial_history",
       "roles": ["proposal", "feasibility", "diagnosis", "train_health"],
-      "description": "Read 1-5 reference trials by ID. Returns current-stage editable parameter values, recorded changes, and compact hardware or stability metrics in the requested order. Stability results include the latest MATH test accuracy used for cross-trial selection.",
+      "description": "Read 1-5 reference trials by ID. Returns current-stage editable parameter values, recorded changes, and compact hardware or stability metrics in the requested order. Stability results include the MATH validation step/value series.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -162,7 +162,7 @@
       "name": "read_trial_metrics",
       "handler": "read_trial_metrics",
       "roles": ["proposal", "diagnosis"],
-      "description": "Read ordered, bounded per-step stability metrics exclusively from a trial's structured metrics.json. Returns aligned windows for reward, KL, entropy, clip fraction, learning rate, and generation-health trends.",
+      "description": "Read ordered, bounded per-step stability metrics exclusively from a trial's structured metrics.json. Returns aligned windows for requested training metrics and automatically includes the MATH validation step/value series in the same step range.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -200,7 +200,7 @@
       "name": "read_current_trial_metrics",
       "handler": "read_current_trial_metrics",
       "roles": ["train_health"],
-      "description": "Read ordered, bounded metrics from the currently running trial at the immutable snapshot step supplied by the runner. Use a coarse window for the full trajectory and window_size=1 around the trigger or scheduled follow-up. The tool never accepts a file path or a different trial ID.",
+      "description": "Read ordered, bounded metrics from the currently running trial at the immutable snapshot step supplied by the runner. The result automatically includes the MATH validation step/value series through that snapshot. Use a coarse window for the full trajectory and window_size=1 around the trigger or scheduled follow-up. The tool never accepts a file path or a different trial ID.",
       "parameters": {
         "type": "object",
         "properties": {
