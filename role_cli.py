@@ -22,7 +22,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run one verl tuning agent role")
     parser.add_argument(
         "--role",
-        choices=["proposal", "feasibility", "diagnosis", "train_health", "summer"],
+        choices=["proposal", "feasibility", "diagnosis", "train_health", "summary"],
         required=True,
     )
     parser.add_argument("--context", required=True)

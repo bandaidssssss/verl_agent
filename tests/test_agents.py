@@ -236,12 +236,12 @@ class LLMRoleAgentTest(unittest.TestCase):
 
 
 class TrainHealthRulesAgentTest(unittest.TestCase):
-    def test_summer_uses_its_own_output_token_limit(self) -> None:
+    def test_summary_uses_its_own_output_token_limit(self) -> None:
         config = load_json(ROOT / "config" / "agent_config.json")
         config.update(
             {
                 "llm_max_output_tokens": 1024,
-                "summer_max_output_tokens": 32768,
+                "summary_max_output_tokens": 32768,
                 "stream_agent_events": False,
             }
         )
@@ -254,7 +254,7 @@ class TrainHealthRulesAgentTest(unittest.TestCase):
             )
 
         self.assertEqual(agents.proposal.config["llm_max_output_tokens"], 1024)
-        self.assertEqual(agents.summer.config["llm_max_output_tokens"], 32768)
+        self.assertEqual(agents.summary.config["llm_max_output_tokens"], 32768)
 
     def test_rules_mode_accepts_health_trigger(self) -> None:
         config = load_json(ROOT / "config" / "agent_config.json")

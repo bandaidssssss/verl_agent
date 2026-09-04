@@ -392,15 +392,15 @@ class AgentSet:
         self.train_health = LLMRoleAgent(
             "train_health", prompt_root / "train_health.md", self.registry, self.config
         )
-        summer_config = dict(self.config)
-        summer_config["llm_max_output_tokens"] = int(
+        summary_config = dict(self.config)
+        summary_config["llm_max_output_tokens"] = int(
             self.config.get(
-                "summer_max_output_tokens",
+                "summary_max_output_tokens",
                 self.config.get("llm_max_output_tokens", 4096),
             )
         )
-        self.summer = LLMRoleAgent(
-            "summer", prompt_root / "summer.md", self.registry, summer_config
+        self.summary = LLMRoleAgent(
+            "summary", prompt_root / "summary.md", self.registry, summary_config
         )
 
     @staticmethod
@@ -530,7 +530,7 @@ class AgentSet:
         if self.mode == "rules":
             rule_context = context or (conversation.context if conversation else {})
             return self._rules_run(
-                "summer",
+                "summary",
                 rule_context,
                 {
                     "hardware": {
@@ -545,4 +545,4 @@ class AgentSet:
                     },
                 },
             )
-        return self.summer.run(context, conversation)
+        return self.summary.run(context, conversation)

@@ -5,14 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.replay_summer_prompt import (
-    build_summer_context,
+from tools.replay_summary_prompt import (
+    build_summary_context,
     resolve_run_dir,
 )
 from trial_storage import trial_artifacts
 
 
-class SummerReplayTests(unittest.TestCase):
+class SummaryReplayTests(unittest.TestCase):
     def _write_trial(
         self,
         run_dir: Path,
@@ -187,7 +187,7 @@ class SummerReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = self._write_run(Path(directory))
 
-            context = build_summer_context(run_dir)
+            context = build_summary_context(run_dir)
 
             self.assertEqual(
                 context["run_context"],

@@ -25,7 +25,7 @@ from runtime_parameters import (
 )
 from runner import run_trial
 from summary_store import rebuild_summary_index
-from tools.replay_summer_prompt import build_summer_context
+from tools.replay_summary_prompt import build_summary_context
 from trial_storage import (
     build_trial_index,
     compact_trial_report,
@@ -1315,10 +1315,10 @@ class TuningOrchestrator:
         )
 
     def _summarize_run(self, trial_id: int) -> dict[str, Any] | None:
-        """Summarize all persisted trials after one trial completes."""
-        summary_dir = self.output_dir / "summer"
+        """Summarize all persisted trials after the current trial batch finishes."""
+        summary_dir = self.output_dir / "summary"
         try:
-            context = build_summer_context(self.output_dir)
+            context = build_summary_context(self.output_dir)
             run = self.agents.summarize({"trial": context})
             raw_result = copy.deepcopy(run.result)
             raw_result.pop("run_context", None)
@@ -1329,7 +1329,7 @@ class TuningOrchestrator:
             }
             trace = run.as_trace()
             trace["result"] = copy.deepcopy(result)
-            write_json_atomic(summary_dir / "summer_result.json", result)
+            write_json_atomic(summary_dir / "summary_result.json", result)
 
             trace_path = (
                 self.output_dir / "trials" / f"{trial_id:04d}" / "agent_trace.json"
@@ -1337,16 +1337,16 @@ class TuningOrchestrator:
             current_trace = load_json(trace_path) if trace_path.is_file() else {}
             if not isinstance(current_trace, dict):
                 current_trace = {}
-            current_trace["summer"] = trace
+            current_trace["summary"] = trace
             write_json_atomic(trace_path, current_trace)
 
             index_path = rebuild_summary_index(self.output_dir.parent)
             _stream_orchestrator_event(
                 self.config,
-                "summer_completed",
+                "summary_completed",
                 {
                     "trial_id": trial_id,
-                    "result_path": str(summary_dir / "summer_result.json"),
+                    "result_path": str(summary_dir / "summary_result.json"),
                     "index_path": str(index_path),
                 },
             )
@@ -1358,7 +1358,7 @@ class TuningOrchestrator:
                 else {"error": f"{type(exc).__name__}: {exc}"}
             )
             error["trial_id"] = trial_id
-            _stream_orchestrator_event(self.config, "summer_failed", error)
+            _stream_orchestrator_event(self.config, "summary_failed", error)
             return None
 
     def run(self, max_trials: int = 1, dry_run: bool = False) -> list[dict[str, Any]]:
@@ -1513,7 +1513,6 @@ class TuningOrchestrator:
                 append_jsonl(self.history_path, index)
                 if stage == "confirm":
                     write_json(self.output_dir / "final_result.json", compact_report)
-                self._summarize_run(trial_id)
             produced.append(report)
             write_json(
                 self.state_path,
@@ -1525,4 +1524,6 @@ class TuningOrchestrator:
             )
             if dry_run:
                 break
+        if not dry_run and produced:
+            self._summarize_run(int(produced[-1]["trial_id"]))
         return produced

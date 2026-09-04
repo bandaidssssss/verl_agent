@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert recorded output runs into canonical Summer experience summaries."""
+"""Convert recorded output runs into canonical Summary Agent experience."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ if __package__ in {None, ""}:
 from agents import AgentError, AgentResponseError, AgentSet
 from config_utils import load_json, write_json_atomic
 from summary_store import rebuild_summary_index
-from tools.replay_summer_prompt import build_summer_context, resolve_run_dir
+from tools.replay_summary_prompt import build_summary_context, resolve_run_dir
 from trial_storage import read_trial_indexes
 
 
@@ -56,13 +56,13 @@ def backfill_run(
     overwrite: bool = False,
 ) -> dict[str, Any]:
     run_path = Path(run_dir).expanduser().resolve()
-    result_path = run_path / "summer" / "summer_result.json"
+    result_path = run_path / "summary" / "summary_result.json"
     result_existed = result_path.is_file()
     if result_existed and not overwrite:
         return {
             "run_id": run_path.name,
             "status": "skipped",
-            "reason": "summer_result.json already exists",
+            "reason": "summary_result.json already exists",
             "result_path": str(result_path),
         }
 
@@ -72,7 +72,7 @@ def backfill_run(
     if not isinstance(current_trace, dict):
         current_trace = {}
 
-    context = build_summer_context(run_path)
+    context = build_summary_context(run_path)
     agents = AgentSet(ROOT, "llm", config, run_path / "trials.jsonl")
     run = agents.summarize({"trial": context})
     raw_result = copy.deepcopy(run.result)
@@ -84,7 +84,7 @@ def backfill_run(
 
     trace = run.as_trace()
     trace["result"] = copy.deepcopy(result)
-    current_trace["summer"] = trace
+    current_trace["summary"] = trace
     write_json_atomic(result_path, result)
     write_json_atomic(trace_path, current_trace)
     return {
@@ -99,7 +99,7 @@ def backfill_run(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the current Summer Agent over existing output runs and publish their "
+            "Run the current Summary Agent over existing output runs and publish its "
             "summaries for query_tuning_summaries."
         )
     )
@@ -117,7 +117,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Replace an existing canonical summer/summer_result.json.",
+        help="Replace an existing canonical summary/summary_result.json.",
     )
     parser.add_argument(
         "--quiet",
@@ -150,9 +150,39 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    try:
+        index_path = rebuild_summary_index(output_root)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"error rebuilding summary index: {exc}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "status": "starting",
+                "output_root": str(output_root),
+                "runs": len(run_dirs),
+                "summary_index": str(index_path),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
+
     outcomes: list[dict[str, Any]] = []
     failures = 0
-    for run_dir in run_dirs:
+    for position, run_dir in enumerate(run_dirs, start=1):
+        print(
+            json.dumps(
+                {
+                    "run_id": run_dir.name,
+                    "status": "running",
+                    "position": position,
+                    "total": len(run_dirs),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
         try:
             outcome = backfill_run(run_dir, config, overwrite=args.overwrite)
         except (AgentError, FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
@@ -164,13 +194,13 @@ def main() -> int:
             )
             outcome = {"run_id": run_dir.name, "status": "failed", **error}
         outcomes.append(outcome)
-        print(json.dumps(outcome, ensure_ascii=False))
-
-    try:
-        index_path = rebuild_summary_index(output_root)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(f"error rebuilding summary index: {exc}", file=sys.stderr)
-        return 2
+        print(json.dumps(outcome, ensure_ascii=False), flush=True)
+        if outcome["status"] in {"created", "overwritten"}:
+            try:
+                index_path = rebuild_summary_index(output_root)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                print(f"error rebuilding summary index: {exc}", file=sys.stderr)
+                return 2
 
     totals = {
         status: sum(row.get("status") == status for row in outcomes)
@@ -184,7 +214,8 @@ def main() -> int:
                 **totals,
             },
             ensure_ascii=False,
-        )
+        ),
+        flush=True,
     )
     return 1 if failures else 0
 

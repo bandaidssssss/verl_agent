@@ -38,11 +38,11 @@ class SummaryStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output_root = Path(directory) / "output"
             write_json(
-                output_root / "0901_1200_2026/summer/summer_result.json",
+                output_root / "0901_1200_2026/summary/summary_result.json",
                 summary("0901_1200_2026", "Qwen3-8B", "increase rollout concurrency"),
             )
             write_json(
-                output_root / "0902_1200_2026/summer/summer_result.json",
+                output_root / "0902_1200_2026/summary/summary_result.json",
                 summary("0902_1200_2026", "OtherModel", "increase actor batch size"),
             )
 
@@ -76,11 +76,11 @@ class SummaryStoreTests(unittest.TestCase):
             output_root = Path(directory) / "output"
             current = output_root / "0903_1200_2026"
             write_json(
-                output_root / "0901_1200_2026/summer/summer_result.json",
+                output_root / "0901_1200_2026/summary/summary_result.json",
                 summary("0901_1200_2026", "Qwen3-8B", "increase rollout concurrency"),
             )
             write_json(
-                current / "summer/summer_result.json",
+                current / "summary/summary_result.json",
                 summary("0903_1200_2026", "Qwen3-8B", "current run direction"),
             )
             rebuild_summary_index(output_root)
@@ -102,13 +102,13 @@ class SummaryStoreTests(unittest.TestCase):
                 result["results"][0]["run_context"]["run_id"],
                 "0901_1200_2026",
             )
-            self.assertEqual(registry.definitions("summer"), [])
+            self.assertEqual(registry.definitions("summary"), [])
 
     def test_missing_index_returns_not_found_without_scanning(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output_root = Path(directory) / "output"
             write_json(
-                output_root / "0901_1200_2026/summer/summer_result.json",
+                output_root / "0901_1200_2026/summary/summary_result.json",
                 summary("0901_1200_2026", "Qwen3-8B", "increase rollout concurrency"),
             )
 

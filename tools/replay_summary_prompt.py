@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and optionally run a Summer prompt from one recorded output run."""
+"""Build and optionally run a Summary prompt from one recorded output run."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from trial_storage import hydrate_trial, read_trial_indexes
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = ROOT / "output"
-DEFAULT_PROMPT = ROOT / "prompts" / "summer.md"
+DEFAULT_PROMPT = ROOT / "prompts" / "summary.md"
 DEFAULT_AGENT_CONFIG = ROOT / "config" / "agent_config.json"
 TUNING_STAGES = {
     "hardware_tuning": ("hardware", "hardware"),
@@ -156,7 +156,7 @@ def _compact_error(trial: Mapping[str, Any]) -> dict[str, Any] | None:
     return result or None
 
 
-def build_summer_context(run_dir: str | Path) -> dict[str, Any]:
+def build_summary_context(run_dir: str | Path) -> dict[str, Any]:
     """Build a deduplicated, stage-specific fact graph for one output run."""
     run_path = _absolute(run_dir)
     history_path = run_path / "trials.jsonl"
@@ -258,7 +258,7 @@ def _prompt_digest(path: Path) -> str:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Build and optionally run the tool-free Summer summary for one dated output run."
+            "Build and optionally run the tool-free Summary Agent for one dated output run."
         )
     )
     parser.add_argument(
@@ -271,7 +271,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--agent-config", default=DEFAULT_AGENT_CONFIG)
     parser.add_argument(
         "--output-dir",
-        help="Result directory inside the selected run; defaults to summer_replays/<timestamp>",
+        help="Result directory inside the selected run; defaults to summary_replays/<timestamp>",
     )
     parser.add_argument(
         "--render-only",
@@ -283,7 +283,7 @@ def _parse_args() -> argparse.Namespace:
         "--quiet",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Do not stream the Summer Agent response",
+        help="Do not stream the Summary Agent response",
     )
     return parser.parse_args()
 
@@ -306,22 +306,28 @@ def main() -> int:
                 raise ValueError("--output-dir must be inside the selected run") from exc
         else:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            result_dir = run_dir / "summer_replays" / stamp
+            result_dir = run_dir / "summary_replays" / stamp
         result_dir.mkdir(parents=True, exist_ok=False)
 
-        context = build_summer_context(run_dir)
+        context = build_summary_context(run_dir)
         config = load_json(config_path)
         config["stream_agent_events"] = not args.quiet
         registry = ToolRegistry(ROOT, config, run_dir / "trials.jsonl")
-        agent = LLMRoleAgent("summer", prompt_path, registry, config)
+        config["llm_max_output_tokens"] = int(
+            config.get(
+                "summary_max_output_tokens",
+                config.get("llm_max_output_tokens", 4096),
+            )
+        )
+        agent = LLMRoleAgent("summary", prompt_path, registry, config)
         conversation = agent.new_conversation({"trial": context})
         conversation.messages[1]["content"] = (
             "Summarize the supplied run facts and output exactly the required JSON object."
         )
         rendered_prompt = str(conversation.messages[0]["content"])
 
-        write_json(result_dir / "summer_context.json", context)
-        (result_dir / "rendered_summer.md").write_text(
+        write_json(result_dir / "summary_context.json", context)
+        (result_dir / "rendered_summary.md").write_text(
             rendered_prompt + "\n", encoding="utf-8"
         )
         metadata = {
@@ -340,9 +346,9 @@ def main() -> int:
         }
         if args.render_only:
             output = {"metadata": metadata, "mode": "render-only"}
-            write_json(result_dir / "summer_replay.json", output)
+            write_json(result_dir / "summary_replay.json", output)
             print(json.dumps(output, ensure_ascii=False, indent=2))
-            print(f"Rendered prompt: {result_dir / 'rendered_summer.md'}")
+            print(f"Rendered prompt: {result_dir / 'rendered_summary.md'}")
             return 0
 
         run = agent.run(conversation=conversation)
@@ -350,17 +356,17 @@ def main() -> int:
             **copy.deepcopy(run.result),
             "run_context": copy.deepcopy(context["run_context"]),
         }
-        write_json(result_dir / "summer_result.json", result)
+        write_json(result_dir / "summary_result.json", result)
         trace = run.as_trace()
         trace["result"] = copy.deepcopy(result)
-        write_json(result_dir / "summer_trace.json", trace)
+        write_json(result_dir / "summary_trace.json", trace)
         output = {
             "metadata": metadata,
             "mode": "llm",
-            "result_path": str(result_dir / "summer_result.json"),
-            "trace_path": str(result_dir / "summer_trace.json"),
+            "result_path": str(result_dir / "summary_result.json"),
+            "trace_path": str(result_dir / "summary_trace.json"),
         }
-        write_json(result_dir / "summer_replay.json", output)
+        write_json(result_dir / "summary_replay.json", output)
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0
     except (AgentError, FileNotFoundError, OSError, RuntimeError, ValueError) as exc:

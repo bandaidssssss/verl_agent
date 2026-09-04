@@ -146,7 +146,7 @@
       "name": "query_tuning_summaries",
       "handler": "query_tuning_summaries",
       "roles": ["proposal"],
-      "description": "Search bounded Summer summaries from earlier output runs. Returns both useful and ineffective direction evidence with its original run context. These summaries are hypothesis-level priors only; source-run trial IDs must never be used as current-run references.",
+      "description": "Search bounded Summary Agent results from earlier output runs. Returns both useful and ineffective direction evidence with its original run context. These summaries are hypothesis-level priors only; source-run trial IDs must never be used as current-run references.",
       "parameters": {
         "type": "object",
         "properties": {

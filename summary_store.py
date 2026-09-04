@@ -10,7 +10,7 @@ from config_utils import load_json, write_json_atomic
 
 
 INDEX_VERSION = 1
-SUMMARY_RELATIVE_PATH = Path("summer") / "summer_result.json"
+SUMMARY_RELATIVE_PATH = Path("summary") / "summary_result.json"
 
 
 def _summary_text(section: Mapping[str, Any]) -> str:
@@ -41,7 +41,7 @@ def _has_stage_content(section: Any) -> bool:
 
 
 def build_summary_index(output_root: str | Path) -> dict[str, Any]:
-    """Build a derived catalog from authoritative per-run Summer results."""
+    """Build a derived catalog from authoritative per-run Summary Agent results."""
     root = Path(output_root).expanduser().resolve()
     entries: list[dict[str, Any]] = []
     if not root.is_dir():
@@ -72,7 +72,7 @@ def build_summary_index(output_root: str | Path) -> dict[str, Any]:
 
 def rebuild_summary_index(output_root: str | Path) -> Path:
     root = Path(output_root).expanduser().resolve()
-    target = root / "summer_index.json"
+    target = root / "summary_index.json"
     write_json_atomic(target, build_summary_index(root))
     return target
 
@@ -127,7 +127,7 @@ def query_summaries(
     ):
         raise ValueError("max_results must be an integer from 1 to 8")
     root = Path(output_root).expanduser().resolve()
-    index_path = root / "summer_index.json"
+    index_path = root / "summary_index.json"
     if not index_path.is_file():
         return {
             "found": False,

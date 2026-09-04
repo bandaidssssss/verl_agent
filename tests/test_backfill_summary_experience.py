@@ -7,11 +7,11 @@ from unittest import mock
 
 from agents import AgentConversation, AgentRun
 from config_utils import append_jsonl, load_json, write_json
-from tools.backfill_summer_experience import backfill_run, discover_run_dirs
+from tools.backfill_summary_experience import backfill_run, discover_run_dirs
 from trial_storage import trial_artifacts
 
 
-def summer_result() -> dict:
+def summary_result() -> dict:
     return {
         "hardware": {
             "problems": [],
@@ -28,7 +28,7 @@ def summer_result() -> dict:
     }
 
 
-class BackfillSummerExperienceTests(unittest.TestCase):
+class BackfillSummaryExperienceTests(unittest.TestCase):
     def test_discovers_only_recorded_run_directories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output_root = Path(directory) / "output"
@@ -60,42 +60,42 @@ class BackfillSummerExperienceTests(unittest.TestCase):
                 },
                 "trials": [],
             }
-            conversation = AgentConversation("summer", {"trial": context}, [])
+            conversation = AgentConversation("summary", {"trial": context}, [])
             fake_agents = mock.Mock()
             fake_agents.summarize.return_value = AgentRun(
-                summer_result(), conversation
+                summary_result(), conversation
             )
 
             with mock.patch(
-                "tools.backfill_summer_experience.build_summer_context",
+                "tools.backfill_summary_experience.build_summary_context",
                 return_value=context,
             ), mock.patch(
-                "tools.backfill_summer_experience.AgentSet",
+                "tools.backfill_summary_experience.AgentSet",
                 return_value=fake_agents,
             ):
                 outcome = backfill_run(run_dir, {"stream_agent_events": False})
 
-            result_path = run_dir / "summer/summer_result.json"
+            result_path = run_dir / "summary/summary_result.json"
             self.assertEqual(outcome["status"], "created")
             self.assertEqual(
                 load_json(result_path)["run_context"], context["run_context"]
             )
             trace = load_json(trace_path)
             self.assertIn("proposal_conversation", trace)
-            self.assertEqual(trace["summer"]["result"], load_json(result_path))
+            self.assertEqual(trace["summary"]["result"], load_json(result_path))
             self.assertEqual(
                 sorted(path.name for path in result_path.parent.iterdir()),
-                ["summer_result.json"],
+                ["summary_result.json"],
             )
 
     def test_existing_summary_is_skipped_without_calling_agent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "output/0901_1200_2026"
-            result_path = run_dir / "summer/summer_result.json"
+            result_path = run_dir / "summary/summary_result.json"
             write_json(result_path, {"existing": True})
 
             with mock.patch(
-                "tools.backfill_summer_experience.AgentSet"
+                "tools.backfill_summary_experience.AgentSet"
             ) as agent_set:
                 outcome = backfill_run(run_dir, {})
 
