@@ -34,9 +34,9 @@ from trial_storage import hydrate_trial, read_trial_indexes
 ROOT = Path(__file__).resolve().parent
 
 # Change these defaults for a local prompt experiment.
-DEFAULT_TRIAL_DIR = ROOT / "output" / "0827_1018_2026" / "trials" / "0004"
+DEFAULT_TRIAL_DIR = ROOT / "old_output_V2" / "0907_1745_2026" / "trials" / "0002"
 DEFAULT_PROPOSAL_PROMPT = ROOT / "prompts" / "proposal.md"
-DEFAULT_FEASIBILITY_PROMPT = ROOT / "prompts" / "feasibility_test.md"
+DEFAULT_FEASIBILITY_PROMPT = ROOT / "prompts" / "feasibility.md"
 DEFAULT_AGENT_CONFIG = ROOT / "config" / "agent_config.json"
 DEFAULT_BASE_CONFIG = ROOT / "config" / "base_parameters.json"
 
