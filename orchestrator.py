@@ -211,8 +211,12 @@ def determine_stage(trials: list[dict[str, Any]], config: Mapping[str, Any]) -> 
         raise ValueError(
             "start_stage must be auto, hardware_tuning, or stability_tuning"
         )
-    if start_stage == "stability_tuning":
-        stability = _stability_trials(trials)
+    stability = _stability_trials(trials)
+    # Stage transitions are monotonic.  In particular, a Proposal ``stop`` can
+    # move an under-budget hardware search directly to a stability baseline.
+    # Once that baseline is persisted, its presence must keep later invocations
+    # in stability instead of re-entering hardware based on the old trial count.
+    if start_stage == "stability_tuning" or stability:
         healthy = [trial for trial in stability if stability_healthy(trial, config)]
         if len(stability) >= int(config.get("max_stability_trials", 4)):
             return "confirm" if healthy else "stopped_unstable"
@@ -227,13 +231,6 @@ def determine_stage(trials: list[dict[str, Any]], config: Mapping[str, Any]) -> 
         return "hardware_tuning"
     if len(hardware) < int(config.get("max_hardware_trials", 6)) and not hardware_plateaued(trials, config):
         return "hardware_tuning"
-
-    stability = _stability_trials(trials)
-    healthy = [trial for trial in stability if stability_healthy(trial, config)]
-    if len(stability) >= int(config.get("max_stability_trials", 4)):
-        return "confirm" if healthy else "stopped_unstable"
-    if len(healthy) >= int(config.get("min_stability_trials", 2)):
-        return "confirm"
     return "stability_tuning"
 
 
@@ -1428,6 +1425,7 @@ class TuningOrchestrator:
                     break
                 if proposal.get("decision") == "stop":
                     transition_trigger = copy.deepcopy(proposal)
+                    previous_stage = stage
                     transition = _next_stage_baseline(stage, trials)
                     if transition is None:
                         write_json(
@@ -1450,6 +1448,17 @@ class TuningOrchestrator:
                         reference,
                         "automatic baseline after Agent stopped the previous stage",
                         transition_trigger,
+                    )
+                    _stream_orchestrator_event(
+                        self.config,
+                        "stage_transition",
+                        {
+                            "from_stage": previous_stage,
+                            "to_stage": stage,
+                            "trigger": "proposal_stop",
+                            "reason": transition_trigger.get("reason"),
+                            "reference_trial_id": reference.get("trial_id"),
+                        },
                     )
 
             history_limit = int(self.config.get("history_prompt_trials", 8))

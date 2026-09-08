@@ -90,6 +90,11 @@ class OrchestratorStageTest(unittest.TestCase):
             "stability_tuning",
         )
 
+    def test_stage_does_not_return_to_hardware_after_stability_started(self) -> None:
+        trials = [hardware_trial(1, 100), stability_trial(2, 0.1)]
+
+        self.assertEqual(determine_stage(trials, self.config), "stability_tuning")
+
     def test_plateau_moves_to_stability(self) -> None:
         trials = [
             hardware_trial(1, 100),
