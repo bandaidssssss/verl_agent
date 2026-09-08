@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0901_1346_2026"
+DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0907_1745_2026"
 DEFAULT_OUTPUT_NAME = "agent_report.md"
 PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
 
@@ -78,6 +78,56 @@ def _markdown(value: Any) -> str:
 def _compact_json(value: Any, max_len: int = 130) -> str:
     text = json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
     return text if len(text) <= max_len else text[:max_len] + "…"
+
+
+def _display_value(value: Any) -> str:
+    """Render a scalar or structured value compactly inside a Markdown table."""
+    if isinstance(value, float):
+        return format(value, ".6g")
+    if isinstance(value, (Mapping, list, tuple)):
+        return _compact_json(value)
+    if value is None:
+        return "-"
+    return str(value)
+
+
+def _overview_changes(index: Mapping[str, Any]) -> str:
+    """Summarize the parameters changed to produce a trial."""
+    changes = index.get("changes")
+    if not isinstance(changes, Mapping) or not changes:
+        return "基准（无修改）"
+
+    rendered: list[str] = []
+    for key, change in changes.items():
+        if isinstance(change, Mapping):
+            old_value = change.get("effective_from", change.get("from", "-"))
+            new_value = change.get("to", "-")
+            value_change = f"{_display_value(old_value)} → {_display_value(new_value)}"
+        else:
+            value_change = f"→ {_display_value(change)}"
+        rendered.append(f"`{_markdown(key)}`: {_markdown(value_change)}")
+    return "<br>".join(rendered)
+
+
+def _evaluation_metrics(metrics: Mapping[str, Any], scores: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Return the latest test/validation metrics, with index-score compatibility."""
+    evaluation = metrics.get("evaluation")
+    latest = evaluation.get("latest_metrics") if isinstance(evaluation, Mapping) else None
+    if isinstance(latest, Mapping) and latest:
+        return dict(latest)
+
+    # Some early schema-v2 indexes stored only the selected evaluation score.
+    evaluation_score = scores.get("evaluation_score") if isinstance(scores, Mapping) else None
+    return {"evaluation_score": evaluation_score} if evaluation_score is not None else {}
+
+
+def _overview_evaluation(metrics: Mapping[str, Any], scores: Mapping[str, Any]) -> str:
+    latest = _evaluation_metrics(metrics, scores)
+    if not latest:
+        return "-"
+    return "<br>".join(
+        f"`{_markdown(key)}`: {_markdown(_display_value(value))}" for key, value in latest.items()
+    )
 
 
 def _tool_calls(record: Mapping[str, Any] | None) -> list[dict[str, Any]]:
@@ -235,7 +285,7 @@ def _health_section(events_path: Path, traces_path: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _metrics_section(metrics: Mapping[str, Any]) -> str:
+def _metrics_section(metrics: Mapping[str, Any], scores: Mapping[str, Any] | None = None) -> str:
     throughput = metrics.get("throughput") if isinstance(metrics.get("throughput"), Mapping) else {}
     summary = throughput.get("summary") if isinstance(throughput.get("summary"), Mapping) else {}
     lines = ["### 关键指标", ""]
@@ -307,6 +357,40 @@ def _metrics_section(metrics: Mapping[str, Any]) -> str:
             label = f"{window.get('start_step', '?')}–{window.get('end_step', '?')} (n={window.get('sample_count', '?')})"
             lines.append("| " + label + " | " + " | ".join(values) + " |")
         lines.append("")
+
+    evaluation = metrics.get("evaluation") if isinstance(metrics.get("evaluation"), Mapping) else {}
+    evaluation_steps = evaluation.get("steps") if isinstance(evaluation.get("steps"), list) else []
+    latest_evaluation = _evaluation_metrics(metrics, scores)
+    if latest_evaluation:
+        lines.extend(["**Test 集评估（最新）:**", "", "| 指标 | 值 |", "|---|---:|"])
+        for key, value in latest_evaluation.items():
+            lines.append(f"| `{_markdown(key)}` | {_markdown(_display_value(value))} |")
+        lines.append("")
+
+    evaluation_metric_names = sorted(
+        {
+            str(key)
+            for step in evaluation_steps
+            if isinstance(step, Mapping) and isinstance(step.get("metrics"), Mapping)
+            for key in step["metrics"]
+        }
+    )
+    if evaluation_steps and evaluation_metric_names:
+        lines.extend(
+            [
+                "**Test 集评估时序:**",
+                "",
+                "| Step | " + " | ".join(f"`{_markdown(key)}`" for key in evaluation_metric_names) + " |",
+                "|---:|" + "---:|" * len(evaluation_metric_names),
+            ]
+        )
+        for step in evaluation_steps:
+            if not isinstance(step, Mapping):
+                continue
+            step_metrics = step.get("metrics") if isinstance(step.get("metrics"), Mapping) else {}
+            values = [_markdown(_display_value(step_metrics.get(key))) for key in evaluation_metric_names]
+            lines.append(f"| {step.get('step', '-')} | " + " | ".join(values) + " |")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -370,8 +454,8 @@ def process_experiment(run_dir: Path, output_path: Path) -> None:
         f"- **最终阶段**: `{state.get('current_stage', '?')}`",
         f"- **总 Trial 数**: {state.get('last_trial_id', len(trials))}",
         "",
-        "| Trial | 阶段 | 结果 | 吞吐量 (tok/s) | 每步耗时 (s) | 末窗口 Reward | 峰值显存 (MiB) | Resource Gate | 后续 Agent trace |",
-        "|---|---|---|---:|---:|---:|---:|:---:|:---:|",
+        "| Trial | 阶段 | 结果 | 本次参数修改 | 吞吐量 (tok/s) | 每步耗时 (s) | 末窗口 Reward | Test 集最新评估 | 峰值显存 (MiB) | Resource Gate | 后续 Agent trace |",
+        "|---|---|---|---|---:|---:|---:|---|---:|:---:|:---:|",
     ]
     for trial in trials:
         index = trial["index"]
@@ -379,7 +463,7 @@ def process_experiment(run_dir: Path, output_path: Path) -> None:
         resource = index.get("resource") if isinstance(index.get("resource"), Mapping) else {}
         trace_count = len(actions_by_source.get(index["trial_id"], []))
         lines.append(
-            f"| {index['trial_id']} | {index.get('stage', '?')} | {index.get('result', '?')} | {_fmt(scores.get('throughput_mean'))} | {_fmt(scores.get('time_per_step_mean_s'))} | {_fmt(scores.get('terminal_reward'), '.4f')} | {_fmt(resource.get('max_used_mib'))} | {'safe' if resource.get('resource_safe') else 'unsafe'} | {trace_count or '-'} |"
+            f"| {index['trial_id']} | {index.get('stage', '?')} | {index.get('result', '?')} | {_overview_changes(index)} | {_fmt(scores.get('throughput_mean'))} | {_fmt(scores.get('time_per_step_mean_s'))} | {_fmt(scores.get('terminal_reward'), '.4f')} | {_overview_evaluation(trial['metrics'], scores)} | {_fmt(resource.get('max_used_mib'))} | {'safe' if resource.get('resource_safe') else 'unsafe'} | {trace_count or '-'} |"
         )
     lines.extend(["", "---", "", "## 逐 Trial 详细分析", ""])
 
@@ -400,7 +484,8 @@ def process_experiment(run_dir: Path, output_path: Path) -> None:
         lines.append("")
         lines.append(_parameter_diff(parameters, previous_parameters))
         previous_parameters = parameters
-        lines.append(_metrics_section(metrics))
+        scores = index.get("scores") if isinstance(index.get("scores"), Mapping) else {}
+        lines.append(_metrics_section(metrics, scores))
         lines.append(_health_section(_artifact_path(run_dir, index, "health_events"), _artifact_path(run_dir, index, "health_agent_traces")))
         actions = actions_by_source.get(index["trial_id"], [])
         lines.extend(["### 本 Trial 完成后的 Agent 行为", ""])

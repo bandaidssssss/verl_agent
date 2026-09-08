@@ -37,7 +37,8 @@
             "items": {
               "type": "string",
               "enum": [
-                "memory_rules"
+                "concurrency_rules",
+                "topology_rules"
               ]
             },
             "description": "Scenario names to query"

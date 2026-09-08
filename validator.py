@@ -17,6 +17,8 @@ HARDWARE_PARAMETERS = {
     # Actor training topology.
     "actor_rollout_ref.actor.megatron.tensor_model_parallel_size",
     "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size",
+    "actor_rollout_ref.actor.megatron.expert_model_parallel_size",
+    "actor_rollout_ref.actor.megatron.expert_tensor_parallel_size",
     "actor_rollout_ref.actor.megatron.sequence_parallel",
     "actor_rollout_ref.actor.ppo_max_token_len_per_gpu",
     "actor_rollout_ref.actor.use_dynamic_bsz",

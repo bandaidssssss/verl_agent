@@ -17,17 +17,24 @@ MAX_STEP = 134
 LOG_FILES = {
     # "base": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/ssh_agent/experiment_data/math_logs/0q6_base.log",
 
-    "0001": LOG_DIR / "0001" / "train.log",
+    "0001": LOG_DIR / "0011" / "train.log",
     # "entropy0001":"experiment_data/logs/entropy0001.log",
     # "entropy0003":"experiment_data/logs/entropy0003.log",
-    "0002": LOG_DIR / "0002" / "train.log",
-    "0003": LOG_DIR / "0003" / "train.log",
-    "0004": LOG_DIR / "0004" / "train.log",
-    # "0005": LOG_DIR / "0005" / "train.log",
-    # "0006": LOG_DIR / "0006" / "train.log",
-    # "0007": LOG_DIR / "0007" / "train.log",
-    # "0008": LOG_DIR / "0008" / "train.log",
+    # "0002": LOG_DIR / "0012" / "train.log",
+    # "0003": LOG_DIR / "0013" / "train.log",
+    # "0004": LOG_DIR / "0014" / "train.log",
+    # "manual_01": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/saves/qwen3_0q6_math/2026.09.01-16.35.log",
+    # "manual_02": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/saves/qwen3_0q6_math/2026.09.02-09.15.log",
+    # "manual_03": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/saves/qwen3_0q6_math/2026.09.02-15.55.log",
+    "manual_04": "/mnt/gxnbdrw-2/gxnbdrw-2/wangxinyuan/verl-0.7/saves/qwen3_0q6_math/2026.09.03-09.43.log",
+    # "0005": LOG_DIR / "0015" / "train.log",
+    # "0006": LOG_DIR / "0016" / "train.log",
+    # "0007": LOG_DIR / "0017" / "train.log",
+    "0008": LOG_DIR / "0018" / "train.log",
+    # "0009": LOG_DIR / "0019" / "train.log",
+    # "0010": LOG_DIR / "0020" / "train.log",
 }
+
 
 
 def main():

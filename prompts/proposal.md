@@ -53,7 +53,7 @@ Use `query_tuning_summaries` when prior-run experience could help choose or avoi
 - For `modify`, return between `min_proposal_candidates` and `max_proposal_candidates` from the Hard-Constraint Summary. Candidates must represent distinct causal hypotheses, not cosmetic value variants of the same experiment.
 - `hardware_repair`: Repair only the training substage identified by the diagnosis, prioritizing lower resource pressure.
 
-- `hardware_tuning`: Optimize end-to-end throughput. 
+- `hardware_tuning`: Optimize end-to-end throughput. Prioritize reducing TP (tensor parallelism), as this can improve throughput.
 
 - `max_parameter_changes` applies independently to every candidate. It is a hard safety ceiling, not a target. 
 

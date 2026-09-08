@@ -1,10 +1,17 @@
 {
   "data": {
-    "memory_rules": {
-    "stages": ["hardware_repair", "hardware_tuning"],
+    "topology_rules": {
+      "stages": ["hardware_repair", "hardware_tuning"],
       "guidance": [
-        "If memory allows, prioritize adjusting the model's topology — reducing the degree of parallelism can significantly improve throughput.",
-        "If vLLM has no pending requests but KV-cache utilization is low, consider reducing the tensor-parallel (TP) and pipeline-parallel (PP) sizes."
+        "Prefer TP for model sharding, add PP or CP when needed, and coordinate EP/ETP with TP for MoE models.",
+        "When memory allows, reduce rollout TP to create more vLLM replicas and improve throughput, while accounting for the extra KV-cache usage."
+      ]
+    },
+    "concurrency_rules": {
+      "stages": ["hardware_repair", "hardware_tuning"],
+      "guidance": [
+        "With dynamic batching, set actor PPO max tokens to at least 2x the maximum sequence length; otherwise, tune the PPO micro-batch size.",
+        "Ref log-prob concurrency can be several times higher than rollout log-prob concurrency: tune max tokens with dynamic batching, or micro-batch size otherwise."
       ]
     }
   }
