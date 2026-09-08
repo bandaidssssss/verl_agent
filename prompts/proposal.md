@@ -53,11 +53,12 @@ Use `query_tuning_summaries` when prior-run experience could help choose or avoi
 - For `modify`, return between `min_proposal_candidates` and `max_proposal_candidates` from the Hard-Constraint Summary. Candidates must represent distinct causal hypotheses, not cosmetic value variants of the same experiment.
 - `hardware_repair`: Repair only the training substage identified by the diagnosis, prioritizing lower resource pressure.
 
-- `hardware_tuning`: Optimize end-to-end throughput. Prioritize reducing TP (tensor parallelism), as this can improve throughput.
+- `hardware_tuning`: Optimize end-to-end throughput.
 
 - `max_parameter_changes` applies independently to every candidate. It is a hard safety ceiling, not a target. 
 
 - When `memory_estimator` recommends `increase` and increasing the relevant parameter is necessary to relieve the identified throughput bottleneck, increase it to a meaningful target. Do not ignore an `increase` recommendation or translate it into repeated minimal increments merely out of caution.
+- For binding `actor_rollout_ref.rollout.max_num_seqs`, when `analyze_rollout_metrics` returns `queue_demand_p95_target`, propose that target directly if memory-feasible. Do not replace it with a fixed multiplier of the configured cap; choose a smaller value only when the estimator or resource evidence supplies a concrete upper bound.
 
 
 - Candidate IDs must be unique, short, stable strings. The Validator and Feasibility Agent use them as opaque identifiers.

@@ -396,6 +396,11 @@ def summarize_vllm_metrics(path: str | Path | None) -> dict[str, Any]:
         "iteration_tokens_p95_upper_bound",
     )
     values: dict[str, list[float]] = {field: [] for field in metric_fields}
+    # Keep running and waiting paired per scrape.  Adding their independently
+    # calculated percentiles later can combine different moments and overstate
+    # demand; the paired total is the scheduler capacity actually requested at
+    # each observation.
+    requests_in_system_values: list[float] = []
     preemption_values: list[float] = []
     replicas: set[str] = set()
     rows = 0
@@ -410,13 +415,24 @@ def summarize_vllm_metrics(path: str | Path | None) -> dict[str, Any]:
         for row in csv.DictReader(handle):
             rows += 1
             replicas.add(row.get("replica_rank", ""))
+            parsed_row: dict[str, float] = {}
             for field in metric_fields:
                 raw = row.get(field, "")
                 if raw not in (None, ""):
                     try:
-                        values[field].append(float(raw))
+                        parsed = float(raw)
+                        values[field].append(parsed)
+                        parsed_row[field] = parsed
                     except ValueError:
                         pass
+            if {
+                "requests_running",
+                "requests_waiting",
+            }.issubset(parsed_row):
+                requests_in_system_values.append(
+                    parsed_row["requests_running"]
+                    + parsed_row["requests_waiting"]
+                )
             raw_preemptions = row.get("preemptions_delta", "")
             if raw_preemptions not in (None, ""):
                 try:
@@ -432,6 +448,7 @@ def summarize_vllm_metrics(path: str | Path | None) -> dict[str, Any]:
         "samples": rows,
         "replicas": len({value for value in replicas if value != ""}),
         **{field: _summary(field_values) for field, field_values in values.items()},
+        "requests_in_system": _summary(requests_in_system_values),
         "waiting_positive_fraction": (
             sum(value > 0 for value in waiting_values) / len(waiting_values)
             if waiting_values
@@ -459,10 +476,25 @@ def assess_rollout_metrics(
     rollout_gpu_util_mean_pct: float | None = None,
     memory_limit_pct: float = 92.0,
 ) -> dict[str, Any]:
+    running_mean = _summary_value(summary, "requests_running", "mean")
     running_p95 = _summary_value(summary, "requests_running", "p95")
     running_max = _summary_value(summary, "requests_running", "max")
     waiting_fraction = _numeric(summary.get("waiting_positive_fraction"))
+    waiting_mean = _summary_value(summary, "requests_waiting", "mean")
+    waiting_p95 = _summary_value(summary, "requests_waiting", "p95")
     waiting_max = _summary_value(summary, "requests_waiting", "max")
+    demand_mean = _summary_value(summary, "requests_in_system", "mean")
+    demand_p95 = _summary_value(summary, "requests_in_system", "p95")
+    demand_max = _summary_value(summary, "requests_in_system", "max")
+    # Older stored summaries predate requests_in_system.  This fallback is
+    # intentionally used only for compatibility; new CSV summaries use paired
+    # samples above and therefore avoid adding unrelated percentiles.
+    if demand_mean is None and running_mean is not None and waiting_mean is not None:
+        demand_mean = running_mean + waiting_mean
+    if demand_p95 is None and running_p95 is not None and waiting_p95 is not None:
+        demand_p95 = running_p95 + waiting_p95
+    if demand_max is None and running_max is not None and waiting_max is not None:
+        demand_max = running_max + waiting_max
     kv_p95 = _summary_value(summary, "kv_cache_usage_pct", "p95")
     kv_max = _summary_value(summary, "kv_cache_usage_pct", "max")
     preemptions = _numeric(summary.get("preemptions_total"))
@@ -483,6 +515,16 @@ def assess_rollout_metrics(
     max_seqs = _numeric(parameters.get("actor_rollout_ref.rollout.max_num_seqs"))
     seq_ratio = running_p95 / max_seqs if running_p95 is not None and max_seqs else None
     seq_binding = bool(seq_ratio is not None and seq_ratio >= 0.95 and queue_present)
+    queue_p95_to_cap_ratio = (
+        waiting_p95 / max_seqs
+        if waiting_p95 is not None and max_seqs
+        else None
+    )
+    queue_demand_p95_target = (
+        int(math.ceil(demand_p95))
+        if seq_binding and demand_p95 is not None and demand_p95 > max_seqs
+        else None
+    )
     if seq_binding and not memory_pressure:
         seq_status = "binding_increase_if_memory_feasible"
     elif seq_binding:
@@ -536,7 +578,12 @@ def assess_rollout_metrics(
             "physical_memory_headroom_to_limit_pct": memory_headroom,
             "requests_running_max": running_max,
             "requests_running_p95": running_p95,
+            "requests_waiting_mean": waiting_mean,
+            "requests_waiting_p95": waiting_p95,
             "requests_waiting_max": waiting_max,
+            "requests_in_system_mean": demand_mean,
+            "requests_in_system_p95": demand_p95,
+            "requests_in_system_max": demand_max,
             "waiting_positive_fraction": waiting_fraction,
             "kv_cache_usage_p95_pct": kv_p95,
             "kv_cache_usage_max_pct": kv_max,
@@ -548,28 +595,20 @@ def assess_rollout_metrics(
             "actor_rollout_ref.rollout.gpu_memory_utilization": {
                 "configured": configured_memory,
                 "status": memory_status,
-                "binding_evidence": "KV-cache usage/preemption plus physical memory headroom",
             },
             "actor_rollout_ref.rollout.max_num_seqs": {
                 "configured": max_seqs,
                 "running_to_cap_ratio": seq_ratio,
+                "waiting_p95_to_cap_ratio": queue_p95_to_cap_ratio,
+                "queue_demand_p95_target": queue_demand_p95_target,
                 "status": seq_status,
-                "binding_evidence": "running P95 approaches the cap while waiting remains positive",
             },
             "actor_rollout_ref.rollout.max_num_batched_tokens": {
                 "configured": max_tokens,
                 "iteration_p95_to_cap_ratio": token_ratio,
                 "status": token_status,
-                "binding_evidence": "iteration-token P95 approaches the cap while waiting remains positive",
             },
         },
-        "guardrails": [
-            "GPU compute utilization is an outcome; gpu_memory_utilization is a vLLM memory-budget fraction.",
-            "Do not raise a scheduler ceiling unless its own binding evidence is present.",
-            "Change only one of these three rollout capacity knobs per comparison trial.",
-            "After a change, compare rollout duration, generation throughput, KV pressure, preemptions, and end-to-end throughput.",
-            "A missing exporter metric means unknown, not zero.",
-        ],
     }
 
 

@@ -4,7 +4,6 @@ id_ed25519
 id_ed25519.pub
 output/
 old_output/
-old_output_V2/
 experiment_data/
 profile/
 # Python caches

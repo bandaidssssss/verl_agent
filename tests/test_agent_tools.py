@@ -1239,6 +1239,13 @@ class AgentToolsTest(unittest.TestCase):
             knobs["actor_rollout_ref.rollout.max_num_batched_tokens"]["status"],
             "unknown_metric_not_exported",
         )
+        self.assertEqual(
+            result["assessment"]["observed"]["requests_waiting_p95"], 500.0
+        )
+        self.assertEqual(
+            knobs["actor_rollout_ref.rollout.max_num_seqs"]["queue_demand_p95_target"],
+            756,
+        )
 
 
 if __name__ == "__main__":

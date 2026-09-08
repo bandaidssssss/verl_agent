@@ -37,8 +37,8 @@
             "items": {
               "type": "string",
               "enum": [
-                "concurrency_rules",
-                "topology_rules"
+                "topology_rules",
+                "concurrency_rules"
               ]
             },
             "description": "Scenario names to query"
@@ -87,7 +87,7 @@
       "name": "analyze_rollout_metrics",
       "handler": "analyze_rollout_metrics",
       "roles": ["proposal", "feasibility"],
-      "description": "Analyze one recorded trial's compact vLLM metrics and determine whether gpu_memory_utilization, max_num_seqs, or max_num_batched_tokens has direct binding evidence. Use before proposing or approving changes to those rollout capacity knobs. The result distinguishes GPU compute utilization from the vLLM memory budget, treats missing exporter metrics as unknown, and returns one-change-per-trial guardrails.",
+      "description": "Analyze one recorded trial's compact vLLM metrics and determine whether gpu_memory_utilization, max_num_seqs, or max_num_batched_tokens has direct binding evidence. Use before proposing or approving changes to those rollout capacity knobs. For binding max_num_seqs, the result returns a queue_demand_p95_target derived from paired running-plus-waiting samples; use that target directly when memory-feasible instead of applying a generic multiplier to the current cap. The result distinguishes GPU compute utilization from the vLLM memory budget, treats missing exporter metrics as unknown, and returns one-change-per-trial guardrails.",
       "parameters": {
         "type": "object",
         "properties": {

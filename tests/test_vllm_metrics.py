@@ -228,6 +228,13 @@ vllm:generation_tokens_total{engine="0"} 500
             assessment["knobs"]["actor_rollout_ref.rollout.max_num_seqs"]["status"],
             "binding_increase_if_memory_feasible",
         )
+        self.assertEqual(summary["requests_in_system"]["p95"], 837.0)
+        self.assertEqual(assessment["observed"]["requests_waiting_mean"], 581.0)
+        self.assertEqual(assessment["observed"]["requests_waiting_p95"], 581.0)
+        self.assertEqual(assessment["observed"]["requests_in_system_p95"], 837.0)
+        max_seqs = assessment["knobs"]["actor_rollout_ref.rollout.max_num_seqs"]
+        self.assertEqual(max_seqs["waiting_p95_to_cap_ratio"], 581.0 / 256.0)
+        self.assertEqual(max_seqs["queue_demand_p95_target"], 837)
         self.assertEqual(
             assessment["knobs"]["actor_rollout_ref.rollout.max_num_batched_tokens"]["status"],
             "unknown_metric_not_exported",
@@ -236,6 +243,73 @@ vllm:generation_tokens_total{engine="0"} 500
             assessment["knobs"]["actor_rollout_ref.rollout.gpu_memory_utilization"]["status"],
             "not_binding_do_not_raise_for_low_compute_utilization",
         )
+
+    def test_summary_pairs_running_and_waiting_before_demand_percentile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "vllm_metrics.csv"
+            with path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "timestamp",
+                        "replica_rank",
+                        "requests_running",
+                        "requests_waiting",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "timestamp": 1,
+                        "replica_rank": 0,
+                        "requests_running": 256,
+                        "requests_waiting": 0,
+                    }
+                )
+                writer.writerow(
+                    {
+                        "timestamp": 2,
+                        "replica_rank": 0,
+                        "requests_running": 0,
+                        "requests_waiting": 744,
+                    }
+                )
+
+            summary = summarize_vllm_metrics(path)
+
+        self.assertEqual(summary["requests_running"]["p95"], 256.0)
+        self.assertEqual(summary["requests_waiting"]["p95"], 744.0)
+        self.assertEqual(summary["requests_in_system"]["p95"], 744.0)
+
+    def test_queue_target_uses_paired_demand_p95(self) -> None:
+        summary = {
+            "available": True,
+            "requests_running": {"mean": 230.0, "p95": 256.0, "max": 256.0},
+            "requests_waiting": {"mean": 440.0, "p95": 744.0, "max": 744.0},
+            "requests_in_system": {"mean": 670.0, "p95": 1000.0, "max": 1000.0},
+            "waiting_positive_fraction": 0.84,
+            "kv_cache_usage_pct": {"mean": 48.0, "p95": 68.0, "max": 82.0},
+            "preemptions_total": 0.0,
+            "missing_metrics": [],
+        }
+        assessment = assess_rollout_metrics(
+            summary,
+            {"actor_rollout_ref.rollout.max_num_seqs": 256},
+            rollout_memory_peak_pct=68.0,
+            memory_limit_pct=87.5,
+        )
+
+        observed = assessment["observed"]
+        self.assertEqual(observed["requests_waiting_mean"], 440.0)
+        self.assertEqual(observed["requests_waiting_p95"], 744.0)
+        self.assertEqual(observed["requests_in_system_p95"], 1000.0)
+        knob = assessment["knobs"]["actor_rollout_ref.rollout.max_num_seqs"]
+        self.assertEqual(knob["status"], "binding_increase_if_memory_feasible")
+        self.assertEqual(knob["waiting_p95_to_cap_ratio"], 744.0 / 256.0)
+        self.assertEqual(knob["queue_demand_p95_target"], 1000)
+        self.assertNotIn("binding_evidence", knob)
+        self.assertNotIn("target_guidance", knob)
+        self.assertNotIn("guardrails", assessment)
 
 
 if __name__ == "__main__":
