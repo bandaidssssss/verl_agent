@@ -79,6 +79,32 @@ class DistributedLaunchTest(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 wait_for_head("head", 6379, 1)
 
+    def test_existing_cluster_only_checks_resources_and_exports_address(self):
+        env = {"RAY_CLUSTER_MODE": "existing", "RAY_ADDRESS": "10.200.111.147:6379"}
+        parameters = {"trainer.nnodes": 2, "trainer.n_gpus_per_node": 8}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch("distributed_launch.subprocess.run") as run:
+            self.assertTrue(prepare_cluster(parameters))
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0][-3:], [env["RAY_ADDRESS"], "2", "8"])
+            self.assertNotEqual(run.call_args.args[0][0], "ray")
+            self.assertEqual(os.environ["RAY_ADDRESS"], env["RAY_ADDRESS"])
+
+    def test_existing_cluster_worker_does_nothing(self):
+        with mock.patch.dict(os.environ, {"RAY_CLUSTER_MODE": "existing", "POD_RANK": "1", "WORLD_SIZE": "2"}, clear=True), mock.patch("distributed_launch.subprocess.run") as run:
+            self.assertFalse(prepare_cluster({}))
+            run.assert_not_called()
+
+    def test_existing_cluster_resource_failure_blocks_training(self):
+        with mock.patch.dict(os.environ, {"RAY_CLUSTER_MODE": "existing"}, clear=True), mock.patch("distributed_launch.subprocess.run", side_effect=subprocess.CalledProcessError(1, "check")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                prepare_cluster({"trainer.nnodes": 2})
+
+    def test_existing_cluster_rejects_local_address(self):
+        with mock.patch.dict(os.environ, {"RAY_CLUSTER_MODE": "existing", "RAY_ADDRESS": "local"}, clear=True), mock.patch("distributed_launch.subprocess.run") as run:
+            with self.assertRaises(ValueError):
+                prepare_cluster({})
+            run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

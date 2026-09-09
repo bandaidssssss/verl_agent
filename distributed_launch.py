@@ -27,7 +27,7 @@ def topology(parameters: Mapping, env: Mapping[str, str]) -> Topology:
     rank = next((env[k] for k in ("NODE_RANK", "POD_RANK", "SLURM_NODEID") if k in env), None)
     if rank is None and nodes is not None:
         rank = env.get("RANK")
-    if count > 1 and rank is None:
+    if count > 1 and rank is None and env.get("RAY_CLUSTER_MODE") != "existing":
         raise ValueError("Multi-node launch requires NODE_RANK/POD_RANK (one launcher per node).")
     result = Topology(count, int(rank or 0), int(env.get("GPUS_PER_NODE", parameters.get("trainer.n_gpus_per_node", 8))))
     if result.nodes < 1 or not 0 <= result.rank < result.nodes or result.gpus < 1:
@@ -79,12 +79,28 @@ while True:
 
 def prepare_cluster(parameters: dict, *, dry_run: bool = False) -> bool:
     """Update runtime parameters. Return True only when this node runs the driver."""
+    mode = os.getenv("RAY_CLUSTER_MODE", "managed")
+    if mode not in {"managed", "existing"}:
+        raise ValueError("RAY_CLUSTER_MODE must be managed or existing.")
     spec = topology(parameters, os.environ)
     parameters.update({"trainer.nnodes": spec.nodes, "trainer.n_gpus_per_node": spec.gpus})
     print(f"[cluster] nodes={spec.nodes}, rank={spec.rank}, GPUs/node={spec.gpus}, total={spec.nodes * spec.gpus}", flush=True)
+    print(f"[cluster] mode={mode}", flush=True)
     if dry_run:
         print("[cluster] dry-run: no Ray processes started", flush=True)
         return spec.rank == 0
+    if mode == "existing":
+        if spec.rank != 0:
+            print("[cluster] existing cluster: only rank 0 runs the driver", flush=True)
+            return False
+        host = os.getenv("RAY_HEAD_ADDR") or os.getenv("MASTER_ADDR")
+        address = os.getenv("RAY_ADDRESS") or (f"{host}:{os.getenv('RAY_PORT', '6379')}" if host else "auto")
+        if address == "local" or address.startswith("ray://"):
+            raise ValueError("Existing mode requires a GCS host:port address or auto, not local/ray://.")
+        print(f"[cluster] reusing {address}; checking GPU nodes", flush=True)
+        verify_cluster(address, spec, ray_environment(os.environ))
+        export_driver_address(address)
+        return True
     if spec.nodes == 1:
         return True
 
@@ -114,19 +130,30 @@ def prepare_cluster(parameters: dict, *, dry_run: bool = False) -> bool:
         if not os.getenv("RAY_NODE_IP_ADDRESS"):
             command.append(f"--node-ip-address={socket.gethostbyname(host)}")
         subprocess.run(command, env=clean_env, check=True, timeout=timeout)
-        try:
-            subprocess.run(
-                [sys.executable, "-u", "-c", READINESS, address, str(spec.nodes), str(spec.gpus)],
-                env=clean_env, check=True, timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise TimeoutError("Timed out waiting for all Ray GPU nodes. Run the same launch command on every Pod and check worker logs.") from exc
-        for key in ("RANK", "WORLD_SIZE", "LOCAL_RANK", "LOCAL_WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT"):
-            os.environ.pop(key, None)
-        os.environ["RAY_ADDRESS"] = address
+        verify_cluster(address, spec, clean_env)
+        export_driver_address(address)
         return True
 
     wait_for_head(host, port, timeout)
     command.extend([f"--address={address}", "--block"])
     subprocess.run(command, env=clean_env, check=True)
     return False
+
+
+def verify_cluster(address: str, spec: Topology, env: dict[str, str]) -> None:
+    timeout = float(os.getenv("RAY_START_TIMEOUT", "300"))
+    if timeout <= 0:
+        raise ValueError("RAY_START_TIMEOUT must be positive.")
+    try:
+        subprocess.run(
+            [sys.executable, "-u", "-c", READINESS, address, str(spec.nodes), str(spec.gpus)],
+            env=env, check=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError("Timed out waiting for all Ray GPU nodes. Check the cluster address, node resources and worker logs.") from exc
+
+
+def export_driver_address(address: str) -> None:
+    for key in ("RANK", "WORLD_SIZE", "LOCAL_RANK", "LOCAL_WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT"):
+        os.environ.pop(key, None)
+    os.environ["RAY_ADDRESS"] = address
