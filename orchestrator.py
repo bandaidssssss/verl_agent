@@ -1104,6 +1104,14 @@ class TuningOrchestrator:
                         trials,
                         locked_parameters=current,
                         reference_runtime_parameters=reference_runtime_values,
+                        model_config=(
+                            reference_log_facts.get("model_config")
+                            if isinstance(reference_log_facts, Mapping)
+                            and isinstance(
+                                reference_log_facts.get("model_config"), Mapping
+                            )
+                            else None
+                        ),
                     )
                     if not deterministic.valid:
                         violations.extend(deterministic.violations)

@@ -175,6 +175,7 @@ def validate_candidate(
     history: Sequence[Mapping[str, Any]],
     locked_parameters: Mapping[str, Any] | None = None,
     reference_runtime_parameters: Mapping[str, Any] | None = None,
+    model_config: Mapping[str, Any] | None = None,
 ) -> ValidationResult:
     violations: list[str] = []
     editable = set(editable_parameters(stage))
@@ -218,6 +219,8 @@ def validate_candidate(
 
     required = [
         "data.train_batch_size",
+        "data.max_prompt_length",
+        "data.max_response_length",
         "actor_rollout_ref.rollout.n",
         "actor_rollout_ref.actor.ppo_mini_batch_size",
         "trainer.n_gpus_per_node",
@@ -274,6 +277,51 @@ def validate_candidate(
             violations.append("ppo_mini_batch_size must be divisible by ppo_micro_batch_size_per_gpu")
 
     num_gpus = int(parameters["trainer.n_gpus_per_node"]) * int(parameters["trainer.nnodes"])
+    actor_tp_key = "actor_rollout_ref.actor.megatron.tensor_model_parallel_size"
+    actor_tp = int(parameters.get(actor_tp_key, 1))
+    if model_config is None:
+        for trial in reversed(history):
+            log_facts = trial.get("log_facts")
+            trial_model_config = (
+                log_facts.get("model_config")
+                if isinstance(log_facts, Mapping)
+                else None
+            )
+            if isinstance(trial_model_config, Mapping):
+                model_config = trial_model_config
+                break
+    num_key_value_heads = (
+        model_config.get("num_key_value_heads")
+        if isinstance(model_config, Mapping)
+        else None
+    )
+    if (
+        isinstance(num_key_value_heads, int)
+        and not isinstance(num_key_value_heads, bool)
+        and num_key_value_heads > 0
+        and actor_tp > 0
+        and num_key_value_heads % actor_tp != 0
+    ):
+        violations.append(
+            "model num_key_value_heads must be a multiple of "
+            f"{actor_tp_key}"
+        )
+
+    prompt_length = int(parameters["data.max_prompt_length"])
+    response_length = int(parameters["data.max_response_length"])
+    actor_max_tokens = resolved["phases"]["training"][
+        "max_token_len_per_gpu"
+    ]
+    if (
+        use_dynamic_bsz
+        and int(actor_max_tokens) <= prompt_length + response_length
+    ):
+        violations.append(
+            "actor_rollout_ref.actor.ppo_max_token_len_per_gpu must be greater "
+            "than data.max_prompt_length + data.max_response_length when "
+            "actor_rollout_ref.actor.use_dynamic_bsz=true"
+        )
+
     parallel_groups = [
         ("actor", "actor_rollout_ref.actor.megatron.tensor_model_parallel_size", "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size"),
         ("rollout", "actor_rollout_ref.rollout.tensor_model_parallel_size", None),

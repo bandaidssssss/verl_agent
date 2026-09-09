@@ -182,6 +182,72 @@ class ValidatorTest(unittest.TestCase):
         )
         self.assertFalse(result.valid)
 
+    def test_num_key_value_heads_must_be_multiple_of_actor_tp(self) -> None:
+        result = validate_candidate(
+            self.base,
+            {},
+            "confirm",
+            self.config,
+            self.base,
+            [
+                {
+                    "trial_id": 1,
+                    "log_facts": {
+                        "model_config": {"num_key_value_heads": 6}
+                    },
+                }
+            ],
+        )
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any(
+                "num_key_value_heads must be a multiple" in row
+                for row in result.violations
+            )
+        )
+
+    def test_actor_max_tokens_must_exceed_total_sequence_length(self) -> None:
+        candidate = dict(self.base)
+        candidate["actor_rollout_ref.actor.ppo_max_token_len_per_gpu"] = (
+            candidate["data.max_prompt_length"]
+            + candidate["data.max_response_length"]
+        )
+        result = validate_candidate(
+            candidate,
+            {},
+            "confirm",
+            self.config,
+            self.base,
+            [],
+        )
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any(
+                "must be greater than data.max_prompt_length" in row
+                for row in result.violations
+            )
+        )
+
+    def test_actor_max_tokens_constraint_is_inactive_for_fixed_batching(self) -> None:
+        candidate = {
+            **self.base,
+            "actor_rollout_ref.actor.use_dynamic_bsz": False,
+            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu": 1,
+            "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": (
+                self.base["data.max_prompt_length"]
+                + self.base["data.max_response_length"]
+            ),
+        }
+        result = validate_candidate(
+            candidate,
+            {},
+            "confirm",
+            self.config,
+            self.base,
+            [],
+        )
+        self.assertTrue(result.valid, result.violations)
+
     def test_parameter_groups_share_validator_policy(self) -> None:
         groups = parameter_groups(self.base, "stability_tuning")
         self.assertIn("actor_rollout_ref.actor.optim.lr", groups["stability_tuning"])

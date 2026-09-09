@@ -75,8 +75,15 @@
     },
     "actor_rollout_ref.actor.ppo_max_token_len_per_gpu": {
       "non_obvious_effects": ["Only authoritative when actor_rollout_ref.actor.use_dynamic_bsz is true; it then limits the tokens processed per GPU in each PPO micro-batch."],
-      "hard_constraints": ["Validate installed backend token-length support."],
-      "critical_couplings": ["actor_rollout_ref.actor.use_dynamic_bsz"]
+      "hard_constraints": [
+        "Only when actor_rollout_ref.actor.use_dynamic_bsz is true, this value must be strictly greater than data.max_prompt_length + data.max_response_length; when false, this value is inactive.",
+        "Validate installed backend token-length support."
+      ],
+      "critical_couplings": [
+        "actor_rollout_ref.actor.use_dynamic_bsz",
+        "data.max_prompt_length",
+        "data.max_response_length"
+      ]
     },
     "actor_rollout_ref.actor.ppo_mini_batch_size": {
       "hard_constraints": [
@@ -90,7 +97,10 @@
     },
     "actor_rollout_ref.actor.megatron.tensor_model_parallel_size": {
       "non_obvious_effects": ["This parameter affects both actor and ref."],
-      "hard_constraints": ["World size must be divisible by the shared actor/ref TP * PP topology."],
+      "hard_constraints": [
+        "The model's num_key_value_heads must be a multiple of tensor_model_parallel_size.",
+        "World size must be divisible by the shared actor/ref TP * PP topology."
+      ],
       "critical_couplings": [
         "actor_rollout_ref.actor.megatron.pipeline_model_parallel_size",
         "actor_rollout_ref.actor.megatron.sequence_parallel",
@@ -171,7 +181,10 @@
     },
     "actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu": {
       "non_obvious_effects": ["Only authoritative when the effective actor_rollout_ref.rollout.log_prob_use_dynamic_bsz value is true; it then limits tokens processed per GPU in actor log-probability computation."],
-      "hard_constraints": ["Validate installed backend token-length support."],
+      "hard_constraints": [
+        "This value is active only when the effective actor_rollout_ref.rollout.log_prob_use_dynamic_bsz is true,  and this value must be strictly greater than data.max_prompt_length + data.max_response_length; when false, actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu is active instead. ",
+        "Validate installed backend token-length support."
+      ],
       "critical_couplings": ["actor_rollout_ref.rollout.log_prob_use_dynamic_bsz"]
     },
     "actor_rollout_ref.rollout.log_prob_use_dynamic_bsz": {
@@ -239,7 +252,10 @@
     },
     "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu": {
       "non_obvious_effects": ["Only authoritative when the effective actor_rollout_ref.ref.log_prob_use_dynamic_bsz value is true; it then limits the tokens processed per GPU in each reference log-probability micro-batch."],
-      "hard_constraints": ["Validate installed backend token-length support."],
+      "hard_constraints": [
+        "This value is active only when the effective actor_rollout_ref.ref.log_prob_use_dynamic_bsz is true, and this value can be a multiple of rollout.log_prob_max_token_len_per_gpu; when false, actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu is active instead.",
+        "Validate installed backend token-length support."
+      ],
       "critical_couplings": ["actor_rollout_ref.ref.log_prob_use_dynamic_bsz"]
     },
     "actor_rollout_ref.ref.log_prob_use_dynamic_bsz": {
