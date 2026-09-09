@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0904_1415_2026"
+DEFAULT_EXPERIMENT_DIR = Path(__file__).resolve().parent / "0909_1129_2026"
 DEFAULT_OUTPUT_NAME = "agent_report.md"
 PHASES = ("rollout", "actor_log_prob", "ref_log_prob", "training")
 
