@@ -234,7 +234,7 @@ vllm:generation_tokens_total{engine="0"} 500
         self.assertEqual(assessment["observed"]["requests_in_system_p95"], 837.0)
         max_seqs = assessment["knobs"]["actor_rollout_ref.rollout.max_num_seqs"]
         self.assertEqual(max_seqs["waiting_p95_to_cap_ratio"], 581.0 / 256.0)
-        self.assertEqual(max_seqs["queue_demand_p95_target"], 837)
+        self.assertEqual(max_seqs["queue_demand_p95_target"], 1024)
         self.assertEqual(
             assessment["knobs"]["actor_rollout_ref.rollout.max_num_batched_tokens"]["status"],
             "unknown_metric_not_exported",
@@ -306,7 +306,7 @@ vllm:generation_tokens_total{engine="0"} 500
         knob = assessment["knobs"]["actor_rollout_ref.rollout.max_num_seqs"]
         self.assertEqual(knob["status"], "binding_increase_if_memory_feasible")
         self.assertEqual(knob["waiting_p95_to_cap_ratio"], 744.0 / 256.0)
-        self.assertEqual(knob["queue_demand_p95_target"], 1000)
+        self.assertEqual(knob["queue_demand_p95_target"], 1024)
         self.assertNotIn("binding_evidence", knob)
         self.assertNotIn("target_guidance", knob)
         self.assertNotIn("guardrails", assessment)

@@ -9,16 +9,12 @@ export OUTPUT_PATH=${OUTPUT_PATH:-${SCRIPT_DIR}/output}/${RUN_TIME}
 export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
 mkdir -p "${OUTPUT_PATH}"
 RUN_LOG="${OUTPUT_PATH}/run_circle.log"
-
-if [[ -z "${VERL_ENV_SCRIPT:-}" ]]; then
-    PLATFORM_UPPER=$(printf '%s' "${PLATFORM}" | tr '[:lower:]' '[:upper:]')
-    case "${PLATFORM_UPPER}" in
-        V5000) export VERL_ENV_SCRIPT="${SCRIPT_DIR}/train/env_V5000.sh" ;;
-        C550|METAX) export VERL_ENV_SCRIPT="${SCRIPT_DIR}/train/env_C550.sh" ;;
-        A100|NVIDIA|CUDA) export VERL_ENV_SCRIPT="${SCRIPT_DIR}/train/env_NVIDIA.sh" ;;
-        *) echo "Unsupported PLATFORM=${PLATFORM}. Set VERL_ENV_SCRIPT and GPU_SMI explicitly." >&2; exit 2 ;;
-    esac
+LAUNCH_RANK=${NODE_RANK:-${POD_RANK:-${SLURM_NODEID:-${RANK:-0}}}}
+if [[ "$LAUNCH_RANK" != "0" ]]; then
+    RUN_LOG="${OUTPUT_PATH}/worker_${LAUNCH_RANK}.log"
 fi
+
+source "${SCRIPT_DIR}/train/setup_environment.sh"
 
 python3 "${SCRIPT_DIR}/run_agent.py" \
     --base-config "${BASE_CONFIG_FILE:-${SCRIPT_DIR}/config/base_parameters.json}" \

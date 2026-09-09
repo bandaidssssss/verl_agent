@@ -1244,7 +1244,7 @@ class AgentToolsTest(unittest.TestCase):
         )
         self.assertEqual(
             knobs["actor_rollout_ref.rollout.max_num_seqs"]["queue_demand_p95_target"],
-            756,
+            1024,
         )
 
 

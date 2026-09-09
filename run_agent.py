@@ -12,7 +12,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_utils import load_json
-from orchestrator import TuningOrchestrator
+from distributed_launch import prepare_cluster
 
 
 ROOT = Path(__file__).resolve().parent
@@ -33,6 +33,10 @@ def main() -> int:
     args = parser.parse_args()
 
     base_parameters = load_json(args.base_config)
+    if not prepare_cluster(base_parameters, dry_run=args.dry_run):
+        return 0
+    from orchestrator import TuningOrchestrator
+
     agent_config = load_json(args.agent_config)
     if os.getenv("PLATFORM"):
         agent_config["platform"] = os.environ["PLATFORM"]

@@ -9,6 +9,7 @@ UPDATES=${4:?Usage: run_verl.sh PARAMETERS.json STAGE TRIAL_ID UPDATES}
 export PLATFORM=${PLATFORM:-V5000}
 export OUTPUT_PATH=${OUTPUT_PATH:-${SCRIPT_DIR}/output}
 export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
+source "${SCRIPT_DIR}/train/setup_environment.sh"
 
 exec python3 "${SCRIPT_DIR}/trial_cli.py" \
     --parameters "${PARAMETERS}" \

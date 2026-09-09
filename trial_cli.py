@@ -11,7 +11,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_utils import load_json
-from runner import run_trial
+from distributed_launch import prepare_cluster
 
 
 def main() -> int:
@@ -24,8 +24,13 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
+    parameters = load_json(args.parameters)
+    if not prepare_cluster(parameters, dry_run=args.dry_run):
+        return 0
+    from runner import run_trial
+
     result = run_trial(
-        load_json(args.parameters),
+        parameters,
         load_json(args.agent_config),
         args.trial_id,
         args.stage,

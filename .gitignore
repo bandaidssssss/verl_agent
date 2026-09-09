@@ -6,6 +6,7 @@ output/
 old_output/
 old_output_V2/
 experiment_data/
+learn/
 profile/
 # Python caches
 **/__pycache__/

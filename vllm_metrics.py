@@ -468,6 +468,10 @@ def _summary_value(summary: Mapping[str, Any], field: str, statistic: str) -> fl
     return _numeric(value.get(statistic)) if isinstance(value, Mapping) else None
 
 
+def _next_power_of_two(value: float) -> int:
+    return 1 << max(0, int(math.ceil(value)) - 1).bit_length()
+
+
 def assess_rollout_metrics(
     summary: Mapping[str, Any],
     parameters: Mapping[str, Any],
@@ -521,7 +525,7 @@ def assess_rollout_metrics(
         else None
     )
     queue_demand_p95_target = (
-        int(math.ceil(demand_p95))
+        _next_power_of_two(demand_p95)
         if seq_binding and demand_p95 is not None and demand_p95 > max_seqs
         else None
     )

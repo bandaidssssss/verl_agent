@@ -61,6 +61,46 @@ vLLM replica 的 `/metrics` 地址，默认每 5 秒采集一次。采集结果�
 
 ## 运行
 
+### C550 双机及多机自动启动
+
+在平台分配的**每个 Pod 上各执行一次**相同命令（可配置为平台的所有副本启动命令）：
+
+```bash
+PLATFORM=C550 bash run_circle.sh
+```
+
+入口识别 `POD_RANK` + `WORLD_SIZE` + `MASTER_ADDR`：例如 `WORLD_SIZE=2`、
+每节点配置 8 卡时，运行时自动覆盖为 `trainer.nnodes=2`、`trainer.n_gpus_per_node=8`。
+不修改原始 JSON；4 个节点同样适用。`NODE_RANK`/`NNODES` 和
+`SLURM_NODEID`/`SLURM_NNODES` 也支持。裸 `WORLD_SIZE` 可能是进程数，
+没有 `POD_RANK` 时不会当作节点数；此时显式设置 `NNODES` 和 `NODE_RANK`。
+不要使用 torchrun 启动本入口。
+
+rank 0 创建 Ray head，等待所有 GPU 节点就绪后运行调优；其他 rank 加入 Ray 并阻塞，
+不运行 Agent。仅在主节点 SSH 中执行无法代替其他节点启动，入口不会自动 SSH。
+`train/run_verl.sh` 使用同一初始化逻辑。单机保留原来的本地启动方式。
+
+可选覆盖：`GPUS_PER_NODE=8`、`RAY_PORT=6379`、`RAY_START_TIMEOUT=300`（秒）、
+`RAY_HEAD_ADDR`（覆盖 MASTER_ADDR）、`RAY_NODE_IP_ADDRESS`（当前节点可互通的网卡 IP）。
+Ray 使用独立端口，不使用平台的 `MASTER_PORT`；使用 GCS `host:port` 地址连接，
+不使用 `ray://`。Ray 和训练进程不会继承平台的 GPU 进程 rank/ rendezvous 变量。
+两边先加载同一平台环境脚本，再检查 PyTorch 可见 GPU 数；每节点必须与配置一致。
+跨节点需要相同软件环境、可互通网络，以及可访问的模型/数据/检查点路径。
+
+```bash
+# 主节点只预览运行参数，不启动 Ray、不检测 GPU
+PLATFORM=C550 bash run_circle.sh --dry-run --rules-only
+```
+
+入口不会执行 `ray stop` 或自动清理已有 Ray 服务。一次任务结束后 worker 仍阻塞；
+重启整组任务前，应在确认没有其他作业使用这些节点后，在各节点手动 `ray stop`，
+结束旧的 worker 启动进程，再重新执行入口。端口冲突会报错，不会强行替换已有服务。
+等待所有 GPU 节点默认最多 300 秒，超时检查其他 Pod 是否执行入口及其日志。
+
+当前 GPU 采样器仍只采集启动 Agent 的本机 GPU；多机训练可运行，但显存监控并非全节点汇总。
+集群启动方式参考 [verl 多机指南](https://verl.readthedocs.io/en/latest/start/multinode.html)，
+连接地址使用 [Ray 的 RAY_ADDRESS 机制](https://docs.ray.io/en/latest/ray-core/api/doc/ray.init.html)。
+
 先检查第一轮生成的命令，不启动训练：
 
 ```bash
