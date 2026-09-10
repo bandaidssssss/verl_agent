@@ -77,6 +77,54 @@ while True:
 """
 
 
+DISCOVERY = """
+import ray
+context = ray.init(address='auto')
+try:
+    address = context.address_info.get('gcs_address') or context.address_info.get('address')
+    if not address or address in ('auto', 'local'):
+        raise RuntimeError('Ray did not return a concrete GCS address')
+    print('RAY_DISCOVERED_ADDRESS=' + address, flush=True)
+finally:
+    ray.shutdown()
+"""
+
+
+def existing_address(env: Mapping[str, str]) -> str:
+    address = env.get("RAY_ADDRESS", "").strip()
+    if not address and env.get("RAY_HEAD_ADDR"):
+        address = f"{env['RAY_HEAD_ADDR']}:{env.get('RAY_PORT', '6379')}"
+    if address and address != "auto":
+        return address
+    # MASTER_ADDR describes the platform rendezvous endpoint, which need not
+    # be Ray's GCS. Ask the local Ray installation instead of guessing a port.
+    print("[cluster] discovering local Ray GCS address...", flush=True)
+    timeout = float(env.get("RAY_DISCOVERY_TIMEOUT", "30"))
+    if timeout <= 0:
+        raise ValueError("RAY_DISCOVERY_TIMEOUT must be positive.")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-u", "-c", DISCOVERY],
+            env=ray_environment(env), check=True, timeout=timeout,
+            capture_output=True, text=True,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        detail = exc.stderr or ""
+        if isinstance(detail, bytes):
+            detail = detail.decode(errors="replace")
+        raise RuntimeError(
+            "Could not discover an existing local Ray cluster. Check `env -u RAY_ADDRESS ray status`, "
+            "or supply RAY_ADDRESS=host:port. No Ray service was started or stopped.\n" + detail
+        ) from exc
+    for line in reversed(result.stdout.splitlines()):
+        if line.startswith("RAY_DISCOVERED_ADDRESS="):
+            address = line.partition("=")[2].strip()
+            if address and address not in {"auto", "local"}:
+                print(f"[cluster] discovered RAY_ADDRESS={address}", flush=True)
+                return address
+    raise RuntimeError("Ray discovery returned no GCS address; set RAY_ADDRESS=host:port explicitly.")
+
+
 def prepare_cluster(parameters: dict, *, dry_run: bool = False) -> bool:
     """Update runtime parameters. Return True only when this node runs the driver."""
     mode = os.getenv("RAY_CLUSTER_MODE", "managed")
@@ -93,8 +141,7 @@ def prepare_cluster(parameters: dict, *, dry_run: bool = False) -> bool:
         if spec.rank != 0:
             print("[cluster] existing cluster: only rank 0 runs the driver", flush=True)
             return False
-        host = os.getenv("RAY_HEAD_ADDR") or os.getenv("MASTER_ADDR")
-        address = os.getenv("RAY_ADDRESS") or (f"{host}:{os.getenv('RAY_PORT', '6379')}" if host else "auto")
+        address = existing_address(os.environ)
         if address == "local" or address.startswith("ray://"):
             raise ValueError("Existing mode requires a GCS host:port address or auto, not local/ray://.")
         print(f"[cluster] reusing {address}; checking GPU nodes", flush=True)

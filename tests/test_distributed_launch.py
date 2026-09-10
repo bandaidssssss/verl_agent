@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from distributed_launch import Topology, prepare_cluster, ray_environment, topology, wait_for_head
+from distributed_launch import Topology, existing_address, prepare_cluster, ray_environment, topology, wait_for_head
 
 
 class DistributedLaunchTest(unittest.TestCase):
@@ -95,7 +95,7 @@ class DistributedLaunchTest(unittest.TestCase):
             run.assert_not_called()
 
     def test_existing_cluster_resource_failure_blocks_training(self):
-        with mock.patch.dict(os.environ, {"RAY_CLUSTER_MODE": "existing"}, clear=True), mock.patch("distributed_launch.subprocess.run", side_effect=subprocess.CalledProcessError(1, "check")):
+        with mock.patch.dict(os.environ, {"RAY_CLUSTER_MODE": "existing", "RAY_ADDRESS": "head:6379"}, clear=True), mock.patch("distributed_launch.subprocess.run", side_effect=subprocess.CalledProcessError(1, "check")):
             with self.assertRaises(subprocess.CalledProcessError):
                 prepare_cluster({"trainer.nnodes": 2})
 
@@ -104,6 +104,31 @@ class DistributedLaunchTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prepare_cluster({})
             run.assert_not_called()
+
+    def test_discovery_uses_actual_address_instead_of_master(self):
+        result = subprocess.CompletedProcess([], 0, stdout="some Ray output\nRAY_DISCOVERED_ADDRESS=10.1.2.3:7777\n")
+        env = {"RAY_CLUSTER_MODE": "existing", "MASTER_ADDR": "old-head", "RAY_ADDRESS": "auto"}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch("distributed_launch.subprocess.run", side_effect=[result, subprocess.CompletedProcess([], 0)]) as run:
+            self.assertTrue(prepare_cluster({"trainer.nnodes": 2}))
+            self.assertNotIn("RAY_ADDRESS", run.call_args_list[0].kwargs["env"])
+            self.assertEqual(run.call_args_list[1].args[0][-3:], ["10.1.2.3:7777", "2", "8"])
+            self.assertEqual(os.environ["RAY_ADDRESS"], "10.1.2.3:7777")
+
+    def test_unset_address_discovers_and_explicit_address_wins(self):
+        result = subprocess.CompletedProcess([], 0, stdout="RAY_DISCOVERED_ADDRESS=new:1234\n")
+        with mock.patch("distributed_launch.subprocess.run", return_value=result) as run:
+            self.assertEqual(existing_address({"MASTER_ADDR": "old"}), "new:1234")
+            run.assert_called_once()
+            self.assertEqual(existing_address({"RAY_ADDRESS": "manual:9999"}), "manual:9999")
+            self.assertEqual(existing_address({"RAY_HEAD_ADDR": "manual", "RAY_PORT": "9998"}), "manual:9998")
+            run.assert_called_once()
+
+    def test_failed_discovery_does_not_start_or_verify_cluster(self):
+        for error in (subprocess.CalledProcessError(1, "discover", stderr="No cluster"), subprocess.TimeoutExpired("discover", 30)):
+            with self.subTest(error=error), mock.patch.dict(os.environ, {"RAY_CLUSTER_MODE": "existing"}, clear=True), mock.patch("distributed_launch.subprocess.run", side_effect=error) as run:
+                with self.assertRaisesRegex(RuntimeError, "Could not discover"):
+                    prepare_cluster({})
+                run.assert_called_once()
 
 
 if __name__ == "__main__":

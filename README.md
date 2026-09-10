@@ -66,14 +66,18 @@ vLLM replica 的 `/metrics` 地址，默认每 5 秒采集一次。采集结果�
 **平台已组建 Ray 集群时，只需在主节点执行：**
 
 ```bash
-PLATFORM=C550 RAY_CLUSTER_MODE=existing \
-  RAY_ADDRESS=10.200.111.147:6379 bash run_circle.sh
+PLATFORM=C550 NODE_RANK=0 RAY_CLUSTER_MODE=existing \
+  RAY_ADDRESS=auto bash run_circle.sh
 ```
 
-地址替换为实际 Ray GCS 地址。existing 模式不启动或停止任何 Ray 服务，检查存活的
+existing 模式不启动或停止任何 Ray 服务，检查存活的
 GPU 节点数及每节点 GPU 数与训练配置一致后运行 Agent；无需进入其他 Pod。
-省略 `RAY_ADDRESS` 时使用 `RAY_HEAD_ADDR`/`MASTER_ADDR` 与 `RAY_PORT`（默认 6379），
-没有这些变量则使用 `auto` 连接本地已存在的 Ray。不会自动创建本地集群。
+`RAY_ADDRESS=auto` 会自动发现本机已有 Ray 的实际 GCS 地址（包括端口），打印到日志，
+并传递给训练进程；环境重建后无需手填新 IP。未设置地址时也会自动发现。
+显式 `RAY_ADDRESS=host:port` 优先；未设置它时也可用 `RAY_HEAD_ADDR` + `RAY_PORT`。
+不再从平台的 `MASTER_ADDR` 猜测 Ray 地址。发现超时默认 30 秒，可通过
+`RAY_DISCOVERY_TIMEOUT` 调整；失败会报错，不会自动创建本地集群。
+如果 shell 残留旧 `RAY_ADDRESS`，使用上面的 `RAY_ADDRESS=auto` 覆盖即可。
 资源检查失败或等待超时会停止启动训练。没有节点 rank 变量时默认当前入口为主节点。
 
 **需要自行组建集群时（默认 `RAY_CLUSTER_MODE=managed`）：**
