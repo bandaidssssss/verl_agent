@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-export PLATFORM=${PLATFORM:-V5000}
-export MAX_TRIALS=${MAX_TRIALS:-1}
+export PLATFORM=${PLATFORM:-C550}
+export MAX_TRIALS=${MAX_TRIALS:-10}
 RUN_TIME=$(date +%m%d_%H%M_%Y)
 export OUTPUT_PATH=${OUTPUT_PATH:-${SCRIPT_DIR}/output}/${RUN_TIME}
 export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
