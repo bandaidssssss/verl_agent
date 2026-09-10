@@ -63,6 +63,34 @@ vLLM replica 的 `/metrics` 地址，默认每 5 秒采集一次。采集结果�
 
 ### C550 双机及多机自动启动
 
+启动快捷脚本统一放在 `start/` 目录。
+**南湖平台推荐统一短命令：在 master 和 worker 的项目目录都执行 `bash start/s.sh`。**
+也可以先 `cd start`，然后两边都只输入 `bash s.sh`；脚本会自动定位项目根目录。
+对应参考 `output/qwen3_8B_nh-2node.sh` 的节点约定，读取 `WORLD_SIZE` 作为节点数，
+优先使用 `POD_RANK`，其次 `RANK` 区分主从；它们优先于手工遗留的 `NODE_RANK`。
+主节点自动加载 `env.sh`，默认 `MAX_TRIALS=10`；从节点只运行 Ray worker。
+GPU 数继续读取训练配置或 `GPUS_PER_NODE`，没有固定为 8 卡或两节点。
+先启动 master，再在默认 600 秒内启动 worker，也可让平台在所有副本执行相同命令。
+此入口采用南湖节点变量语义，不要通过 torchrun 执行。
+已存在集群时，在主节点用 `bash start/s.sh --existing`，不再启动 worker。
+该入口不自动停止旧 Ray，不复制参考脚本的模型参数、网卡名或软件绝对路径。
+
+简短入口（在项目目录执行）：
+
+```bash
+# master-0：先启动，自动 source env.sh
+bash start/m.sh
+
+# worker-0 网页终端：随后在 300 秒内执行
+bash start/w.sh
+```
+
+两者均通过原有入口加载平台环境，节点数/卡数仍读取平台变量和训练配置。
+`w.sh` 使用平台的 `POD_RANK` 或 `SLURM_NODEID`，没有时默认从节点 rank 1。
+脚本不自动停止已有 Ray。集群已经就绪、只需再次运行 Agent 时，在主节点执行
+`bash start/m.sh --existing`，无需在 worker 再次启动。参数如 `--dry-run --rules-only`
+可以直接追加。W&B 登录仍需单独配置，或将训练参数 `trainer.logger` 设置为 `["console"]`。
+
 **平台已组建 Ray 集群时，只需在主节点执行：**
 
 ```bash
