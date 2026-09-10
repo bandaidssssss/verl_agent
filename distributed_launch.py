@@ -78,8 +78,8 @@ while True:
 
 
 DISCOVERY = """
-import ray
-context = ray.init(address='auto')
+import ray, sys
+context = ray.init(address=sys.argv[1])
 try:
     address = context.address_info.get('gcs_address') or context.address_info.get('address')
     if not address or address in ('auto', 'local'):
@@ -96,33 +96,48 @@ def existing_address(env: Mapping[str, str]) -> str:
         address = f"{env['RAY_HEAD_ADDR']}:{env.get('RAY_PORT', '6379')}"
     if address and address != "auto":
         return address
-    # MASTER_ADDR describes the platform rendezvous endpoint, which need not
-    # be Ray's GCS. Ask the local Ray installation instead of guessing a port.
+    # Local discovery may have no session record in a freshly created Pod.
+    # A platform endpoint is only a candidate: verify it with Ray before use.
     print("[cluster] discovering local Ray GCS address...", flush=True)
     timeout = float(env.get("RAY_DISCOVERY_TIMEOUT", "30"))
     if timeout <= 0:
         raise ValueError("RAY_DISCOVERY_TIMEOUT must be positive.")
-    try:
-        result = subprocess.run(
-            [sys.executable, "-u", "-c", DISCOVERY],
-            env=ray_environment(env), check=True, timeout=timeout,
-            capture_output=True, text=True,
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        detail = exc.stderr or ""
-        if isinstance(detail, bytes):
-            detail = detail.decode(errors="replace")
-        raise RuntimeError(
-            "Could not discover an existing local Ray cluster. Check `env -u RAY_ADDRESS ray status`, "
-            "or supply RAY_ADDRESS=host:port. No Ray service was started or stopped.\n" + detail
-        ) from exc
-    for line in reversed(result.stdout.splitlines()):
-        if line.startswith("RAY_DISCOVERED_ADDRESS="):
-            address = line.partition("=")[2].strip()
-            if address and address not in {"auto", "local"}:
-                print(f"[cluster] discovered RAY_ADDRESS={address}", flush=True)
-                return address
-    raise RuntimeError("Ray discovery returned no GCS address; set RAY_ADDRESS=host:port explicitly.")
+    candidates = ["auto"]
+    host = env.get("RAY_HEAD_ADDR") or env.get("MASTER_ADDR")
+    if host:
+        port = int(env.get("RAY_PORT", "6379"))
+        if not 0 < port < 65536:
+            raise ValueError("RAY_PORT must be 1..65535.")
+        candidates.append(f"{host}:{port}")
+    failures = []
+    for candidate in candidates:
+        print(f"[cluster] probing Ray address={candidate} (timeout={timeout}s)", flush=True)
+        try:
+            result = subprocess.run(
+                [sys.executable, "-u", "-c", DISCOVERY, candidate],
+                env=ray_environment(env), check=True, timeout=timeout,
+                capture_output=True, text=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            detail = exc.stderr or str(exc)
+            if isinstance(detail, bytes):
+                detail = detail.decode(errors="replace")
+            failures.append(f"{candidate}: {detail}")
+            print(f"[cluster] probe failed: {candidate}", flush=True)
+            continue
+        for line in reversed(result.stdout.splitlines()):
+            if line.startswith("RAY_DISCOVERED_ADDRESS="):
+                address = line.partition("=")[2].strip()
+                if address and address not in {"auto", "local"}:
+                    print(f"[cluster] discovered RAY_ADDRESS={address}", flush=True)
+                    return address
+        failures.append(f"{candidate}: Ray returned no GCS address")
+    raise RuntimeError(
+        "Could not discover an existing Ray cluster. Tried: " + ", ".join(candidates)
+        + ". The new environment may not have a running cluster, or its GCS address/port may differ. "
+        "Check with the platform or supply RAY_ADDRESS=host:port. "
+        "No Ray service was started or stopped.\n" + "\n".join(failures)
+    )
 
 
 def prepare_cluster(parameters: dict, *, dry_run: bool = False) -> bool:

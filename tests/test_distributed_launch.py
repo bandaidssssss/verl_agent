@@ -131,5 +131,19 @@ class DistributedLaunchTest(unittest.TestCase):
                 run.assert_called_once()
 
 
+    def test_platform_fallback_after_missing_local_ray(self):
+        results = [subprocess.CalledProcessError(1, "discover", stderr="No local Ray"),
+                   subprocess.CompletedProcess([], 0, stdout="RAY_DISCOVERED_ADDRESS=10.2.3.4:6380\n")]
+        with mock.patch("distributed_launch.subprocess.run", side_effect=results) as run:
+            self.assertEqual(existing_address({"MASTER_ADDR": "current-head", "RAY_PORT": "6380", "MASTER_PORT": "7788"}), "10.2.3.4:6380")
+            self.assertEqual([c.args[0][-1] for c in run.call_args_list], ["auto", "current-head:6380"])
+
+    def test_all_discovery_candidates_fail_with_actionable_error(self):
+        with mock.patch("distributed_launch.subprocess.run", side_effect=subprocess.TimeoutExpired("probe", 30)) as run:
+            with self.assertRaisesRegex(RuntimeError, "Tried: auto, head:6379"):
+                existing_address({"MASTER_ADDR": "head"})
+            self.assertEqual(run.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

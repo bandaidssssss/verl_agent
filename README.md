@@ -75,8 +75,10 @@ GPU 节点数及每节点 GPU 数与训练配置一致后运行 Agent；无需�
 `RAY_ADDRESS=auto` 会自动发现本机已有 Ray 的实际 GCS 地址（包括端口），打印到日志，
 并传递给训练进程；环境重建后无需手填新 IP。未设置地址时也会自动发现。
 显式 `RAY_ADDRESS=host:port` 优先；未设置它时也可用 `RAY_HEAD_ADDR` + `RAY_PORT`。
-不再从平台的 `MASTER_ADDR` 猜测 Ray 地址。发现超时默认 30 秒，可通过
-`RAY_DISCOVERY_TIMEOUT` 调整；失败会报错，不会自动创建本地集群。
+本机发现失败时，回退尝试 `RAY_HEAD_ADDR`/`MASTER_ADDR` + `RAY_PORT`（默认 6379），
+实际连接 Ray 验证成功后才使用该地址；平台的 `MASTER_PORT` 不作为 Ray 端口。
+每次发现尝试超时默认 30 秒，可通过 `RAY_DISCOVERY_TIMEOUT` 调整。
+全部失败会列出尝试过的地址并报错；新环境可能尚未启动 Ray，不会自动创建本地集群。
 如果 shell 残留旧 `RAY_ADDRESS`，使用上面的 `RAY_ADDRESS=auto` 覆盖即可。
 资源检查失败或等待超时会停止启动训练。没有节点 rank 变量时默认当前入口为主节点。
 
